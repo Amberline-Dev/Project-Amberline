@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Stays a console program: the friend launcher runs it with `& exe` and reads its exit code. The players' shortcut starts a
+         windowless copy of the same apphost (PlayerInstall.WriteWindowless). -->
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Amberline.AirCompanion</AssemblyName>
+    <RootNamespace>Amberline.AirCompanion</RootNamespace>
+    <DefineConstants>$(DefineConstants);AMBERLINE_RADS_COMPANION</DefineConstants>
+    <!-- NOT RETAIL: the player's installer (PlayerInstallWindow.cs) uses Windows' own dialogs through WinForms, which ships with .NET.
+         EnableWindowsTargeting lets tools/build-server.ps1 publish it from a Linux build host too. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- WinForms also has a Message, a Timer and other common names: its types are named in full where used. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+  <!-- NOT RETAIL: the client-files installer (the install-files mode, the friend launcher's setup) can be removed from a public build. While
+       ClientFilesInstaller.cs exists it defines AMBERLINE_ARCHIVE_INSTALLER (Program.cs and the tests compile that mode) and its 7z reader
+       is referenced; without the file neither is, so deleting the file is the whole change. -p:AmberlineArchiveInstaller=false leaves
+       the file out while it exists (tools/build-server.ps1 publishes the players' companion that way). -->
+  <PropertyGroup Condition="'$(AmberlineArchiveInstaller)' == '' And Exists('ClientFilesInstaller.cs')">
+    <AmberlineArchiveInstaller>true</AmberlineArchiveInstaller>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(AmberlineArchiveInstaller)' == 'true'">
+    <DefineConstants>$(DefineConstants);AMBERLINE_ARCHIVE_INSTALLER</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(AmberlineArchiveInstaller)' != 'true'">
+    <Compile Remove="ClientFilesInstaller.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Amberline.Tests" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\Amberline.Rtmp\Amberline.Rtmp.csproj" />
+    <!-- The managed-layout packer lives in the Amberline library (the Tools command wraps it), but a project reference would put the whole
+         server library into the friends' companion package, so these two dependency-free files are compiled in as source. -->
+    <Compile Include="..\Amberline\Rads\RadsLayout.cs" Link="Rads\RadsLayout.cs" />
+    <Compile Include="..\Amberline\Rads\ManagedLayout.cs" Link="Rads\ManagedLayout.cs" />
+    <!-- NOT RETAIL: the player's entry for the bring-your-own-clients mode (the play mode); copied beside the executable in the build output. -->
+    <None Include="player/Play.cmd" TargetPath="Play.cmd" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(AmberlineArchiveInstaller)' == 'true'">
+    <!-- MIT. Only the 7z (LZMA2 + BCJ) reader of the game archive is used (ClientFilesInstaller); Windows has no 7z decoder:
+         Windows 10's tar.exe (libarchive) answers "LZMA codec is unsupported" for that archive. Companion only. -->
+    <PackageReference Include="SharpCompress" Version="0.50.5" />
+    <None Include="third-party/SharpCompress-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" TargetPath="third-party/SharpCompress-LICENSE" />
+  </ItemGroup>
+</Project>

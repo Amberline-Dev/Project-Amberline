@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Amberline.Platform</AssemblyName>
+    <RootNamespace>Amberline.Platform</RootNamespace>
+    <DefineConstants>$(DefineConstants);AMBERLINE_HOST_FOLDERS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The setup page's folder checks (HostFolders.cs) use the companion's own client pins, AIR layout, folder hazards and language
+         lookup. These dependency-free files are compiled in as source; AMBERLINE_HOST_FOLDERS gives them their own namespace here, so
+         the test assembly, which sees both projects, never meets one type name twice. -->
+    <Compile Include="..\Amberline.AirCompanion\RetailClients.cs" Link="Folders\RetailClients.cs" />
+    <Compile Include="..\Amberline.AirCompanion\AirSourceLayout.cs" Link="Folders\AirSourceLayout.cs" />
+    <Compile Include="..\Amberline.AirCompanion\GameFolderReport.cs" Link="Folders\GameFolderReport.cs" />
+    <Compile Include="..\Amberline.AirCompanion\GameLanguagePack.cs" Link="Folders\GameLanguagePack.cs" />
+    <!-- Batch 637: the host's one-folder install moves the game and AIR client with the player installer's move code. -->
+    <Compile Include="..\Amberline.AirCompanion\FolderMove.cs" Link="Folders\FolderMove.cs" />
+    <ProjectReference Include="../Amberline.Host/Amberline.Host.csproj" />
+    <ProjectReference Include="../Amberline.Rtmp/Amberline.Rtmp.csproj" />
+  </ItemGroup>
+</Project>

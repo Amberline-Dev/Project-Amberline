@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Amberline.Server</AssemblyName>
+    <RootNamespace>Amberline.Server</RootNamespace>
+  </PropertyGroup>
+  <!-- Batch 573: the Release build precompiles the server (ReadyToRun), so the simulation thread no longer JIT-compiles a code
+       path at its first use (the first match step, Maokai Q's first strike). Framework-dependent, same output folder and files;
+       the IL stays in the images, so the runtime falls back to the JIT for any method whose precompiled code it rejects.
+       opt-cross-module and non-local-generics-module also precompile framework generics over the game's types (LINQ, Dictionary,
+       ArrayPool of game structs); the runtime checks the framework IL they were compiled from and JIT-compiles on a mismatch.
+       Batch 611: the runtime is selectable. A Release build that names none builds $(AmberlineRuntime), win-x64 as before, so a plain
+       `dotnet build -c Release` is unchanged. A named runtime (`-r linux-x64`, tools/build-server.ps1, tools/package-remote.ps1) gets the
+       same precompilation and output layout for that runtime. -->
+  <PropertyGroup>
+    <AmberlineRuntime Condition="'$(AmberlineRuntime)' == ''">win-x64</AmberlineRuntime>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(AmberlineRuntime)</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRunCrossgen2ExtraArgs>--opt-cross-module:*;--non-local-generics-module:*</PublishReadyToRunCrossgen2ExtraArgs>
+    <!-- Keep bin/Amberline.Server/release (artifacts layout) and bin/Release/net10.0 without the runtime name. -->
+    <ArtifactsPivots>release</ArtifactsPivots>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <ReadyToRunOnBuild>true</ReadyToRunOnBuild>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Amberline\Amberline.csproj" />
+  </ItemGroup>
+  <!-- The SDK's publish-time ReadyToRun step, run after the build; its images replace the IL copies in the output folder. -->
+  <Target Name="ReadyToRunBuildOutput" AfterTargets="Build" Condition="'$(ReadyToRunOnBuild)' == 'true'"
+          DependsOnTargets="ComputeResolvedFilesToPublishList;CreateReadyToRunImages">
+    <Copy SourceFiles="@(_ReadyToRunCompileList->'%(OutputR2RImage)')" DestinationFolder="$(OutDir)"
+          Retries="$(CopyRetryCount)" RetryDelayMilliseconds="$(CopyRetryDelayMilliseconds)" />
+  </Target>
+</Project>

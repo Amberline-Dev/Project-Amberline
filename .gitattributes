@@ -1,0 +1,5 @@
+* text=auto
+# Shell scripts run on Linux and in Git Bash: always LF.
+*.sh text eol=lf
+# Windows command files: CRLF in every checkout and in GitHub's source zip (batch 633).
+*.cmd text eol=crlf

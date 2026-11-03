@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Amberline.Tests</AssemblyName>
+    <RootNamespace>Amberline.Tests</RootNamespace>
+    <!-- The companion it checks targets Windows (its installer uses WinForms). -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+  </PropertyGroup>
+  <!-- The client-files installer's check compiles only while the companion still ships ClientFilesInstaller.cs (see its csproj). -->
+  <PropertyGroup Condition="Exists('../../src/Amberline.AirCompanion/ClientFilesInstaller.cs')">
+    <DefineConstants>$(DefineConstants);AMBERLINE_ARCHIVE_INSTALLER</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Amberline/Amberline.csproj" />
+    <ProjectReference Include="../../src/Amberline.Tools/Amberline.Tools.csproj" />
+    <ProjectReference Include="../../src/Amberline.Server/Amberline.Server.csproj" />
+    <ProjectReference Include="../../src/Amberline.Host/Amberline.Host.csproj" />
+    <ProjectReference Include="../../src/Amberline.Platform/Amberline.Platform.csproj" />
+    <ProjectReference Include="../../src/Amberline.AirCompanion/Amberline.AirCompanion.csproj" />
+    <None Update="Fixtures/**/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

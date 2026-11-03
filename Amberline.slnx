@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="src/Amberline/Amberline.csproj" />
+  <Project Path="src/Amberline.Server/Amberline.Server.csproj" />
+  <Project Path="src/Amberline.Host/Amberline.Host.csproj" />
+  <Project Path="src/Amberline.Rtmp/Amberline.Rtmp.csproj" />
+  <Project Path="src/Amberline.Platform/Amberline.Platform.csproj" />
+  <Project Path="src/Amberline.AirCompanion/Amberline.AirCompanion.csproj" />
+  <Project Path="src/Amberline.Tools/Amberline.Tools.csproj" />
+  <Project Path="tests/Amberline.Tests/Amberline.Tests.csproj" />
+</Solution>
