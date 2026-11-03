@@ -283,11 +283,13 @@ public sealed class LuaAiService : IAiHost
     /// pet host. The lane-less units a <c>BBSpawnMinion</c> gave <c>idle.lua</c>, <c>Aggro.lua</c> or <c>Minion.lua</c>
     /// run their own chunks on the spawned host (whose engine carries
     /// <see cref="ILuaAiSpawnedEngine"/>), which is the only one that claims them: a ward is not a
-    /// turret and a Nimbus clone is not a lane minion.
+    /// turret and a Nimbus clone is not a lane minion. Batch 662: the capture point guardians' host
+    /// (whose engine carries <see cref="ILuaAiTurretScriptEngine"/>) runs Turret.luaobj on them.
     /// </summary>
     private string? ScriptNameFor(Entity unit) => unit.UnitType switch
     {
         _ when _engine is ILuaAiSpawnedEngine => SpawnedUnitAi.HostScript(unit.AiScript),
+        _ when _engine is ILuaAiTurretScriptEngine => "Turret",
         UnitType.Turret when _engine is not ILuaAiLeashedEngine and not ILuaAiPetEngine => "Turret",
         // Batch 451: an Odin wave unit runs its shipped lane script (MinionOdin or MinionReverse) on the lane host.
         UnitType.Minion when _engine is ILuaAiMinionEngine && Amberline.Simulation.Minions.OdinWaves.ScriptOf(unit) is { } odin => odin,

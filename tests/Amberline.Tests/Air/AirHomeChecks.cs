@@ -79,6 +79,39 @@ public static class AirHomeChecks
         Inventory: []);
 
 
+    /// <summary>
+    /// Batch 661: the Home shows the server's own figures (name, welcome, online count, games recorded, the host's notice, the free
+    /// champions and how-to lines). Counts and times only: no summoner name reaches the page, which the public port serves to anyone.
+    /// </summary>
+    [Check("server.air-home-server-page")]
+    public static void HomeShowsTheServersOwnFiguresWithoutSummonerNames()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "league-air-home-server-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var accounts = new PlatformAccounts(Path.Combine(root, "accounts"));
+            var alice = accounts.RegisterPublic("homealice", "testing-password", "Alice");
+            var bob = accounts.RegisterPublic("homebob", "testing-password", "Bob");
+            var now = DateTimeOffset.UtcNow;
+            void Play(long game, DateTimeOffset completed) => TestAssert.True(accounts.RecordResult(new PlatformResult(game, Guid.NewGuid(),
+                [alice.Id, bob.Id], JsonSerializer.SerializeToElement(new Amberline.Network.Sessions.MatchResult(8, "Version 1.0.0.126", 1,
+                    "CLASSIC", "Order", 600, [Player(alice, "Order"), Player(bob, "Chaos")], false), Amberline.Server.MatchRoster.JsonOptions),
+                CompletedAt: completed, QueueId: 2)));
+            Play(1, now.AddMinutes(-2));
+            Play(2, now.AddHours(-30));
+            var notice = new PlatformHomeNotice("Notice from the host", "<i>Restart at 20:00</i>", now);
+            var stats = PlatformHome.Snapshot(accounts, 2, "Test Server", notice, now);
+            var html = PlatformHome.RenderLanding(PlatformHomeModel.Testing(1) with { Stats = stats }, accounts.StoreCatalog);
+            foreach (var text in new[] { "Welcome to Test Server", "Invite friends", "Custom games", "Online now: 2", "Games finished: 2",
+                "Finished today: 1", "Last game: 2 minutes ago", "Custom games in the lobby: 1", "Free to play", "Annie",
+                "Notice from the host", "&lt;i&gt;Restart at 20:00&lt;/i&gt;" })
+                TestAssert.True(html.Contains(text, StringComparison.Ordinal), text);
+            foreach (var name in new[] { "Alice", "Bob" })
+                TestAssert.False(html.Contains(name, StringComparison.Ordinal), "summoner names stay off the public page: " + name);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
     private sealed class TemporaryCatalog : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "league-air-home-catalog-" + Guid.NewGuid().ToString("N"));

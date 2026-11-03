@@ -202,13 +202,9 @@ public static partial class ChampionLiveRegressionChecks
         ally.Position = caster.Position + new Position2(600.0, 0.0);
         safeguard.Cast(0, 1, ally);
         var wMove = caster.ForcedMove ?? throw new InvalidOperationException("W1 did not start");
-        // W uses the saved script distance, not Q2's inferred arrival shell: BlindMonkWOneDash moves toward the ally's saved position with
-        // IdealDistance = BBDistanceBetweenObjects(Lee, ally), the gap between the two bodies (edge to edge since batch 112), so the dash ends in contact.
-        var toAlly = Distance(caster.Position, ally.Position);
-        var gap = Math.Max(0.0, toAlly - caster.CombatRadius - ally.CombatRadius);
-        var requestedLanding = new Position2(caster.Position.X + (ally.Position.X - caster.Position.X) * gap / toAlly,
-            caster.Position.Z + (ally.Position.Z - caster.Position.Z) * gap / toAlly);
-        var wLanding = safeguardRuntime.Movement.FurthestWalkableLanding(caster.Position, requestedLanding, caster);
+        // W uses the saved script point, not Q2's inferred arrival shell: BlindMonkWOneDash moves to the ally's saved position. Restated in batch
+        // 659: its IdealDistance (the gap between the bodies) sizes the speed and caps nothing (BbNativeHandlers.Move), so the dash ends there.
+        var wLanding = safeguardRuntime.Movement.FurthestWalkableLanding(caster.Position, ally.Position, caster);
         TestAssert.Equal(wLanding, wMove.Destination, "Safeguard resolves the saved ally position");
         safeguardRuntime.Tick(.5);
         TestAssert.True(caster.ForcedMove is null, "Safeguard completes at the script landing");

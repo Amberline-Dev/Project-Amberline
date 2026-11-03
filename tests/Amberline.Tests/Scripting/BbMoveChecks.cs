@@ -104,15 +104,18 @@ public static class BbMoveChecks
         TestAssert.False(Set(brief, "Success"), "and its move had not landed yet");
     }
 
-    [Check("scripting.bb-move-ideal-distance-and-move-back-by-shorten-the-way")]
-    public static void IdealDistanceCapsAndMoveBackByStopsShort()
+    [Check("scripting.bb-move-ideal-distance-sets-the-time-and-move-back-by-shortens-the-way")]
+    public static void IdealDistanceSetsTheTimeAndMoveBackByStopsShort()
     {
+        // Restated in batch 659: IdealDistance is the length the call's Speed is given for, not a cap (BbNativeHandlers.Move). A 400-unit move
+        // given 1500 for 120 runs the whole 400 at 1500 x 400 / 120, so it lasts 120 / 1500 s, as Broken Wings, Fling and Cataclysm read.
         using var match = new BbM3.Match("Sivir");
         var foe = match.Foe;
         foe.Facing = new Position2(1.0, 0.0);
         var origin = foe.Position;
         Activate(match, foe, match.Hero, Script([Point("Dest", 400), Move("Dest", 1500, 0, ideal: 120)], hooks: false));
-        TestAssert.Near(120.0, BbSpellHostDistance(foe.ForcedMove!.Destination, origin), 4.0, "IdealDistance caps the way at 120");
+        TestAssert.Near(400.0, BbSpellHostDistance(foe.ForcedMove!.Destination, origin), 4.0, "IdealDistance does not shorten the way");
+        TestAssert.Near(1500.0 * 400.0 / 120.0, foe.ForcedMove!.Speed, 1.0, "the speed is scaled by 400 / 120, so the move lasts 120 / 1500 s");
         match.Advance(0.5);
         foe.Position = origin;
         Activate(match, foe, match.Hero, Script([Point("Dest", 400), Move("Dest", 1500, 0, back: 100)], hooks: false));
@@ -122,9 +125,9 @@ public static class BbMoveChecks
     [Check("scripting.bb-move-ideal-distance-does-not-cap-a-dash-to-a-unit")]
     public static void IdealDistanceDoesNotCapADashToAUnit()
     {
-        // IdealDistance caps a dash toward a point (the check above). A dash whose TargetVar is a unit ends on that unit, the way Jarvan IV's
-        // Dragon Strike pulls him to a Demacian Standard (TargetVar Attacker, IdealDistance 500). The hero is the buff's Caster, 400 units
-        // ahead of the foe on clear floor, and the cap is 120: the foe must reach the hero, not stop 120 along.
+        // A dash whose TargetVar is a unit ends on that unit, the way Jarvan IV's Dragon Strike pulls him to a Demacian Standard (TargetVar
+        // Attacker, IdealDistance 500). The hero is the buff's Caster, 400 units ahead of the foe on clear floor, and IdealDistance is 120: the
+        // foe must reach the hero, not stop 120 along (batch 659: IdealDistance caps no move, it sizes the speed, the check above).
         using var match = new BbM3.Match("Sivir");
         var foe = match.Foe;
         foe.Facing = new Position2(1.0, 0.0);
@@ -139,7 +142,8 @@ public static class BbMoveChecks
     public static void MoveAwayFromAUnitKeepsItsIdealDistanceCap()
     {
         // A push is not a dash: IdealDistance still caps a BBMoveAway whose centre is a unit (Maokai's trunk line, Riven's knockback and the
-        // Powerball stun pass 100, which holds the root for 0.5 s). The dash rule above does not reach pushes.
+        // Powerball stun pass 100, which holds the root for 0.5 s). The dash rule above (batch 659: a dash's IdealDistance scales its speed)
+        // does not reach pushes.
         using var match = new BbM3.Match("Sivir");
         var foe = match.Foe;
         var centre = match.Hero.Position;

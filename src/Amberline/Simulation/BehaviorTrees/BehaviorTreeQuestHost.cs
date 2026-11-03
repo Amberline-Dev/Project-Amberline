@@ -284,25 +284,17 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     private const string QuestIndicator = "OdinQuestIndicator";
 
     /// <summary>
-    /// Batch 501: the tree each guardian runs, the shipped tower AI (<c>LEVELS/Map8/Scripts/OdinTower.xml</c>: <c>Script Type="AI"</c>, one
-    /// BTInstance whose BehaviorTree is OdinTowerBehavior, in <c>OdinTowerBehaviorTrees.xml</c>). Reconstruction, the binding:
-    /// <c>AiEntityDataFile.dat</c> binds OdinNeutralGuardian, OdinOrderGuardian and OdinChaosGuardian to the AI_Entity tag <c>OdinGuardian</c>
-    /// (lines 17, 20, 21, 28), a project that did not ship; the lines it replaced (18-19, commented out) bound the team guardians to
-    /// <c>OdinTower</c>. OdinTower is the only shipped AI for them, so they run it.
+    /// Batch 662: the guardians' AI, the plain turret script (<see cref="GuardianTurretAi"/>); one script instance per guardian net id, so a
+    /// replaced guardian's replacement starts its own. Created on the first step that has the tower hooks.
     /// </summary>
-    private const string TowerTree = "OdinTowerBehavior";
-
-    /// <summary>Batch 501: each guardian's tower AI by its net id. A replaced guardian's instance goes with it; the replacement starts its own.</summary>
-    private readonly Dictionary<uint, BehaviorTreeInstance> _towerAi = new();
+    private GuardianTurretAi? _turretAi;
 
     /// <summary>
-    /// Batch 501: the guardian runs its tower tree (<see cref="TowerTree"/>; leaves in BehaviorLeaves.Tower), which replaces batch 466's
-    /// hand-written turret rule. The tree's first tick sets the guardian invulnerable and untargetable (both already true: OdinGuardianBuff and the
-    /// encounter's Targetable 0, batch 495, so nothing is sent). After that, while a champion of its team stands within 700 and an enemy
-    /// champion or minion within 600 (OdinTower_CheckForChampions), it keeps an enemy champion it sees within 600 of itself, else takes the
-    /// nearest it sees, else the nearest enemy unit it sees within 600, and casts its slot 0 (Spell1 OdinGuardianSpellAttackCast, cast range 1000,
-    /// cooldown 1 s) at it whenever the slot is ready. The shot of that cast is batch 481b's (OdinGuardianShot). The tree does not tick for a
-    /// neutral or a channelled guardian (batch 466's gate below, kept).
+    /// Batch 662 (owner, 3 November 2026: "Normal turret"; replaces batch 501's OdinTowerBehavior tree and its ally gate): each guardian of an
+    /// owned point runs Turret.luaobj (<see cref="GuardianTurretAi"/>): every 0.15 s it looks for the nearest summoned unit, else minion, else
+    /// any enemy within its 950 acquisition range, keeps it while it is within its Spell1's 1000, and casts that Spell1
+    /// (OdinGuardianSpellAttackCast, cooldown 1 s) at it whenever the slot is ready. The shot of that cast is batch 481b's (OdinGuardianShot).
+    /// The script does not run for a neutral or a channelled guardian (batch 466's gate below, kept).
     /// Batch 466: the guardian fires only while its team holds the point: a neutral guardian attacks nothing (wiki Capture_point, Basis >
     /// Ownership: "If the point has not been fully captured from neutral, it will not attack any units"; OdinGuardianBuff gives the neutral guardian both teams' sight and no team of its own). It holds its fire while a
     /// champion channels the capture on it: the shipped channel's ChannelingStart adds OdinGuardianSuppression to its Target (OdinCaptureChannel
@@ -315,17 +307,18 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     /// </summary>
     private void GuardiansAttack(double now, double dt)
     {
-        if (Context.Capture?.Tower is null) return;
-        foreach (var netId in _towerAi.Keys.Where(netId => !_guardians.Values.Any(guardian => guardian.NetId == netId)).ToList())
-            _towerAi.Remove(netId);
+        if (Context.Capture?.Tower is not { } tower) return;
+        _turretAi ??= new GuardianTurretAi(Context.World, tower, Context.Note);
         foreach (var guardian in _guardians.Values)
         {
+            // Batch 660: a guardian that does not run fires nothing, so it shows no target line; the line's publisher sends only a change.
             if (!guardian.Alive || guardian.Team is not (Team.Order or Team.Chaos) ||
-                guardian.Buffs.Any(buff => buff.Name.StartsWith(Suppression, StringComparison.Ordinal))) continue;
-            if (!_towerAi.TryGetValue(guardian.NetId, out var tower))
-                _towerAi[guardian.NetId] = tower = new BehaviorTreeInstance(Library, TowerTree, Context) { Ai = new BehaviorUnitAi(guardian) };
-            BehaviorLeaves.DropInvalidAttackTarget(Context, tower.Ai!);
-            tower.Tick(now, dt);
+                guardian.Buffs.Any(buff => buff.Name.StartsWith(Suppression, StringComparison.Ordinal)))
+            {
+                tower.TargetLine?.Invoke(guardian, null);
+                continue;
+            }
+            tower.TargetLine?.Invoke(guardian, _turretAi.Step(guardian, now, dt));
         }
     }
 

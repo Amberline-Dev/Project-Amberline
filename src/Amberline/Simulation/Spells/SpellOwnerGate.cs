@@ -24,7 +24,8 @@ internal static class SpellOwnerGate
     /// Whether <paramref name="spell"/> (null: no spell record, every flag takes the client default false) may be used by
     /// <paramref name="hero"/> in its present control state. <paramref name="forcedMoveClearsCanMove"/> adds the forced-move
     /// CanMove-off state (a non-Fear dash replicates CanMove off, playtest B3 #10) to the root test; champion casts leave it out
-    /// because a cast requested during the hero's own dash is queued until the landing (owner decision B3 #10).
+    /// only while the hero's clip is locked, because a cast requested during a locked dash is queued until the landing (owner decision
+    /// B3 #10); during an unlocked dash the cast goes at once (owner, 3 November 2026), so the dash counts.
     /// </summary>
     public static bool CanUse(Entity hero, SpellData? spell, bool forcedMoveClearsCanMove = false)
     {

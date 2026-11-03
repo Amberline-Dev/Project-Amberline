@@ -731,8 +731,19 @@ public sealed partial class MovementSystem
     /// the quantized destination must be walkable. Search back from the
     /// requested endpoint, rather than stopping at the first wall. Random
     /// knock-ups supply their unit to prefer body-clear movement floor.
+    /// <para>
+    /// Batch 659 (community report of 3 November 2026, "W on target close to wall fails"): for a script dash (<paramref name="dash"/>, the
+    /// BBMove landing) longer than two body clearances (not a knock-up's bounce) the body-clear preference reaches back at most one body
+    /// clearance from the furthest floor point of the ray. It
+    /// used to take the furthest body-clear point of the whole ray, so a Safeguard to an ally standing 30 units from a wall, whose last stretch
+    /// of ray runs within a body of the wall, landed 200 units short. The ally stands there, and the client's per-frame gate is the bare cell
+    /// (<see cref="NavigationGrid.IsMovementWalkable(Position2)"/>), so the floor point itself is a landing the client accepts. A short bounce
+    /// keeps the whole-ray preference (playtest B3 #3: a knocked-up body lands clear of the wall). Reconstruction: the native floor search is
+    /// not recovered; the budget and the split are this server's, in the body margin the preference already used. The follow form's terminal
+    /// (<see cref="FollowingLanding"/>) keeps the whole-ray preference with its own placement fallback.
+    /// </para>
     /// </summary>
-    public Position2 FurthestWalkableLanding(Position2 origin, Position2 requested, Entity? unit = null)
+    public Position2 FurthestWalkableLanding(Position2 origin, Position2 requested, Entity? unit = null, bool dash = false)
     {
         // Geometry.ClientWaypoints' grid scale: every waypoint the client keeps is a multiple of it.
         const double ClientLatticeStep = 2.0;
@@ -752,17 +763,17 @@ public sealed partial class MovementSystem
         // step, so the dash packet and its animation never left (Xin Zhao's E cast up close, owner finding 25, 20 October 2026: the hero
         // "walks" because the script's follow-up attack order is the only order the client gets).
         var originAnchor = ClientWaypoints([origin])[0];
-        if (Furthest(bodyClear: true) is Position2 landing) return landing;
-        if (unit is null) return originAnchor;
-        // With no body-clear point on the ray, accept the furthest point the
-        // client's per-frame movement grid admits before cancelling the move
-        // (playtest B3 #3, 26 Sept 2026: Power Fist beside a wall never
-        // knocked up).
-        return Furthest(bodyClear: false) ?? originAnchor;
+        if (unit is null) return Furthest(bodyClear: true, distance, 0.0, out _) ?? originAnchor;
+        // The furthest point the client's per-frame movement grid admits, before cancelling the move (playtest B3 #3, 26 Sept 2026: Power
+        // Fist beside a wall never knocked up); a body-clear point within one body clearance back from it is preferred.
+        if (Furthest(bodyClear: false, distance, 0.0, out var floorTravel) is not Position2 floor) return originAnchor;
+        var budget = dash && distance > 2.0 * clearance ? clearance : distance;
+        return Furthest(bodyClear: true, floorTravel, Math.Max(0.0, floorTravel - budget), out _) ?? floor;
 
-        Position2? Furthest(bool bodyClear)
+        Position2? Furthest(bool bodyClear, double from, double to, out double found)
         {
-            for (var travel = distance; travel > 0; travel = Math.Max(0, travel - 10.0))
+            found = 0.0;
+            for (var travel = from; travel > to; travel = Math.Max(to, travel - 10.0))
             {
                 var candidate = ClientWaypoints([new Position2(origin.X + dx * travel / distance,
                     origin.Z + dz * travel / distance)])[0];
@@ -770,6 +781,7 @@ public sealed partial class MovementSystem
                 // request itself can snap outward by up to one lattice step on each axis. The guard allows exactly that step, not more: a
                 // request shorter than one step (Xin Zhao's E cast at three units, owner finding 25) otherwise found no candidate at all
                 // and fell back to the origin, and the script's move then had a zero length: no dash packet, no dash clip.
+                found = travel;
                 if (unit is null)
                 {
                     if (_navigation.IsWalkable(candidate)) return candidate;

@@ -98,7 +98,7 @@ internal sealed class BbScriptMoves
         // Batch 460: a held unit (Dominion's setup) dashes no farther than the edge of its hold (MovementSystem.HeldInside).
         requested = movement.HeldInside(unit, requested);
         var origin = unit.Position;
-        var destination = firstCollision ? requested : movement.FurthestWalkableLanding(origin, requested, unit);
+        var destination = firstCollision ? requested : movement.FurthestWalkableLanding(origin, requested, unit, dash: true);
         // Owner decision B3 #3 (26 September 2026, "a pulled body never lands in a wall"), kept from the hand-written Rocket Grab: a move to a
         // given point (no IdealDistance cap: a pull onto the puller's centre) whose ray has no body-clear floor, the shared landing falls back
         // to the raw point. Blitzcrank standing in a walkable notch 0.8 units from terrain made that point one the victim's body does not fit

@@ -79,13 +79,21 @@ internal sealed partial class BbNativeHandlers
 
     /// <summary>
     /// <c>BBMove</c>: <c>Unit</c> dashes toward <c>Target</c> (a point, or a unit) at <c>Speed</c> with the arc <c>Gravity</c>.
-    /// <c>IdealDistance</c> above 0 caps the way for a point target only: a dash to a unit ends on that unit (the landing fits the body, as an
-    /// uncapped point move does). Evidence (batch 369): the shipped unit-target calls are Jarvan IV's Dragon Strike pull (<c>IdealDistance</c> 500
-    /// to the standard) and Shen's dash (no cap); the follow form <c>BBMoveToUnit</c> never reads <c>IdealDistance</c>; the League wiki's Dragon
-    /// Strike text says Jarvan IV "dashes to its location". Every capped point call passes a fixed length or the point's own distance (Dragon's
-    /// Rage 800, Fling 420, Power Fist 80, Riven 275 and 375). Pushes (<c>BBMoveAway</c>) keep their caps.
     /// <c>MoveBackBy</c> stops that far short of the target, <c>MovementType</c> picks the landing rule (see <see cref="BbScriptMoves.Start"/>),
     /// <c>MovementOrdersType</c> cancels or postpones the hero's order and <c>MovementOrdersFacing</c> turns the unit along the move or leaves its facing.
+    /// <para>
+    /// <c>IdealDistance</c> above 0 is the length <c>Speed</c> is given for: a move of another length scales its speed by requested / ideal, so it
+    /// always lasts ideal / speed (<see cref="IdealSpeed"/>). Reconstruction (batch 659, the community report of 3 November 2026 with its
+    /// formula, "extremely accurate across every forced movement order"): the client registers the native as a bare return, so the rule is read
+    /// from the shipped call sites, where a cap (the reading before this batch) left the numbers dead. Broken Wings asks for at most 240 with 275
+    /// and 375 (a cap never bound, and a strike at a close foe, 10 to 30 units, was a blink at 825), Fling's landing is 420 behind Singed with 420
+    /// (a cap dropped the target 420 from where it stood, short of that point), Cataclysm leaps up to its 650 range with 700, the knock-ups that
+    /// draw their bounce from a ring (Dragon Strike 50 to 100, Unstoppable Force 75 to 125, both with 100) fly for one fixed time, and Safeguard
+    /// passes the gap between the bodies with the target's centre as its point, so the cap stopped Lee Sin a body short of the ward, inside
+    /// the wall a ward behind one stands beyond (batch 659 report: "W on target close to wall fails"). A call that passes the move's own
+    /// length (Tumble, Pounce's partners, Bandage Toss, the knock-ups whose ring equals it) keeps its speed. A sized move (an
+    /// <c>IdealDistance</c> to a point) keeps the landing rule it had: the furthest walkable point, not a body-fitted placement.
+    /// </para>
     /// </summary>
     private void Move(BbCall call)
     {
@@ -96,20 +104,28 @@ internal sealed partial class BbNativeHandlers
         var dx = target.X - origin.X;
         var dz = target.Z - origin.Z;
         var distance = Math.Sqrt(dx * dx + dz * dz);
-        var travel = distance;
+        var travel = Math.Max(0.0, distance - Math.Max(0.0, Sum(call, "MoveBackBy")));
         var ideal = Sum(call, "IdealDistance");
-        var capped = ideal > 0.0 && targetValue is not Entity;
-        if (capped) travel = Math.Min(travel, ideal);
-        travel = Math.Max(0.0, travel - Math.Max(0.0, Sum(call, "MoveBackBy")));
         var requested = distance <= 1e-9 ? origin : new Position2(origin.X + dx / distance * travel, origin.Z + dz / distance * travel);
         var (type, postpone, face) = MoveOptions(call);
-        _host.Moves.Start(unit, requested, Sum(call, "Speed"), Sum(call, "Gravity"), type, postpone, face, fitBody: !capped);
+        _host.Moves.Start(unit, requested, IdealSpeed(Sum(call, "Speed"), travel, ideal), Sum(call, "Gravity"), type, postpone, face,
+            fitBody: !(ideal > 0.0 && targetValue is not Entity));
     }
+
+    /// <summary>
+    /// The speed of a move of <paramref name="travel"/> units whose call gives <paramref name="speed"/> for <paramref name="ideal"/> units:
+    /// scaled by travel / ideal when both are above 0, so the move lasts ideal / speed (see <see cref="Move"/>); unchanged otherwise. The result is
+    /// a float32, as every number the natives read is (<see cref="Sum"/>): a knock-up whose ring equals its ideal distance keeps its speed exactly.
+    /// </summary>
+    internal static double IdealSpeed(double speed, double travel, double ideal) =>
+        ideal > 0.0 && travel > 0.0 ? (float)(speed * travel / ideal) : speed;
 
     /// <summary>
     /// <c>BBMoveAway</c>: the knock-back. <c>Distance</c> is how far from <c>AwayFrom</c> (a point or a unit) the unit ends (the shipped
     /// calls add the current distance in a variable: Headbutt's 700 + distance pushes 700 further), <c>IdealDistance</c> above 0 caps the
-    /// way travelled (Maokai's, Riven's and Caitlyn's 225 pushes pass 100 and last the 0.5 s of their root at speed 200).
+    /// way travelled (Maokai's, Riven's and Rammus's 225 + gap pushes pass 100 and last the 0.5 s of their root at speed 200; the League wiki's
+    /// knock-backs of Riven's third strike and Powerball are of the order of that cap, not of 225). Batch 659 left pushes on this reading:
+    /// <see cref="Move"/>'s ideal-distance rule scales a dash's speed, and a capped push already lasts ideal / speed.
     /// <para>
     /// Reconstruction (W26d, 19 October 2026): the "current distance" that call subtracts is the one <c>BBDistanceBetweenObjects</c> returns, so
     /// when <c>AwayFrom</c> is a unit it is the gap between the two bodies (centre distance minus both collision radii, never below 0) and

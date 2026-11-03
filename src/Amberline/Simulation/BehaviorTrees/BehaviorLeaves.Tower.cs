@@ -17,14 +17,16 @@ public sealed record TowerHooks(
     // CastUnitSpell: the unit casts its own slot's spell on the target (the slot's cooldown is checked and started by the cast).
     Action<Entity, int, Entity>? Cast = null,
     // The unit's target line (0x6D with the 0xC8 outline), sent only on a change (CombatService.PublishTargetLine).
-    Action<Entity, Entity?>? TargetLine = null);
+    Action<Entity, Entity?>? TargetLine = null,
+    // Batch 662: Turret.luaobj's FindTargetInAcR for a guardian, the turret ladder within its acquisition range (GuardianTurretAi).
+    Func<Entity, Entity?>? Acquire = null);
 
 /// <summary>Batch 501: an AI tree's own unit (GetUnitAISelf) and the targets its tree set on it.</summary>
 public sealed class BehaviorUnitAi(Entity self)
 {
     public Entity Self { get; } = self;
 
-    /// <summary>Get/Set/ClearUnitAIAttackTarget. Its target line follows it (<see cref="BehaviorLeaves.SetAttackTarget"/>).</summary>
+    /// <summary>Get/Set/ClearUnitAIAttackTarget.</summary>
     public Entity? AttackTarget { get; internal set; }
 
     /// <summary>SetUnitAIAssistTarget. No tree reads it back.</summary>
@@ -35,8 +37,9 @@ public sealed class BehaviorUnitAi(Entity self)
 }
 
 /// <summary>
-/// Batch 501: the leaves of the shipped tower AI, <c>OdinTowerBehaviorTrees.xml</c> (LEVELS/Map8/Scripts), which the capture point guardians
-/// run (<see cref="BehaviorTreeQuestHost"/>, OdinTowerBehavior). Each leaf's inputs and outputs are the parameter names of its node in the
+/// Batch 501: the leaves of the shipped tower AI, <c>OdinTowerBehaviorTrees.xml</c> (LEVELS/Map8/Scripts). Batch 662: no unit runs it; the
+/// guardians run Turret.luaobj (<see cref="GuardianTurretAi"/>, owner, 3 November 2026: "Normal turret", the map 8 AI list's OdinTower lines are
+/// commented out), and the leaves stay with the tree file the loader reads. Each leaf's inputs and outputs are the parameter names of its node in the
 /// shipped XML. Every node type the reachable trees use has a leaf: OdinTowerBehavior and its three procedures OdinTower_CheckForChampions,
 /// OdinTowerCanCastAbility0 and OdinTowerCastAbility0 (XML :79, :605, :610). The other 15 trees are called by no shipped tree; of their node
 /// types only the generic ones are here (ClearUnitAIAttackTarget, GreaterEqualFloat, LessInt, EqualString).
@@ -74,8 +77,8 @@ public static partial class BehaviorLeaves
 
         // The AI's targets. Reconstruction: the AI is the tree's own unit; a node without a Unit input acts on it.
         ["GetUnitAIAttackTarget"] = call => call.Ai is { } ai ? Set(call, ai.AttackTarget) : NoAi(call),
-        ["SetUnitAIAttackTarget"] = call => call.Ai is { } ai ? SetAttackTarget(call.Context, ai, call.Unit("TargetUnit")) : NoAi(call),
-        ["ClearUnitAIAttackTarget"] = call => call.Ai is { } ai ? SetAttackTarget(call.Context, ai, null) : NoAi(call),
+        ["SetUnitAIAttackTarget"] = call => call.Ai is { } ai ? SetAttackTarget(ai, call.Unit("TargetUnit")) : NoAi(call),
+        ["ClearUnitAIAttackTarget"] = call => call.Ai is { } ai ? SetAttackTarget(ai, null) : NoAi(call),
         ["TestUnitAIAttackTargetValid"] = call => call.Ai is { } ai
             ? Test(IsValidAttackTarget(call.Context, ai) == call.Flag("ReturnSuccessIf")) : NoAi(call),
         ["SetUnitAIAssistTarget"] = call =>
@@ -103,25 +106,11 @@ public static partial class BehaviorLeaves
         ["CastUnitSpell"] = CastUnitSpell,
     };
 
-    /// <summary>
-    /// The AI's attack target, which its target line follows. Reconstruction (batch 481's rule, now the tree's): the guardian's record names
-    /// the beam <c>LaserSight_beam.troy crystal</c> and the 0x6D is the AI's target, so the line goes out when the tree sets the target and
-    /// clears when it is cleared or dropped (<see cref="DropInvalidAttackTarget"/>).
-    /// </summary>
-    internal static BehaviorStatus SetAttackTarget(BehaviorTreeContext context, BehaviorUnitAi ai, Entity? target)
+    /// <summary>The AI's attack target.</summary>
+    private static BehaviorStatus SetAttackTarget(BehaviorUnitAi ai, Entity? target)
     {
         ai.AttackTarget = target;
-        context.Capture?.Tower?.TargetLine?.Invoke(ai.Self, target);
         return BehaviorStatus.Success;
-    }
-
-    /// <summary>
-    /// Reconstruction: the engine forgets a target that is no longer valid (dead or gone, no longer attackable, out of the team's sight), so
-    /// its line clears even on ticks where the tree does not reach its target test (no friendly champion near, OdinTower_CheckForChampions).
-    /// </summary>
-    internal static void DropInvalidAttackTarget(BehaviorTreeContext context, BehaviorUnitAi ai)
-    {
-        if (ai.AttackTarget is not null && !IsValidAttackTarget(context, ai)) SetAttackTarget(context, ai, null);
     }
 
     // Reconstruction: TestUnitAIAttackTargetValid's native did not ship. A valid target is set, still in the world, attackable by the unit

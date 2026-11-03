@@ -225,6 +225,8 @@ public static class Program
         dashboard?.Map(app, steps, tls);
         // NOT RETAIL: Settings (what the first run asked) and Uninstall Amberline, under the gated /host pages.
         if (host is not null) HostSettingsPage.Map(app, host, steps!, () => HostDashboard.RunningGames(manager).Count, signUp!);
+        // NOT RETAIL: the host's notice (Advanced's Send a notice to players) leads the Home's News while it stands; retail's Home had none.
+        PlatformHomeNotice? hostNotice = null;
         PlatformManagement.Map(app, accounts, settings.HttpPort, settings.RemotePort,
             (account, body) => rtmp.Push(account, body, "cn"), publicRegistrationUrl?.AbsoluteUri,
             () => PlatformManagement.Online(accounts, sessions, games, chat), remoteAccess,
@@ -232,6 +234,7 @@ public static class Program
             {
                 var notice = AirDtos.BroadcastNotification(text, severity);
                 services.Broadcast = text is null ? null : notice;
+                hostNotice = text is null ? null : new PlatformHomeNotice("Notice from the host", text, DateTimeOffset.UtcNow);
                 return rtmp.Broadcast(notice);
             }, sessions, host is null ? null : HostInvite.InvitePath);
         PlatformStore.Map(app, accounts, sessions, airRoot, (account, body) => rtmp.Push(account, body, "cn"));
@@ -245,8 +248,11 @@ public static class Program
         PlatformHome.MapImages(app, airRoot);
         app.MapGet("/story", () => Results.Content(PlatformHome.RenderStory(), "text/html"));
         PlatformHome.MapLadder(app, accounts, settings.RemotePort, remoteAccess);
-        app.MapGet("/landing", () => Results.Content(PlatformHome.RenderLanding(
-            PlatformHomeModel.Testing(((System.Collections.ICollection)games.List()).Count), accounts.StoreCatalog), "text/html"));
+        app.MapGet("/landing", () => Results.Content(PlatformHome.RenderLanding(PlatformHomeModel.Testing(((System.Collections.ICollection)games.List()).Count) with
+        {
+            Stats = PlatformHome.Snapshot(accounts, PlatformManagement.Online(accounts, sessions, games, chat).Length,
+                steps?.ServerName ?? settings.ServerName, hostNotice, DateTimeOffset.UtcNow),
+        }, accounts.StoreCatalog), "text/html"));
         using var stop = new CancellationTokenSource();
         app.Lifetime.ApplicationStopping.Register(stop.Cancel);
         await rtmp.StartAsync(stop.Token);

@@ -118,6 +118,13 @@ public sealed partial class Entity
     /// </summary>
     public uint AnimationSerial { get; set; }
 
+    /// <summary>
+    /// Whether this unit's client holds an animation lock: a play with the lock bit (0xB8 flag 0x40, <c>BBPlayAnimation Lock=true</c>, Lock
+    /// left out reads true) sets it and only the 0x2B unlock clears it; the client refuses every other play while it is set (batch 520).
+    /// Batch 663: a cast pressed during a dash waits for the landing only while this is set (<c>SpellSystem.HandleCastRequest</c>).
+    /// </summary>
+    public bool AnimationLocked { get; set; }
+
     /// <summary>Loaded character animation weights; empty snapshots use the base attack.</summary>
     public IReadOnlyList<float> BasicAttackAnimationProbabilities { get; set; } = [];
 

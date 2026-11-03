@@ -232,9 +232,9 @@ public static class BbSingedChecks
         TestAssert.True(Buff(match.Foe, "Fling") is not null, "the enemy is stunned for the flight");
         TestAssert.Near(100.0, Dealt(match, "Foe", cast, match.Now), 0.01, "100 magic damage at rank one (no ability power, no resistance)");
         match.Advance(1.5);
-        // The script's IdealDistance of 420 caps the travel from the target's own start (BBMove, a reconstruction): 420 along the path, which
-        // ends 320 behind him here because the target starts 100 in front of him.
-        TestAssert.Near(420.0, Dist(match.Foe.Position, start), 6.0, "it is carried 420 along its path");
+        // Restated in batch 659: the target is thrown to LandPos, 420 behind him; the script's IdealDistance of 420 sizes the throw's speed and
+        // caps nothing (BbNativeHandlers.Move), so the flight is 520 here (the target starts 100 in front of him) and lasts 420 / 1000 s.
+        TestAssert.Near(420.0, Dist(match.Foe.Position, match.Hero.Position), 6.0, "it lands 420 behind him");
         TestAssert.True(match.Foe.Position.X < match.Hero.Position.X, "behind him, on the far side");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));
     }

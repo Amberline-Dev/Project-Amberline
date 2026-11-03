@@ -255,6 +255,8 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
         bool blend = true, float duration = 0)
     {
         unit.AnimationSerial++;
+        // A play the client refuses while locked leaves the lock as it was; an accepted one with the lock bit sets it.
+        unit.AnimationLocked |= lockAnimation;
         Enqueue(SpellPackets.PlayAnimation(unit.NetId, name, loop, lockAnimation, blend, duration));
     }
 
@@ -264,6 +266,7 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
     public void StopAnimation(Entity unit, bool blend = true)
     {
         unit.AnimationSerial++;
+        unit.AnimationLocked = false;
         Enqueue(SpellPackets.StopAnimation(unit.NetId, blend));
     }
 

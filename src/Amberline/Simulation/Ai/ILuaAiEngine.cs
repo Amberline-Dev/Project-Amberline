@@ -76,3 +76,9 @@ public interface ILuaAiEngine
     /// </summary>
     void SetAiState(Entity unit, double state);
 }
+
+/// <summary>
+/// Batch 662: an engine whose host runs <c>DATA/Scripts/Turret.luaobj</c> on every unit it is handed, whatever its unit type: the capture
+/// point guardians' host (<c>BehaviorTrees.GuardianTurretAi</c>), whose units are not turret objects.
+/// </summary>
+public interface ILuaAiTurretScriptEngine : ILuaAiEngine;

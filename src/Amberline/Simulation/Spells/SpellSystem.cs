@@ -290,12 +290,14 @@ public sealed partial class SpellSystem
             return Failure("spell slot is sealed (BBSealSpellSlot)", SpellCastFailure.Disabled);
         // the owner's can-use callback with the spell's own flags: silence, fear, sleep,
         // taunt, suppression and the other cannot-cast states, and CantCastWhileRooted (Deceive, EzrealArcaneShift, BlindMonkQTwo,
-        // BlindMonkWOne and Pounce) for a unit that cannot move. A cast requested during the hero's own dash is queued, so the
-        // forced move does not count as a root here (owner decision B3 #10, HandleCastRequest).
+        // BlindMonkWOne and Pounce) for a unit that cannot move. A cast requested during a dash whose clip is locked is queued until
+        // the landing, so that forced move does not count as a root here (owner decision B3 #10, HandleCastRequest); during an unlocked
+        // dash the cast goes at once (owner, 3 November 2026), so the dash's CanMove-off counts, as it does for Flash and as the client
+        // greys the slot.
         SpellData? spellData = null;
         try { spellData = CastSpellData(hero, slot); }
         catch (InibinException) { /* no spell record: every flag takes the client default (false) */ }
-        if (!SpellOwnerGate.CanUse(hero, spellData))
+        if (!SpellOwnerGate.CanUse(hero, spellData, forcedMoveClearsCanMove: !hero.AnimationLocked))
             return Failure("caster cannot cast in its control state", SpellCastFailure.Disabled);
         return null;
     }
@@ -340,34 +342,38 @@ public sealed partial class SpellSystem
         // typed server boundary equally strict before it clears any existing
         // pending order or champion channel.
         if (!Finite(request.Position) || !Finite(request.EndPosition)) return false;
+        var queued = hero.PendingCast;
         hero.PendingCast = null;
         var req = request;
-        // Playtest B3 #10 (owner decision, 26 Sept 2026): every hero dash plays
-        // a locked clip (BlindMonkQTwoDash, BlindMonkWOneDash, VayneTumble,
-        // Pounce) and the stock client drops any gesture until the landing
-        // 0x2B unlocks it, so every cast requested mid-dash queues without an
-        // approach. Tick fires it on the first spell tick after the landing.
-        // Foreign displacements carry a Stun that already rejects spells; their
-        // summoners (Cleanse, Ignite) keep the immediate path.
+        // Owner decision, 3 November 2026 ("Cast at once", batch 663; replaces playtest B3 #10's "every cast requested mid-dash queues"):
+        // the original game casts a spell pressed during a dash at once (Riven's Blade of the Exile and Ki Burst during Valor: the shipped
+        // Broken Wings seals only Valor for its own dash, a block a retail queue would not need). Only a dash whose clip is locked holds it:
+        // its script's BBPlayAnimation Lock=true (Lee Sin's Q2 and W, Tumble, Pounce, Bladesurge, Broken Wings' strikes ...), whose lock the
+        // stock client keeps until the landing's 0x2B unlock and while which it refuses every other play, so the cast's gesture would be
+        // lost (B3 #10: Lee Sin's Q2 -> R showed no kick). Such a cast queues without an approach, in press order (batch 659), and Tick
+        // fires it on the first spell tick after the landing. Valor plays Spell3 with Lock=false, Rocket Jump, Cataclysm and the net's flip
+        // play no clip. What a script blocks still blocks: the spell's own flags, SetCanCast, a seal, a silence (CanCast refuses at once).
+        // Foreign displacements carry a Stun that already rejects spells; their summoners (Cleanse, Ignite) keep the immediate path.
+        var held = hero.AnimationLocked;
         var dashing = hero.Alive && hero.ForcedMove is { Completed: false } move &&
-            move.SourceNetId == hero.NetId;
+            move.SourceNetId == hero.NetId && held;
         // A script dash records the unit that ADDED its buff as the move's source (BbScriptMoves.Origin: Rocket Grab's pull is Blitzcrank's), and
         // Lee Sin's Q2 buff is added with the marked enemy as its attacker, so his own dash is not "his own" by that id. For a champion spell the
         // source does not matter: a foreign displacement stuns, and CanCast refuses the stunned hero before this flag is read.
         // A fear wander is a walk, not a dash with a locked clip (the client plays the run, as every other reader of a "Fear" move treats it),
         // so a cast that passes OnCanUseSpell while feared (CanCastWhileDisabled: Remove Scurvy, batch 314) is not queued behind it.
-        var moving = hero.Alive && hero.ForcedMove is { Completed: false, Effect: not "Fear" };
+        var moving = hero.Alive && hero.ForcedMove is { Completed: false, Effect: not "Fear" } && held;
         if (req.IsSummoner)
         {
             // A summoner slot a script sealed (Zhonya's stasis, Yorick's ghouls, Gate, Xerath's Locus, Skarner's Impale ...) is disabled in the
             // second spellbook's cast bits (SpellSlotSeals); the refusal comes before any queueing or approach.
             if (hero.SpellSeals.IsSealed(true, req.Slot)) return false;
-            // Summoners share the queue; HandleSummonerCast validates at landing.
-            // Flash and Revive fall through and are refused now (retail greys them).
+            // Summoners share the queue behind a locked dash; HandleSummonerCast validates at landing. During an unlocked dash
+            // they cast at once. Flash and Revive fall through and are refused now (retail greys them).
             if (dashing && (uint)req.Slot < SummonerSlots.Length && !SummonerRefusesDash(hero, req.Slot))
             {
                 OnSpellRequestAccepted(hero);
-                hero.PendingCast = new PendingCastState(req, now + PendingCastTimeoutSeconds);
+                hero.PendingCast = QueueBehindDash(queued, new PendingCastState(req, now + PendingCastTimeoutSeconds));
                 return true;
             }
             // Reconstruction: a unit-targeted summoner (Ignite, Exhaust, Smite) requested out of range walks into range like any
@@ -396,9 +402,9 @@ public sealed partial class SpellSystem
             if (point is null) return false;
             OnSpellRequestAccepted(hero);
             StopCastGesture(hero);
-            hero.PendingCast = new PendingCastState(req,
-                now + PendingCastTimeoutSeconds)
+            var pending = new PendingCastState(req, now + PendingCastTimeoutSeconds)
                 { LastMovePoint = point, NextMoveRetryAt = now + HeroAttackOrderSystem.ScanSeconds };
+            hero.PendingCast = moving ? QueueBehindDash(queued, pending) : pending;
             ApproachCastPoint(hero, req, point.Value);
             return true;
         }
@@ -614,10 +620,47 @@ public sealed partial class SpellSystem
         _championDispatcher.TickLate(this, dt);
     }
 
+    /// <summary>
+    /// Batch 659 (community report of 3 November 2026, "E > R > W cancel not possible?"): a cast pressed during the hero's own locked dash
+    /// joins the casts already queued behind that dash instead of replacing them (owner decision B3 #10 queues them until the landing), so
+    /// three presses during Lee Sin's Q2 give all three, in press order. A second press of a slot already queued replaces it and goes last.
+    /// Batch 663 (owner, 3 November 2026): only a dash whose clip is locked queues; Valor's (Lock=false) casts Blade of the Exile and Ki
+    /// Burst at once, as retail does.
+    /// </summary>
+    private static PendingCastState QueueBehindDash(PendingCastState? queued, PendingCastState entry)
+    {
+        PendingCastState? head = null, tail = null;
+        for (var item = queued; item is not null; item = item.Next)
+        {
+            if (item.Request.IsSummoner == entry.Request.IsSummoner && item.Request.Slot == entry.Request.Slot) continue;
+            if (tail is null) head = item;
+            else tail.Next = item;
+            tail = item;
+        }
+        entry.Next = null;
+        if (tail is null) return entry;
+        tail.Next = entry;
+        return head!;
+    }
+
     private void TickPendingCast(Entity hero)
     {
         var pending = hero.PendingCast;
         if (pending is null) return;
+        // A cast queued after another waits for that one's cast frame, as a press inside a windup is held (SpellWindup, owner decision of
+        // 18 October 2026): Ki Burst queued after Blade of the Exile fires once the blade is out, so it takes the blade's 360 range.
+        if (pending.AfterPrevious && SpellWindup.IsWindingUp(hero, settled: true)) return;
+        TickPendingCastHead(hero, pending);
+        // The next cast queued behind the same dash takes the head once this one has fired or been dropped (and nothing replaced the queue).
+        if (pending.Next is { } next && hero.PendingCast is null && hero.Alive)
+        {
+            next.AfterPrevious = true;
+            hero.PendingCast = next;
+        }
+    }
+
+    private void TickPendingCastHead(Entity hero, PendingCastState pending)
+    {
         // Batch 362 (owner finding 3, Ashe E: "does not cast when Ashe arrives the required spot when it's really far away"): the give-up clock
         // restarts each time a champion's walk closes in on its point, so a walk that makes progress fires on arrival however long it takes
         // (Hawkshot from 5000 units walks about eleven seconds, and the clock used to drop the cast on the way). A hero that does not get closer

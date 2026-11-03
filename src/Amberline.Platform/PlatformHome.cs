@@ -10,8 +10,15 @@ namespace Amberline.Platform;
 public sealed record PlatformHomeNotice(string Title, string Description,
     DateTimeOffset? PublishedAt = null, DateTimeOffset? ExpiresAt = null, string? Link = null, string? Thumb = null);
 
+/// <summary>
+/// The server's own figures for the Home, read per request by <see cref="PlatformHome.Snapshot"/>: counts and times, never summoner names.
+/// NOT RETAIL: retail's Home was Riot's website, so these figures are this server's own.
+/// </summary>
+public sealed record PlatformHomeStats(string? ServerName, PlatformHomeNotice? Notice, int Online, int GamesFinished, int GamesToday,
+    TimeSpan? SinceLastGame, IReadOnlyList<string> FreeChampions);
+
 public sealed record PlatformHomeModel(string ClientIdentity, IReadOnlyList<string> ChampionNames,
-    IReadOnlyList<PlatformHomeNotice> Notices, bool CustomGamesEnabled, int OpenPracticeGames)
+    IReadOnlyList<PlatformHomeNotice> Notices, bool CustomGamesEnabled, int OpenPracticeGames, PlatformHomeStats? Stats = null)
 {
     public static PlatformHomeModel Testing(int openPracticeGames = 0) => new(
         "1.45.11_10_04_15_28", AirGameDtos.ChampionNames.Values.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
@@ -40,8 +47,15 @@ public static partial class PlatformHome
         ? JsonSerializer.Deserialize<HomeContent>(json, JsonSerializerOptions.Web) ?? throw new InvalidDataException("home/home.json is empty.")
         : new(null, null, null);
 
-    private static readonly PlatformHomeNotice[] NeutralNews =
-        [new("Welcome", "Create a custom game, join a queue against other summoners or bots, or visit the store.")];
+    // NOT RETAIL: the server's own rows (retail's Home was Riot's website). The how-to lines name no game and no publisher.
+    private static PlatformHomeNotice[] NeutralNews(string? serverName) =>
+    [
+        new($"Welcome to {ServerLabel(serverName)}", "Create a custom game, join a queue against other summoners or bots, or visit the store."),
+        new("Invite friends", "Add friends from your friends list. Friends on another PC join with the Play file your host sends them."),
+        new("Custom games", "Create a custom game to pick the map, the teams and the bots, then invite friends to it."),
+        new("Ladder rankings", "Open Ladder Rankings from a summoner's profile to see the recorded wins and losses on this server."),
+        new("Store", "Unlock champions in the store. The free champions listed on the right play for everyone."),
+    ];
 
     private static readonly Regex Token = new(@"\{\{([a-z-]+)(?::([^}]*))?\}\}", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
@@ -97,17 +111,22 @@ public static partial class PlatformHome
 
     /// <summary>
     /// The Home: the operator's <c>home/landing.html</c> with its tokens filled, or the neutral page. The News rows are the model's
-    /// notices, else the operator's, else one welcome row; the panels come from the store catalog and the sales live today.
+    /// notices, else the operator's, else the server's own rows (the welcome and the how-to lines); the host's notice leads them. The
+    /// panels come from the store catalog, the sales live today and the server's figures (<see cref="PlatformHomeStats"/>).
     /// </summary>
     public static string RenderLanding(PlatformHomeModel? model = null, PlatformStoreCatalog? catalog = null)
     {
         model ??= PlatformHomeModel.Testing();
-        var notices = model.Notices.Count > 0 ? model.Notices : Content().News ?? NeutralNews;
+        var stats = model.Stats;
+        var rows = model.Notices.Count > 0 ? model.Notices : Content().News ?? NeutralNews(stats?.ServerName);
+        if (stats?.Notice is { } notice) rows = [notice, .. rows];
         return Token.Replace(PlatformContent.Read("home/landing.html") ?? NeutralLanding, token => token.Groups[1].Value switch
         {
             "friz-face-css" => PlatformStore.FrizFaceCss,
             "friz-stack" => PlatformStore.FrizStack,
-            "news" => string.Join("", notices.Take(12).Select(RenderNotice)),
+            "news" => string.Join("", rows.Take(12).Select(RenderNotice)),
+            "server" => RenderServer(model),
+            "free" => RenderFree(stats),
             "featured" => RenderFeatured(catalog, token.Groups[2].Success ? token.Groups[2].Value : PlatformStoreCatalog.NewItemIds[0]),
             "on-sale" => RenderOnSale(catalog),
             "buttons" => RenderButtons(catalog, token.Groups[2].Value),
@@ -117,6 +136,23 @@ public static partial class PlatformHome
 
     /// <summary>The Journal: the operator's static <c>home/story.html</c>, or the neutral page.</summary>
     public static string RenderStory() => PlatformContent.Read("home/story.html") ?? NeutralStory;
+
+    /// <summary>
+    /// The server's own figures, read per request: the online count, the games recorded (distinct game ids over every account's
+    /// results), those completed in the last 24 hours, the time since the latest game with a completion time, and the free list.
+    /// NOT RETAIL: no summoner names. The public port serves this page to anyone; the ladder names summoners only to a tunnel token.
+    /// </summary>
+    public static PlatformHomeStats Snapshot(PlatformAccounts accounts, int online, string? serverName, PlatformHomeNotice? notice, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(accounts);
+        var finished = accounts.ListAccounts().SelectMany(account => accounts.ResultsFor(account.Id))
+            .GroupBy(result => result.GameId).Select(group => group.Max(result => result.CompletedAt)).ToArray();
+        var timed = finished.Where(at => at != default).ToArray();
+        return new PlatformHomeStats(serverName, notice, online, finished.Length,
+            timed.Count(at => now - at < TimeSpan.FromHours(24)), timed.Length == 0 ? null : now - timed.Max(),
+            accounts.EconomyRules.FreeChampionIds.Where(AirGameDtos.ChampionNames.ContainsKey)
+                .Select(id => AirGameDtos.ChampionNames[id]).ToArray());
+    }
 
     // The store path StoreController builds for a product (LobbyLanding "store" action) and the champion window ids it parses.
     private static string StorePath(PlatformStoreItem item) => item.Kind == "CHAMPION"
@@ -178,6 +214,31 @@ public static partial class PlatformHome
         ? $"<a class=btn style=\"left:186px;width:88px\" href=\"#\" onclick=\"{InfoCall(item)}\">Info</a>" +
           $"<a class=btn style=\"left:283px\" href=\"#\" onclick=\"return store('{StorePath(item)}')\">Unlock</a>"
         : string.Empty;
+
+    // NOT RETAIL: the server's own panel (its name, a welcome line and the counts). Counts and times only: no summoner name.
+    private static string RenderServer(PlatformHomeModel model)
+    {
+        var stats = model.Stats;
+        if (stats is null) return string.Empty;
+        var last = stats.SinceLastGame is { } since ? $"Last game: {Ago(since)}" : "Last game: none yet";
+        return $"<div id=srv class=pnl><h2>Server</h2><div class=body><b class=srvname>{WebUtility.HtmlEncode(ServerLabel(stats.ServerName))}</b>" +
+            "<p class=srvline>Play with friends, against other summoners or against bots.</p>" +
+            $"<p>Online now: {stats.Online}</p><p>Games finished: {stats.GamesFinished}</p><p>Finished today: {stats.GamesToday}</p>" +
+            $"<p>{last}</p><p>Custom games in the lobby: {model.OpenPracticeGames}</p></div></div>";
+    }
+
+    // NOT RETAIL: the free list of the Platform's economy rules (a fixed set; there is no weekly rotation to show).
+    private static string RenderFree(PlatformHomeStats? stats) => stats is null or { FreeChampions.Count: 0 } ? string.Empty
+        : $"<div id=free class=pnl><h2>Free to play</h2><div class=body><p>{WebUtility.HtmlEncode(string.Join(", ", stats.FreeChampions))}</p></div></div>";
+
+    private static string ServerLabel(string? name) => string.IsNullOrWhiteSpace(name) ? "this server" : name.Trim();
+
+    private static string Ago(TimeSpan span) => span.TotalMinutes < 1 ? "just now"
+        : span.TotalHours < 1 ? Plural((int)span.TotalMinutes, "minute") + " ago"
+        : span.TotalDays < 1 ? Plural((int)span.TotalHours, "hour") + " ago"
+        : Plural((int)span.TotalDays, "day") + " ago";
+
+    private static string Plural(int count, string unit) => $"{count} {unit}{(count == 1 ? "" : "s")}";
 
     /// <summary>
     /// The client's RSS feeds (<c>rssFeedJoJURL</c>, <c>rssFeedStoreURL</c>): the model's notices, else the operator's dated items of
@@ -258,6 +319,7 @@ public static partial class PlatformHome
         #list .date{position:absolute;right:12px;top:12px;color:#5f7a99;font-size:11px}
         #list .text{position:absolute;left:128px;right:16px;top:34px;height:38px;overflow:hidden;color:#8fa7c2;font:12px/19px Arial,sans-serif}
         #side{position:absolute;left:648px;top:14px;width:391px}#side .pnl{position:relative;margin:0 0 14px}#feat{height:140px}#sale{height:150px}
+        .body{padding:6px 14px 8px;font:12px/18px Arial,Helvetica,sans-serif;color:#d4d8e1}.body p{margin:0}.srvname{display:block;color:#fff;font:bold 15px/20px Arial,Helvetica,sans-serif}.srvline{color:#8fa7c2}
         .ico{position:absolute;left:12px;top:34px;width:70px;height:70px;border:2px solid #1e4272;background:#000 no-repeat 50% 0;-webkit-background-size:70px auto;background-size:70px auto}
         .ico.wide{-webkit-background-size:auto 70px;background-size:auto 70px;background-position:50% 50%}
         .inm{position:absolute;left:98px;right:12px;top:36px;color:#fff;font:bold 15px/18px Arial,sans-serif;white-space:nowrap;overflow:hidden}
@@ -268,7 +330,7 @@ public static partial class PlatformHome
         .btn:hover{color:#fff;background:#1f66b3}#feat .btn{top:104px}#sale .btn{top:112px}
         </style></head><body><div id=home>
         <div id=news class=pnl><h2>News</h2><ul id=list>{{news}}</ul></div>
-        <div id=side>{{featured}}{{on-sale}}</div>
+        <div id=side>{{server}}{{featured}}{{on-sale}}{{free}}</div>
         </div>
         <script type="text/javascript">
         function airNav(o){try{if(window.airHostNavigate){window.airHostNavigate(JSON.stringify(o));} }catch(e){}return false;}

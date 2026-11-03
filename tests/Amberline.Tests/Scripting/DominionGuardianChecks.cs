@@ -22,11 +22,12 @@ public static class DominionGuardianChecks
     // Point C: a wave minion on a point moves its capture. Batch 499: waves leave only the points a team holds (SpawnMinionWave), so before a
     // capture no wave walks, and none reaches point C.
     private const int PointIndex = 2;
-    // Batch 501: where an enemy champion stands to draw the guardian's fire, inside the shipped tree's 600 (OdinTowerBehaviorTrees.xml:7-68).
+    // Where an enemy champion stands to draw the guardian's fire, inside its 950 acquisition range (batch 662: Turret.luaobj; batch 501's tree
+    // needed 600).
     private const double EnemyDistance = 500.0;
-    // Batch 501: where the Order champion stands so the guardian may fire: inside the tree's 700 (DefenseRadius), and on the far side, so the
-    // Chaos champion stays beyond the idle Order Annie's acquisition (750 by default, GameData AcquisitionRange): her hit would cancel the
-    // capture channel (OdinCaptureChannel BuffOnPreDamage, a hero's damage) and stand in for the guardian's.
+    // Where the Order champion stands beside its point: on the far side, so the Chaos champion stays beyond the idle Order Annie's acquisition
+    // (750 by default, GameData AcquisitionRange): her hit would cancel the capture channel (OdinCaptureChannel BuffOnPreDamage, a hero's
+    // damage) and stand in for the guardian's. Batch 662: the guardian no longer needs her there (batch 501's tree needed her within 700).
     private const double AllyDistance = 650.0;
 
     private sealed record Match(MatchRuntime Runtime, Entity Order, Entity Chaos, Entity InitialGuardian, BehaviorTreeQuestHost Quests,
@@ -45,10 +46,9 @@ public static class DominionGuardianChecks
     }
 
     /// <summary>
-    /// The guardian of an Order point casts its attack on a Chaos champion within its range and never on an Order one. Batch 501 (owner,
-    /// 31 October 2026: keep the shipped gate): the guardian runs the shipped OdinTowerBehavior (LEVELS/Map8/Scripts/OdinTowerBehaviorTrees.xml
-    /// :7-68 AcquisitionRange and AttackRadius 600, DefenseRadius 700; OdinTower_CheckForChampions :968-1043), so it fires only while a champion
-    /// of its own team is within 700 and an enemy within 600. Batch 466 wrote this check for its own 1000-range attacker (Chaos at 800).
+    /// The guardian of an Order point casts its attack on a Chaos champion within its range and never on an Order one. Batch 466 wrote this
+    /// check for its own 1000-range attacker (Chaos at 800); batch 501's tree needed 600. Batch 662: the guardian runs Turret.luaobj
+    /// (acquisition 950, no ally gate; see the check below).
     /// </summary>
     [Check("dominion.guardian-of-an-owned-point-attacks-an-enemy-champion-in-its-range", TimeoutSeconds = 300)]
     public static void TheGuardianOfAnOwnedPointAttacksAnEnemyChampionInItsRange()
@@ -77,10 +77,103 @@ public static class DominionGuardianChecks
     }
 
     /// <summary>
+    /// Batch 662 (owner, 3 November 2026: "Normal turret"): the shipped map 8 AI list (LEVELS/Map8/Scripts/AiEntityDataFile.dat) has the lines
+    /// that bound the team guardians to the OdinTower tree commented out (18-19), so the guardian of an owned point attacks like a turret with
+    /// no champion of its own team near (the wiki's Capture point page: an allied point "will attack enemy units like a turret"; a point
+    /// minions attack "will still attack"). It runs the plain turret AI, DATA/Scripts/Turret.luaobj: it acquires within its record's
+    /// AcquisitionRange 950 (OdinNeutralGuardian.inibin), fires its Spell1 OdinGuardianSpellAttackCast (CastRange 1000, Cooldown 1) once a
+    /// second, and takes a minion before a champion (the turret ladder, CombatService.AcquireTurretTarget). The Order champion is at its base.
+    /// </summary>
+    [Check("dominion.guardian-of-an-owned-point-fires-like-a-turret-with-no-ally-near", TimeoutSeconds = 300)]
+    public static void TheGuardianOfAnOwnedPointFiresLikeATurretWithNoAllyNear()
+    {
+        using var match = StartMatch();
+        Capture(match, match.Order);
+        var (runtime, guardian, chaos) = (match.Runtime, match.Guardian, match.Chaos);
+        match.Order.Position = match.OrderHome;
+        chaos.Position = Offset(guardian, -1100.0);
+        var idle = CastAt(guardian);
+        Advance(runtime, 2.0);
+        TestAssert.True(CastAt(guardian) == idle, "a Chaos champion 1100 away, past the guardian's 950 acquisition range, draws no shot");
+
+        chaos.Position = Offset(guardian, -EnemyDistance);
+        var health = chaos.Health;
+        TestAssert.True(Until(runtime, () => chaos.Health < health - 50.0, 1.5),
+            $"with no Order champion near, the guardian fires on the Chaos champion {EnemyDistance:F0} away ({health:F0} to {chaos.Health:F0})");
+
+        // A Chaos minion at the empty point (beyond the point's capture area): the champion leaves, the guardian takes the minion.
+        chaos.Position = match.ChaosHome;
+        var minion = runtime.World.Register(new Entity(runtime.World.Allocate(UnitType.Minion), EntityKind.Minion, UnitType.Minion, Team.Chaos,
+            Offset(guardian, -800.0)) { Health = 1e7, MaxHealth = 1e7, Name = "Dummy" });
+        TestAssert.True(Until(runtime, () => minion.Health < 1e7, 2.0), "the guardian fires on the Chaos minion at its point");
+        var hits = 0;
+        for (var tick = 0; tick < (int)Math.Round(5.0 / Step); tick++)
+        {
+            var before = minion.Health;
+            runtime.Tick(Step);
+            if (minion.Health < before) hits++;
+        }
+        TestAssert.True(hits is >= 4 and <= 6, $"one shot a second, its Spell1's Cooldown 1: {hits} hits in 5 s");
+    }
+
+    /// <summary>
+    /// Batch 660 (community report, 3 November 2026: a guardian's laser held a diver, "but the turret never fired"): the target line (0x6D) of
+    /// a guardian shows only while it fires (the owner's laser rule for the shrines, batch 529: the laser starts and ends with the shots), and
+    /// not while an enemy channel suppresses it. Batch 662: the guardian runs Turret.luaobj with no ally gate (owner, 3 November 2026: "Normal
+    /// turret"), so the line goes when the enemy leaves its range (batch 660 measured the ally leaving the tree's 700).
+    /// </summary>
+    [Check("dominion.guardian-target-line-shows-only-while-it-fires", TimeoutSeconds = 300)]
+    public static void TheGuardianTargetLineShowsOnlyWhileItFires()
+    {
+        using var match = StartMatch();
+        Capture(match, match.Order);
+        var (runtime, guardian, order, chaos) = (match.Runtime, match.Guardian, match.Order, match.Chaos);
+        var seat = Observe(match, Team.Chaos);
+        order.Position = Offset(guardian, AllyDistance);
+        chaos.Position = Offset(guardian, -EnemyDistance);
+        var before = CastAt(guardian);
+        Advance(runtime, 2.0);
+        TestAssert.True(CastAt(guardian) > before, "precondition: the guardian fires on the Chaos champion");
+        TestAssert.Equal(chaos.NetId, Line(seat, guardian), "and its line is on the Chaos champion it fires on");
+
+        chaos.Position = Offset(guardian, -1100.0);
+        Advance(runtime, 0.2);
+        var held = CastAt(guardian);
+        Advance(runtime, 3.0);
+        TestAssert.True(CastAt(guardian) == held, "the Chaos champion out of range (1100): the guardian fires nothing");
+        TestAssert.Equal(0u, Line(seat, guardian), "and shows no line on the champion it does not fire on");
+
+        chaos.Position = Offset(guardian, -EnemyDistance);
+        TestAssert.True(Until(runtime, () => CastAt(guardian) > held, 3.0), "the champion back in range: the guardian fires again");
+        TestAssert.Equal(chaos.NetId, Line(seat, guardian), "with its line back on the Chaos champion");
+
+        // The guardian's hits would kill the level 3 Annie before the channel below; she is healed (a test seam).
+        chaos.Health = chaos.MaxHealth;
+        order.Position = match.OrderHome;
+        held = CastAt(guardian);
+        TestAssert.True(Until(runtime, () => CastAt(guardian) > held, 1.5), "the Order champion gone home: the guardian goes on firing (no ally gate)");
+        TestAssert.Equal(chaos.NetId, Line(seat, guardian), "and its line stays on the Chaos champion it fires on");
+
+        chaos.Position = Offset(guardian, -300.0);
+        TestAssert.True(runtime.Spells.BeginCaptureChannel(chaos, guardian), "the Chaos champion starts the capture channel on the guardian");
+        Advance(runtime, 1.0);
+        TestAssert.True(runtime.Spells.CaptureChannelTarget(chaos) == guardian, "precondition: the Chaos champion still channels");
+        TestAssert.Equal(0u, Line(seat, guardian), "the channel holds the guardian's fire, and its line clears with it");
+    }
+
+    /// <summary>The target of the last 0x6D (AiSetTarget: opcode, unit, target) the seat was sent for <paramref name="unit"/>; 0 for a clear or none.</summary>
+    private static uint Line(SeatCapture seat, Entity unit)
+    {
+        var last = seat.Packets.LastOrDefault(packet => packet.Plaintext.Length == 9 && packet.Plaintext.Span[0] == 0x6D &&
+            BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[1..]) == unit.NetId);
+        return last is null ? 0u : BinaryPrimitives.ReadUInt32LittleEndian(last.Plaintext.Span[5..]);
+    }
+
+    /// <summary>
     /// The guardian holds its fire while an enemy champion channels the capture on it (the channel's OdinGuardianSuppression, the wiki's
-    /// "will stop attacking when being neutralized by the enemy champion"), and fires again once the channel ends. Batch 501: the Order champion
-    /// stays within the shipped tree's 700 (it channels nothing, so the point's count does not take it), and the Chaos champion steps back to
-    /// within its 600.
+    /// "will stop attacking when being neutralized by the enemy champion"), and fires again once the channel ends. Batch 501's tree needed the
+    /// Order champion within 700 (it channels nothing, so the point's count does not take it) and the Chaos champion back within 600; batch
+    /// 662's turret script needs neither.
     /// </summary>
     [Check("dominion.guardian-holds-fire-while-an-enemy-champion-channels-on-it", TimeoutSeconds = 300)]
     public static void TheGuardianHoldsFireWhileAnEnemyChampionChannelsOnIt()
@@ -106,7 +199,6 @@ public static class DominionGuardianChecks
     /// Batch 467: the guardian's hit carries the 65% armour penetration of its OdinGuardianBuff (BuffOnUpdateStats block 5,
     /// IncPercentArmorPenetrationMod 0.65): the first hit on the level 3 Chaos Annie (armour 20.5) is the total attack damage x 0.9 (the
     /// TurretDamageManager ramp with no marker yet) x 100 / (100 + 20.5 x 0.35). Batch 466 measured it with no penetration (x 100 / 120.5).
-    /// Batch 501: the shipped tree fires only with an Order champion within 700 and the enemy within 600.
     /// </summary>
     [Check("dominion.guardian-hit-carries-its-armour-penetration", TimeoutSeconds = 300)]
     public static void TheGuardianHitCarriesItsArmourPenetration()

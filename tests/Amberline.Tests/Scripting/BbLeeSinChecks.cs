@@ -215,10 +215,9 @@ public static class BbLeeSinChecks
         match.Advance(1.0);
         TestAssert.True(Buff(match.Hero, "BlindMonkWOneShield") is not null && Buff(match.Ally, "BlindMonkWOneShield") is not null,
             "both shielded: " + Names(match.Hero) + " | " + Names(match.Ally));
-        // BlindMonkWOneDash moves with IdealDistance = BBDistanceBetweenObjects(Lee, ally), the gap between the bodies (edge to edge since batch 112):
-        // he stops where the bodies touch, beside the ally, not on its centre.
-        TestAssert.Near(match.Hero.CombatRadius + match.Ally.CombatRadius, WorldDistance(match.Hero.Position, match.Ally.Position), 5.0,
-            "Lee Sin stands in contact with the ally");
+        // BlindMonkWOneDash moves to the ally's position with IdealDistance = BBDistanceBetweenObjects(Lee, ally), the gap between the bodies.
+        // Restated in batch 659: that length sizes the speed and caps nothing (BbNativeHandlers.Move), so he lands on the ally's position.
+        TestAssert.Near(0.0, WorldDistance(match.Hero.Position, match.Ally.Position), 5.0, "Lee Sin lands on the ally's position");
         TestAssert.Equal("BlindMonkWTwo", match.Hero.ActiveSpellNames[1], "Iron Will is up");
         TestAssert.True(Buff(match.Hero, "BlindMonkWOneDash") is null, "the dash buff ended with the move");
         TestAssert.False(match.Hero.Buffs.Any(item => item.Payload.Ghosted), "no longer ghosted");

@@ -126,7 +126,9 @@ public static class BbAmumuChecks
         match.Advance(BbM3.Step);
         TestAssert.True(Buff(hero, "SadMummyBandageToss") is null, "BuffOnMoveEnd removes the buff at the landing, not a second later");
         TestAssert.True(hero.HeroPursuit is { } pursuit && pursuit.TargetNetId == foe.NetId, "BuffOnMoveSuccess orders the attack at the hero he pulled himself to");
-        TestAssert.Near(121.2, Math.Sqrt(Math.Pow(hero.Position.X - foe.Position.X, 2) + Math.Pow(hero.Position.Z - foe.Position.Z, 2)), 12.0, "he stands beside the unit");
+        // Restated in batch 659: the script moves him to LandPos, the unit's own position, with IdealDistance the gap between the bodies; that
+        // length sizes the speed (BbNativeHandlers.Move) and caps nothing, so he lands on the unit, not a body short of it.
+        TestAssert.Near(0.0, Math.Sqrt(Math.Pow(hero.Position.X - foe.Position.X, 2) + Math.Pow(hero.Position.Z - foe.Position.Z, 2)), 12.0, "he lands on the unit");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failure: " + Failures(match));
     }
 

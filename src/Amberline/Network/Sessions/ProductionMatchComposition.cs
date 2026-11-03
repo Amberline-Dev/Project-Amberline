@@ -815,6 +815,9 @@ internal static class ProductionMatchComposition
                 else if (TutorialPackets.AudioEventFinishedId(payload) is uint id) level.TutorialAudioFinished(id, combat.CurrentTime);
             };
         }
+        // Batch 466: what a capture point guardian may attack (an enemy, targetable to it, not a ward).
+        bool GuardianMayAttack(Entity guardian, Entity target) =>
+            WorldState.IsEnemy(guardian, target) && CombatService.IsAutoAcquirable(target) && combat.IsTargetable(target, guardian);
         // Map 8 starts its enabled quests (OdinScript.xml); every other map gets null here and runs no behaviour trees.
         // Batch 446: an encounter's units spawn through the unit-character module (BBSpawnMinion's path, with the character's CharOnActivate).
         var quests = BehaviorTreeQuestHost.ForMap(mapId, data.Paths, world,
@@ -849,16 +852,16 @@ internal static class ProductionMatchComposition
                 Depart: delivery.Depart,
                 // Batch 462: the point turrets' render and targetability blocks go out through Send (global) with the match's sync ids.
                 SyncId: sync.Next,
-                // Batch 501: an owned guardian runs the shipped tower tree (OdinTowerBehavior); its leaves see by the team's fog, keep batch
-                // 466's attackable rule (an enemy, targetable to it, not a ward), cast the guardian's own slots through its character module
-                // and show the target line (batch 481).
+                // Batch 662: an owned guardian runs Turret.luaobj (GuardianTurretAi; batch 501's tower tree leaves keep Sees). It keeps batch
+                // 466's attackable rule (an enemy, targetable to it, not a ward), acquires by the turret ladder, casts the guardian's own slots
+                // through its character module and shows the target line (batch 481).
                 Tower: new TowerHooks(
                     Sees: HeroOrderVisible,
-                    Attackable: (guardian, target) => WorldState.IsEnemy(guardian, target) && CombatService.IsAutoAcquirable(target) &&
-                        combat.IsTargetable(target, guardian),
+                    Attackable: GuardianMayAttack,
                     CastRange: (unit, slot) => unitScripts.SlotSpellName(unit, slot) is { } name ? data.Spell(name).CastRangeAt(1) : null,
                     Cast: unitScripts.CastSpellSlot,
-                    TargetLine: combat.PublishTargetLine),
+                    TargetLine: combat.PublishTargetLine,
+                    Acquire: guardian => combat.AcquireTurretTarget(guardian, target => target.Alive && GuardianMayAttack(guardian, target))),
                 // Batch 471: a team's quest tracker packets and its quest announcement go to that team's clients only.
                 SendTeam: delivery.EnqueueForTeam));
         // Batch 447: Dominion's score (DualUpdateScoreMath) ticks with the quests; its control counts are the capture points' owners.

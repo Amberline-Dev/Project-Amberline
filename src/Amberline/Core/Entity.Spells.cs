@@ -64,6 +64,14 @@ public sealed class PendingCastState
     public double BestGap { get; set; } = double.PositiveInfinity;
     public Position2? LastMovePoint { get; set; }
     public double NextMoveRetryAt { get; set; }
+    /// <summary>
+    /// The cast pressed after this one during the same dash (batch 659): casts queued behind the hero's own dash fire in press order at the
+    /// landing, each once the one before it is past its cast frame (SpellSystem.TickPendingCast). Anything that drops the queued cast drops the
+    /// ones behind it.
+    /// </summary>
+    public PendingCastState? Next { get; set; }
+    /// <summary>Set on a cast that took the head from the one queued before it: it waits out that cast's windup (SpellWindup, settled).</summary>
+    public bool AfterPrevious { get; set; }
 }
 
 public sealed partial class Entity

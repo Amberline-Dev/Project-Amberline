@@ -180,9 +180,10 @@ public static class BbLeonaChecks
 
     // Zenith Blade: the missile deals 60 (+0.4 AP) magic and the mark to the champion it hits and orders it (LeonaZenithBladeBuffOrder). At
     // the missile's end she faces the closest ordered unit within 3000 and moves Distance (BBDistanceBetweenObjects: the gap between the
-    // bodies) toward a point 225 past it, so she stops in contact (centre distance = the two collision radii), and the unit is rooted 0.25 s.
-    [Check("scripting.bb-leona-zenith-blade-dashes-to-contact-and-roots")]
-    public static void ZenithBladeDashesToContactAndRoots()
+    // bodies) plus 225 along her facing, and the unit is rooted 0.25 s. Restated in batch 659: IdealDistance (the gap) sizes the dash's speed and
+    // caps nothing (BbNativeHandlers.Move), so she runs the whole gap + 225 and lands 225 less the two radii past the unit's centre.
+    [Check("scripting.bb-leona-zenith-blade-dashes-225-past-the-gap-and-roots")]
+    public static void ZenithBladeDashesPastTheGapAndRoots()
     {
         using var match = Arena();
         match.Foe.Position = new Position2(7400, 7000);
@@ -194,8 +195,9 @@ public static class BbLeonaChecks
         TestAssert.Equal(1, HitsOf(match, "Foe", 60.0), "60 magic at rank one; hits " + Hits(match, "Foe"));
         match.Advance(0.5);
         var contact = match.Hero.CombatRadius + match.Foe.CombatRadius;
-        TestAssert.Near(contact, Distance(match.Hero.Position, match.Foe.Position), 2.0,
-            $"she stops in contact: the radii {contact:0.#} apart (hero at {match.Hero.Position.X:0.#},{match.Hero.Position.Z:0.#})");
+        TestAssert.Near(225.0 - contact, Distance(match.Hero.Position, match.Foe.Position), 4.0,
+            $"she lands 225 - {contact:0.#} past the foe (hero at {match.Hero.Position.X:0.#},{match.Hero.Position.Z:0.#})");
+        TestAssert.True(match.Hero.Position.X > match.Foe.Position.X, "on the far side of the foe");
         TestAssert.False(Has(match.Foe, "LeonaZenithBladeRoot"), "the root is over after its quarter second");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));
     }

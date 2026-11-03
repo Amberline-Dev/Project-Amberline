@@ -370,6 +370,11 @@ internal sealed partial class BbNativeHandlers
         // The ball is shown in its owner's skin (the 0x80 SkinId of the hand-written ball).
         if (skin == BallSkin) unit.SkinId = (redirect ?? owner ?? unit).SkinId;
         unit.MinionUse = MinionUseOf(data.Raw);
+        // Batch 660: the stock CharacterData loader gives every character its record's attack timing, whatever AI it runs. Before this only a
+        // unit with a fighting or pet script took it, so the encounter units (ai null: the Crystal Scar's wave minions) kept period 0 and windup
+        // 0 and swung on every step ("Dominion minions attack WAY TOO FAST", community report, 3 November 2026).
+        UnitAttackTiming.Apply(unit, data);
+        unit.MissileSpeed = AttackMissileSpeed(unit);
         // Reconstruction: every other call of BBSpawnMinion names its own character record as Name, where the wire skin of a late observer is
         // entity.Name; only the Rally beacon is asked for a display name of its own (SummonerRally: Name 'Beacon', Skin 'SummonerBeacon'), and
         // the rest of the engine reads a beacon as Name 'Beacon', ChampionName 'SummonerBeacon' (ProductionMatchComposition's template,
@@ -391,8 +396,6 @@ internal sealed partial class BbNativeHandlers
             // host for is its script buff's, not a clock of its own.
             unit.AiScript = SpawnedUnitAi.Canonical(ai);
             if (unit.OwnerNetId == 0 && owner is not null) unit.OwnerNetId = owner.NetId;
-            UnitAttackTiming.Apply(unit, data);
-            unit.MissileSpeed = AttackMissileSpeed(unit);
             unit.ExpiresAt = double.PositiveInfinity;
             if (petFamily is { } family)
                 unit.PetState = new PetState(family, unit.OwnerNetId) { BornAt = Spells.CurrentTime };
