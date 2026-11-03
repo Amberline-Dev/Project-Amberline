@@ -145,6 +145,20 @@ public static class AirDtos
             ("maxAllowableBans", PlatformGames.DraftMaxBans),
             ("allowTrades", true),
             ("exclusivePick", true)),
+        // Batch 669: Battle Training (AirGameDtos.BattleTrainingConfigId). From the stock client: its tour tells the player "in this training
+        // mode you may take as much time as you need" (champion_tutorial_time_limit) and warns 60 seconds before the end
+        // (tutorialChampionSelection_timeoutMessage). Reconstruction (the DTO is the server's): the name, a blind pick, and the length,
+        // PlatformGames.BattleTrainingPickServerSeconds.
+        AirWire.Object(GameTypeConfigAlias,
+            ("id", (double)AirGameDtos.BattleTrainingConfigId),
+            ("name", "GAME_CFG_ADVANCED_TUTORIAL"),
+            ("pickMode", "SimulPickStrategy"),
+            ("mainPickTimerDuration", (double)PlatformGames.BattleTrainingPickServerSeconds),
+            ("banTimerDuration", 0d),
+            ("postPickTimerDuration", (double)PlatformGames.PostPickServerSeconds),
+            ("maxAllowableBans", 0),
+            ("allowTrades", false),
+            ("exclusivePick", false)),
     });
 
     // gameMapService.getGameMapList: Summoner's Rift only, as batch 534 left it (the stock client reads the custom-game maps from
@@ -382,7 +396,7 @@ public static class AirDtos
 
     // The platform-wide switches the retail server flipped per deployment. The values are this host's, chosen for what it
     // implements; the client's reaction to each is in ApplicationController.handleLoginDataPacket.
-    // Reconstruction: observerModeEnabled / spectatorSlotLimit (no spectating), advancedTutorialEnabled (no tutorial),
+    // Reconstruction: observerModeEnabled / spectatorSlotLimit (no spectating),
     // socialIntegrationEnabled (no Facebook), tribunalEnabled (on: the report dialog opens and reportPlayer is stored for
     // the host's /manage review), archivedStatsEnabled (Season One statistics are never kept) and queueThrottleDTO (null here; a capacity refusal exists separately in PlatformGames). Retail's per-deployment values for these switches are not recovered.
     // Reconstruction: minNumPlayersForPracticeGame = 1 (retail's 'custom games temporarily require a minimum of {0}
@@ -391,7 +405,9 @@ public static class AirDtos
     private static AsObject ClientSystemStates(PlatformEconomyRules? rules = null) => AirWire.Object(ClientStatesAlias,
         ("practiceGameEnabled", true),
         ("observerModeEnabled", false),
-        ("advancedTutorialEnabled", false),
+        // Batch 669: Battle Training runs (PlatformGames.CreateBattleTraining), so the client's own default, true (ClientSystemStatesNotification,
+        // RiotApplication): after the basic tutorial the end-of-game screen offers it (EndOfGameStatsController.as:646-665).
+        ("advancedTutorialEnabled", true),
         ("minNumPlayersForPracticeGame", 1),
         ("runeUniquePerSpellBook", false),
         ("socialIntegrationEnabled", false),

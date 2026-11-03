@@ -260,13 +260,27 @@ public static class CombatPackets
     /// The unit's <c>IsTargetableToTeam</c> flags (<c>sflags_e</c>: <c>SPELL_NonTargetableAlly</c> 0x800000, <c>SPELL_NonTargetableEnemy</c> 0x1000000,
     /// <c>SPELL_TargetableToAll</c> 0x2000000): LOCAL1 bit 4 of a hero, bit 8 of a minion, 23 bytes. The tables are in docs/network/patch126-replication-tables.md.
     /// </summary>
-    public static PlaintextPacket UnitTargetableToTeam(uint netId, bool notToAlly, bool notToEnemy, bool isHero, uint syncId = 1)
+    public static PlaintextPacket UnitTargetableToTeam(uint netId, bool notToAlly, bool notToEnemy, bool isHero, uint syncId = 1) =>
+        TargetableToTeamBlock(netId, TargetableToTeamFlags(notToAlly, notToEnemy), isHero ? 0x10u : 0x100u, syncId);
+
+    private static PlaintextPacket TargetableToTeamBlock(uint netId, uint flags, uint mask, uint syncId)
     {
-        using var writer = ReplicationWriter(23, out var stream, syncId, netId, 0x02, isHero ? 0x10u : 0x100u);
-        writer.Write(TargetableToTeamFlags(notToAlly, notToEnemy));
+        using var writer = ReplicationWriter(23, out var stream, syncId, netId, 0x02, mask);
+        writer.Write(flags);
         writer.Flush();
         return Packet(stream, LeaguePacketReliability.Reliable, Unit(netId));
     }
+
+    /// <summary>
+    /// Batch 671: the LOCAL1 field of <c>IsTargetableToTeam</c> in the unit's own class table:
+    /// bit 4 of a hero, 14 of a scene turret, 3 of a building (inhibitor, nexus), 8 of a minion (and of a point turret, a minion on the client).
+    /// Every non-hero took bit 8, which is a turret's mHP: the tutorial's SetTargetable false turret was sent 0x1800000 as its health on each
+    /// reveal (an empty bar), and Nunu's first hit sent the real health back (the owner's finding of 3 November 2026, "no HP and full heals").
+    /// </summary>
+    private static uint TargetableToTeamMask(Entity unit, bool isHero) =>
+        isHero ? 0x10u :
+        unit.IsSceneTurret ? 0x4000u :
+        unit.Kind is EntityKind.Inhibitor or EntityKind.Nexus || unit.UnitType == UnitType.Structure ? 0x08u : 0x100u;
 
     /// <summary>The <c>sflags_e</c> value of <c>IsTargetableToTeam</c> for the teams that may not target the unit.</summary>
     public static uint TargetableToTeamFlags(bool notToAlly, bool notToEnemy) =>
@@ -288,7 +302,7 @@ public static class CombatPackets
     public static PlaintextPacket UnitTargetableToTeam(Entity unit, bool isHero, uint syncId)
     {
         var (toAlly, toEnemy) = WireNotTargetable(unit);
-        return UnitTargetableToTeam(unit.NetId, toAlly, toEnemy, isHero, syncId);
+        return TargetableToTeamBlock(unit.NetId, TargetableToTeamFlags(toAlly, toEnemy), TargetableToTeamMask(unit, isHero), syncId);
     }
 
     /// <summary>

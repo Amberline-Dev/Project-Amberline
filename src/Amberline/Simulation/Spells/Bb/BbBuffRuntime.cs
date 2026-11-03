@@ -286,15 +286,7 @@ internal sealed class BbBuffRuntime
     /// <summary>The write that leaves the bit at its rest value: the unit's script status lets go, and every buff's hold of the status with it (the single bit of the client).</summary>
     private void ReleaseStatus(Entity unit, BbSetStatus status, bool rest)
     {
-        var carried = false;
-        if (_scriptStatuses.TryGetValue(unit, out var scriptHeld) && scriptHeld.ContainsKey(status))
-        {
-            var before = BuffLifecycle.ControlOf(unit);
-            scriptHeld.Remove(status);
-            RecomposeScriptStatus(unit, scriptHeld);
-            _host.Spells.Buffs.ScriptStatusLost(unit, before.CouldMove, before.CouldAttack);
-            carried = true;
-        }
+        var carried = ReleaseScriptStatus(unit, status);
         foreach (var holder in _instances.Values.Where(item => ReferenceEquals(item.Owner, unit) && unit.Buffs.Contains(item.State) &&
                      item.HeldStatuses.TryGetValue(status, out var held) && StatusActs(status, held)).ToArray())
         {
@@ -303,6 +295,17 @@ internal sealed class BbBuffRuntime
             Resample(holder);
         }
         if (carried) PushMinionStatus(unit, status);
+    }
+
+    /// <summary>Lets go of the unit's script status for <paramref name="status"/>; true when it held it.</summary>
+    private bool ReleaseScriptStatus(Entity unit, BbSetStatus status)
+    {
+        if (!_scriptStatuses.TryGetValue(unit, out var scriptHeld) || !scriptHeld.ContainsKey(status)) return false;
+        var before = BuffLifecycle.ControlOf(unit);
+        scriptHeld.Remove(status);
+        RecomposeScriptStatus(unit, scriptHeld);
+        _host.Spells.Buffs.ScriptStatusLost(unit, before.CouldMove, before.CouldAttack);
+        return true;
     }
 
     /// <summary>Rebuilds <see cref="Entity.ScriptStatus"/> from the statuses the unit holds with no buff: one payload with their flags, or null when none.</summary>
@@ -1109,8 +1112,8 @@ internal sealed class BbBuffRuntime
                 instance.StartTime = _host.Spells.CurrentTime;
                 instance.Shortened = state.ExpiresAt < request.Duration - 1e-9;
                 // The mutation clock of this life (BbBuffInstance.MutateNextAt): an add that carries a TickRate accumulates
-                // its bare permanents once per tick from the first tick on, one that carries none accumulates in the sample
-                // this add takes and never again. A renewal above does not re-stamp it.
+                // its bare permanents once per tick from the first tick on, one that carries none on every sample from the
+                // one this add takes (batch 673). A renewal above does not re-stamp it.
                 instance.MutateNextAt = request.TickRate > 0.0
                     ? _host.Spells.CurrentTime + request.TickRate
                     : _host.Spells.CurrentTime;
@@ -1533,13 +1536,24 @@ internal sealed class BbBuffRuntime
             MutationDue = instance is not null && _host.Spells.CurrentTime + 1e-9 >= instance.MutateNextAt,
         };
         _router.Run(script, "BuffOnUpdateStats", scope, frame, rethrow: true);
+        // Batch 667: a live buff's stats hook that writes a status's rest value clears the unit's one bit of it, as a write from any other
+        // hook does (WriteStatus), so it lets go of the unit's script status every sample. HalloweenUrfWarwick shows the Ghost of Urf only
+        // this way (BuffOnUpdateStats SetNoRender false, pc 0250-0260, over CharScriptUrf's CharOnActivate SetNoRender true; OnBuffDeactivate
+        // hides him again); before, the sample dropped the rest write and the ghost slapped Urf-skin Warwick unseen. Of the shipped stats
+        // hooks only six writes are rest writes (b667 audit): this one, BlindMonkRNewMinion SetNoRender, Destealth SetStealthed and SpellImmunity
+        // SetCanMove/SetCanAttack/SetCanCast, whose OnBuffActivate already writes the same rest value. Reconstruction: other buffs' holds
+        // stay (the holder model, batch 222); only the bit no buff holds is released.
+        if (instance is not null)
+            foreach (var (status, value) in collector.Statuses)
+                if (!StatusActs(status, value) && ReleaseScriptStatus(owner, status)) PushMinionStatus(owner, status);
         // Reconstruction M4: the bare mutations of a sample that was due have accumulated (BbHookFrame.MutationSuppressed);
-        // the clock moves one tick on, overdue time kept the way StatsNextAt's is. A buff the add gave no TickRate
-        // accumulates once for that sample and never again.
-        if (instance is not null && frame.MutationDue)
-            instance.MutateNextAt = instance.TickRate > 0.0
-                ? instance.MutateNextAt + instance.TickRate
-                : double.PositiveInfinity;
+        // the clock moves one tick on, overdue time kept the way StatsNextAt's is. Batch 673 (Reconstruction): a buff the add gave no
+        // TickRate has no tick, so every sample after its activation is due. Its "once and never again" dropped the guarded one-shots of
+        // the only shipped TickRate-0 stats hooks with mutations: OdinGuardianBuff's team-change branch (BuffOnUpdateStats 4: it removed
+        // the old 800 bubbles and its add of the new owner's was held back, so a captured point gave nobody its sight). The other one,
+        // TurretBonusHealth, ends itself in that first sample (BBSpellBuffRemoveCurrent), so it applies once either way.
+        if (instance is not null && frame.MutationDue && instance.TickRate > 0.0)
+            instance.MutateNextAt += instance.TickRate;
         foreach (var colours in collector.ParColorCalls) _host.ApplyParColorOverride(owner, colours);
         if (instance is not null)
             foreach (var (status, value) in instance.HeldStatuses)

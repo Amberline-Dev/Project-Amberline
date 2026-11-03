@@ -10,7 +10,14 @@ namespace Amberline.Platform;
 
 public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager manager, string advertisedHost, TimeProvider? clock = null)
 {
-    // DIAGNOSTICS: every human seat gets the cheat commands at launch (see the humans roster below).
+    /// <summary>
+    /// DIAGNOSTICS: whether a human seat (by account id) may use the playtest cheat commands, asked as each game starts; bot seats never
+    /// may. The default is the operator's start, every human seat (owner, 26 October 2026: "enable cheats for everyone again"). Home mode
+    /// replaces it (owner, 3 November 2026: "Disable cheats"): none, unless Settings allows them, and then the host's own login only
+    /// (<see cref="HostSettingsPage.CheatRule"/>). From 24 to 26 October only a seat whose session reached this PC directly could
+    /// (<see cref="PlatformSessions.IsLocalAccount"/>).
+    /// </summary>
+    public Func<long, bool> MayCheat { get; set; } = _ => true;
 
     public const int NormalQueueId = 2;
     /// <summary>Co-op vs. AI, Summoner's Rift 5v5: the stock play menu's PVE_root leaf for both difficulties (ChooseGameFlowViewLayoutDefinition.as:130-141).</summary>
@@ -82,6 +89,9 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     // because it arrived late. The server's own deadline (the AFK drop, the launch) uses the same 93/13.
     public const int MainPickServerSeconds = 93;
     public const int PostPickServerSeconds = 13;
+    // Batch 669: Battle Training's champion select (AirDtos.GameTypes, config 11). Reconstruction: the tour says the player "may take as much
+    // time as you need" and warns at 60 seconds left; thirty minutes, the custom lobby's own limit, with the same three seconds of slack.
+    public const int BattleTrainingPickServerSeconds = 30 * 60 + 3;
     // Draft Mode (GameTypeConfig id 2, batch 543). Reconstruction: no shipped file states retail's draft durations; each ban turn,
     // each pick turn and the closing trade phase last 30 seconds, sent with the same three seconds of slack as blind pick (the
     // client shows 30). The client's own fallback for the post-pick tip says "You now have 30 seconds to make last minute changes"
@@ -134,6 +144,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         public int Capacity = capacity;
         /// <summary>The map the game is played on, fixed at creation: a queue game its queue's map, a custom game the map it chose.</summary>
         public int MapId = PlatformStoreCalendar.NormalRiftMapId;
+        /// <summary>Batch 669: the mode, when it is not the map's own (Battle Training: map 1 in TUTORIAL, <see cref="GameMaps.IsPlayedIn"/>).</summary>
+        public string? Mode;
+        /// <summary>The mode the game is played in: the GameDTO's gameMode and the server's <c>--game-mode</c>.</summary>
+        public string GameMode => Mode ?? GameMaps.ModeOf(MapId);
         public string State = "TEAM_SELECT";
         public string TerminatedCondition = "";
         public long Version = 1;
@@ -711,7 +725,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             // the account holds (an unlocked account owns everything the server plays, not what it lacks a module for).
             if (!AirGameDtos.ChampionNames.ContainsKey(champion))
                 throw AirGameDtos.AllChampionNames.ContainsKey(champion) ? AirFault.NotOwned() : new ArgumentException("Unsupported champion.");
-            if (!PlatformEconomy.CanPlay(accounts.Get(account), champion, accounts.EconomyRules))
+            // Batch 669: Battle Training's grid lists Garen, Ryze and Ashe, owned or not (AdvancedTutorialController.tutorialChampions,
+            // ChampionSelectionController.setHardcodedChampionsToChoose clears restrictChampionOwnership), and nothing else.
+            if (game.ConfigId == AirGameDtos.BattleTrainingConfigId ? !BattleTrainingChampions.Contains(AirGameDtos.ChampionNames[champion])
+                    : !PlatformEconomy.CanPlay(accounts.Get(account), champion, accounts.EconomyRules))
                 throw AirFault.NotOwned();
             // The stock grid never offers a banned champion (isChampionAvailableForChoosing); only a draft bans.
             if (game.BannedChampions.Contains(champion)) throw AirFault.ChampionBanned();
@@ -1289,8 +1306,9 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     {
         foreach (var member in game.Members)
         {
-            // Batch 580 (Reconstruction): the Basic Tutorial lends its champion, owned or not (PlatformGames.Tutorial).
-            if (game.MapId == GameMaps.Tutorial) continue;
+            // Batch 580 (Reconstruction): the Basic Tutorial lends its champion, owned or not (PlatformGames.Tutorial); batch 669: Battle
+            // Training its three (Pick).
+            if (game.GameMode == GameMaps.TutorialMode) continue;
             var account = accounts.Get(member.Account.Id);
             if (!PlatformEconomy.CanPlay(account, member.Champion, accounts.EconomyRules) ||
                 (member.Skin != 0 && !PlatformEconomy.OwnsSkin(account, member.Champion * 1000 + member.Skin)))
@@ -1303,10 +1321,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             Champion = AirGameDtos.ChampionNames[m.Champion], Team = m.Team, SkinId = m.Skin,
             SummonerSpell1 = offered[m.Spell1], SummonerSpell2 = offered[m.Spell2],
             PlayerId = checked((int)m.Account.SummonerId),
-            // DIAGNOSTICS (owner, 26 October 2026: "enable cheats for everyone again"): every human seat may use the cheat commands,
-            // friends through the tunnel included. From 24 to 26 October only a seat whose session reached this PC directly could
-            // (PlatformSessions.IsLocalAccount, kept so that rule is a one-line change).
-            CanCheat = true
+            // DIAGNOSTICS: who may use the cheat commands (MayCheat), decided as the game starts.
+            CanCheat = MayCheat(m.Account.Id)
         }).ToArray();
         // Bot seats follow the humans, so member index + 1 stays each human's seat number.
         // NOT RETAIL: roster names must be unique here, so the same champion on both teams gets a
@@ -1319,7 +1335,7 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             return bot.Loadout with { Name = name, CanCheat = false };
         }).ToArray();
         var players = humans.Concat(bots).ToArray();
-        var host = manager.CreateReserved(Guest(accounts.Get(game.Owner)), new(game.RequestId, players, game.MapId),
+        var host = manager.CreateReserved(Guest(accounts.Get(game.Owner)), new(game.RequestId, players, game.MapId, game.Mode),
             game.Members.Select(m => Guest(m.Account)).ToArray(),
             id => accounts.PrepareMatch(new(game.Id, id, game.QueueId, game.Members.Select(m => m.Account.Id).ToArray(), players)));
         game.HostId = host.Id;

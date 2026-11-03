@@ -228,6 +228,23 @@ public static class SpawnPackets
         return Packet(stream, LeaguePacketReliability.Reliable, Target(unitNetId));
     }
 
+    /// <summary>
+    /// Batch 673: UnitChangeTeam (0xE0 in the 126 packet switch; 13 bytes): <c>targetNetID</c> at +5, the native <c>team</c> (int) at +9.
+    /// Proven in the stock client: the switch sends 0xE0 to, which finds the unit by +5 (the AttackableUnit manager's find,
+    ///; an unknown id is a no-op) and calls its SetTeam (vtable +0x98) with +9. SetTeam stores the team at +0x1C and moves the
+    /// unit between the teams' lists. The client layout: the same fields; the client numbers it 226 (the range shifted by 2, as 0xE1).
+    /// </summary>
+    public static PlaintextPacket UnitChangeTeam(uint unitNetId, Team team)
+    {
+        using var writer = ProtocolEncoding.Writer(13, out var stream);
+        writer.Write((byte)0xE0);
+        writer.Write(0u);
+        writer.Write(unitNetId);
+        writer.Write(TeamMapping.ToNative(team));
+        writer.Flush();
+        return Packet(stream, LeaguePacketReliability.Reliable, Target(unitNetId));
+    }
+
     public static PlaintextPacket NeutralCampEmpty(
         uint playerClientId, int campIndex, bool state = false)
     {

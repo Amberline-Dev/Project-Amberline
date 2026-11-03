@@ -10,7 +10,7 @@ namespace Amberline.Tests;
 /// BuildingBlocks engine, batch 159 step 1 (Reconstruction M4): contributions are re-sampled; mutations are ticked. A
 /// buff's <c>BuffOnUpdateStats</c> is a stats hook, so its payload contributions (<c>BBIncStat</c>) are re-sampled on the
 /// 0.25 s grid, but its bare mutations (<c>BBIncPermanentStat</c>, a perception bubble) accumulate on the buff's own
-/// clock: once per the add's <c>TickRate</c> when the add carried one, once for the add's sample when it carried none,
+/// clock: once per the add's <c>TickRate</c> when the add carried one, on every sample when it carried none (batch 673),
 /// and once per a <c>BBExecutePeriodically</c> that wraps them (that periodic's own clock is what governs there).
 /// <para>
 /// The shipped scripts that state it are the turret spells this batch binds:
@@ -72,21 +72,34 @@ public static class BbBuffMutationChecks
         rig.NoFailures();
     }
 
-    [Check("scripting.bb-buff-stats-a-bare-permanent-with-no-tick-rate-accumulates-once-for-the-add-and-never-again")]
-    public static void APermanentWithoutATickRateAccumulatesOnce()
+    /// <summary>
+    /// Batch 673 (restated; was "...-accumulates-once-for-the-add-and-never-again"): an add with no TickRate has no tick, so its stats hook's
+    /// mutations run on every sample from the add's own one. The shipped TickRate-0 hooks guard their one-shots themselves: TurretBonusHealth
+    /// ends itself in that sample (BBSpellBuffRemoveCurrent after its permanent and its bubble), OdinGuardianBuff runs its bubble adds only in
+    /// its team-change branch. "Once and never again" held back the guardian's new owner's bubble while the same branch removed the old ones.
+    /// </summary>
+    [Check("scripting.bb-buff-stats-a-bare-permanent-with-no-tick-rate-accumulates-on-every-sample")]
+    public static void APermanentWithoutATickRateAccumulatesOnEverySample()
     {
-        var oneShot = Bare("W159OneShot", 6.0);
-        using var rig = new BbW3Rig(null, oneShot);
+        var bare = Bare("W159NoTick", 6.0);
+        var oneShot = BbW3Rig.Buff("W673OneShot", new BbEventTable("BuffOnUpdateStats",
+            [Permanent(1.0), BbTest.Block("BBSpellBuffRemoveCurrent", ["TargetVar", "Owner"])]));
+        using var rig = new BbW3Rig(null, bare, oneShot);
         var hero = rig.Match.Hero;
         var before = Damage(hero);
-        Give(rig, oneShot, 0.0);
-        TestAssert.Near(before + 6.0, Damage(hero), 1e-9,
-            "the add's own sample accumulates once (TurretBonusHealth applies its health and bubble there); twice would mean the pre-activation sample ran it too");
-        rig.Match.Advance(2.0);
-        TestAssert.Near(before + 6.0, Damage(hero), 1e-9, "and never again: a buff with no tick rate accumulates once and the grid piles nothing up");
-        Give(rig, oneShot, 0.0, BbBuffAddType.BUFF_RENEW_EXISTING);
-        TestAssert.Near(before + 6.0, Damage(hero), 1e-9,
-            "a renewal keeps the mutation clock (the way it keeps StartTime), so it cannot re-accumulate");
+        // Added directly: it has ended (and lost its script instance) by the time the add returns.
+        rig.Module.Buffs!.Add(new BbBuffRequest(hero, hero, oneShot.Name, (int)BbBuffAddType.BUFF_REPLACE_EXISTING,
+            (int)BbBuffType.BUFF_Internal, 1, 25000.0, 0.0, false, new BbTable()));
+        TestAssert.Near(before + 1.0, Damage(hero), 1e-9,
+            "TurretBonusHealth's shape applies once, in the add's own sample, and ends itself; twice would mean the pre-activation sample ran it too");
+        TestAssert.True(!hero.Buffs.Any(buff => buff.Name == oneShot.Name), "the one-shot ended itself in that sample");
+        before = Damage(hero);
+        Give(rig, bare, 0.0);
+        TestAssert.Near(before + 6.0, Damage(hero), 1e-9, "the add's own sample accumulates once (not the pre-activation sample too)");
+        rig.Match.Advance(1.0);
+        var samples = (Damage(hero) - before) / 6.0;
+        TestAssert.True(Math.Abs(samples - Math.Round(samples)) < 1e-9 && samples >= 4.0,
+            $"with no tick every 0.25 s sample is due, so the bare permanent goes on accumulating ({samples:F2} accumulations in 1 s)");
         rig.NoFailures();
     }
 

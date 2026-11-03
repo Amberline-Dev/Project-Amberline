@@ -311,6 +311,67 @@ public static class HostInstallChecks
         finally { HostModeChecks.Delete(root); }
     }
 
+    [Check("server.host-update-confirmed-skips-only-the-enter", TimeoutSeconds = 120)]
+    public static void UpdateNowsStartAsksForNoEnterAndAZipStillDoes() => ConfirmedAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Batch 666 (owner: one click): the start Update now makes (<see cref="HostInstall.ConfirmedOption"/>) skips only the window's Enter.
+    /// Each update below answers no to that question if it were asked, so only an update that never asks goes on.
+    /// </summary>
+    private static async Task ConfirmedAsync()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = AirBootstrapChecks.TemporaryDirectory("league-host-update-confirmed");
+        try
+        {
+            var data = Data(root, "data");
+            var started = new List<string>();
+            var screen = new StringWriter();
+            var installer = Installer(root, Release(Path.Combine(root, "zip-1.4.0"), "1.4.0"), data, screen, started);
+            TestAssert.Equal(0, await installer.RunAsync(), screen.ToString());
+            var app = installer.App;
+
+            // The option reaches the installer through the command line, as Start Amberline.cmd passes it on (%*).
+            var v150 = Release(Path.Combine(root, "zip-1.5.0"), "1.5.0");
+            var local = Path.Combine(root, "Local");
+            var paths = HostPaths.Resolve(data, local, Path.Combine(v150, "platform") + Path.DirectorySeparatorChar);
+            var parsed = HostMode.ParseInstall([HostInstall.ConfirmedOption])!.Value;
+            TestAssert.True(HostInstall.ForRelease(paths, local, Path.Combine(root, "Desktop"), TextWriter.Null, parsed.Folder, parsed.Clients, parsed.Confirmed)
+                is { Confirmed: true }, "Update now's start is a confirmed install");
+            TestAssert.True(HostInstall.ForRelease(paths, local, Path.Combine(root, "Desktop"), TextWriter.Null) is { Confirmed: false }, "a double-click is not");
+
+            // Confirmed: no question, the window says why, and the update is the same: app.previous, the new start.
+            var confirmed = new StringWriter();
+            TestAssert.Equal(0, await Installer(root, v150, data, confirmed, started, confirm: false, confirmed: true).RunAsync(), confirmed.ToString());
+            TestAssert.True(confirmed.ToString().Contains("You have Amberline 1.4.0. This zip has Amberline 1.5.0.", StringComparison.Ordinal) &&
+                confirmed.ToString().Contains(HostInstall.ConfirmedLine, StringComparison.Ordinal) &&
+                !confirmed.ToString().Contains(HostInstall.ContinueLine, StringComparison.Ordinal), confirmed.ToString());
+            TestAssert.Equal(new Version(1, 5, 0), HostVersion.Read(app).Version, "the confirmed update installed 1.5.0");
+            TestAssert.Equal(new Version(1, 4, 0), HostVersion.Read(installer.Previous).Version, "and kept 1.4.0 as app.previous");
+            TestAssert.Equal(installer.Installed, started.Last());
+
+            // Everything else stays: an older zip changes nothing, and a start that fails brings the version before back.
+            var older = new StringWriter();
+            TestAssert.Equal(1, await Installer(root, Release(Path.Combine(root, "zip-1.3.0"), "1.3.0"), data, older, started, confirm: false, confirmed: true).RunAsync(),
+                older.ToString());
+            TestAssert.True(older.ToString().Contains("You already have a newer Amberline (1.5.0).", StringComparison.Ordinal), older.ToString());
+            var v160 = Release(Path.Combine(root, "zip-1.6.0"), "1.6.0");
+            var failed = new StringWriter();
+            TestAssert.Equal(0, await Installer(root, v160, data, failed, started, new Queue<bool>([false, true]), confirm: false, confirmed: true).RunAsync(),
+                failed.ToString());
+            TestAssert.True(failed.ToString().Contains("Amberline 1.6.0 did not start, so the Amberline you had comes back.", StringComparison.Ordinal), failed.ToString());
+            TestAssert.Equal(new Version(1, 5, 0), HostVersion.Read(app).Version, "the rollback still runs");
+
+            // A double-click on the zip still asks for Enter (and a no keeps the version installed).
+            var asked = new StringWriter();
+            TestAssert.Equal(1, await Installer(root, v160, data, asked, started, confirm: false).RunAsync(), asked.ToString());
+            TestAssert.True(asked.ToString().Contains(HostInstall.ContinueLine, StringComparison.Ordinal) &&
+                !asked.ToString().Contains(HostInstall.ConfirmedLine, StringComparison.Ordinal), asked.ToString());
+            TestAssert.Equal(new Version(1, 5, 0), HostVersion.Read(app).Version, "a no at the question installs nothing");
+        }
+        finally { HostModeChecks.Delete(root); }
+    }
+
     /// <summary>An unpacked release's <c>app</c> folder: stand-in programs, the friends' archive and a BUILD.json naming the version.</summary>
     internal static string Release(string folder, string version)
     {
@@ -340,11 +401,12 @@ public static class HostInstallChecks
     }
 
     private static HostInstall Installer(string root, string release, string data, StringWriter screen, List<string> started,
-        Queue<bool>? starts = null, bool confirm = true) =>
+        Queue<bool>? starts = null, bool confirm = true, bool confirmed = false) =>
         new(HostPaths.Resolve(data, Path.Combine(root, "Local"), Path.Combine(release, "platform") + Path.DirectorySeparatorChar),
             Path.Combine(root, "Local"), Path.Combine(root, "Desktop"), screen)
         {
             Confirm = () => confirm,
+            Confirmed = confirmed,
             Start = platform => { started.Add(platform); return Task.FromResult(starts is not { Count: > 0 } || starts.Dequeue()); },
         };
 

@@ -268,6 +268,59 @@ public static class AirBotLobbyChecks
     }
 
     /// <summary>
+    /// Batch 666 (owner, 3 November 2026: "Disable cheats"): a home host's games give no seat the cheat commands, the host's own
+    /// included, until Settings allows them; then only the host's own login. The operator's start keeps every human seat.
+    /// </summary>
+    [Check("server.host-cheats-off-by-default")]
+    public static void HomeGamesGiveCheatsOnlyToTheHostAndOnlyWhenSettingsAllowsThem() => HomeCheatsAsync().GetAwaiter().GetResult();
+
+    private static async Task HomeCheatsAsync()
+    {
+        TestAssert.Equal((true, true), await CheatSeatsAsync(null), "the operator's start: every human seat");
+        TestAssert.Equal((false, false), await CheatSeatsAsync(host => new { hostAccount = host }), "a platform.json from before the switch: nobody");
+        TestAssert.Equal((false, false), await CheatSeatsAsync(host => new { hostAccount = host, allowCheats = false }), "the switch off: nobody");
+        TestAssert.Equal((true, false), await CheatSeatsAsync(host => new { hostAccount = host, allowCheats = true }), "the switch on: the host's seat only");
+        TestAssert.Equal((false, false), await CheatSeatsAsync(host => new { allowCheats = true }), "the switch on without a host login: nobody");
+        TestAssert.Equal((false, false), await CheatSeatsAsync(_ => "{ damaged"), "a platform.json that cannot be read: nobody");
+    }
+
+    /// <summary>
+    /// The cheat rights of the owner's (the host's) and a friend's seat in one launched custom game; <paramref name="settings"/> null is the
+    /// operator's start, else home mode with the platform.json it makes from the owner's account id.
+    /// </summary>
+    private static async Task<(bool Host, bool Friend)> CheatSeatsAsync(Func<long, object>? settings)
+    {
+        var root = TemporaryDirectory("league-host-cheats");
+        try
+        {
+            using var accounts = new PlatformAccounts(Path.Combine(root, "accounts"));
+            await using var manager = NonLaunchingManager(root);
+            var clock = new ManualClock();
+            var games = new PlatformGames(accounts, manager, "127.0.0.1", clock) { Push = (_, _) => { } };
+            var owner = accounts.RegisterPublic("cheathost", "testing-password", "Cheat Host");
+            var friend = accounts.RegisterPublic("cheatfriend", "testing-password", "Cheat Friend");
+            if (settings is not null)
+            {
+                var file = Path.Combine(root, "platform.json");
+                File.WriteAllText(file, settings(owner.Id) is string text ? text : JsonSerializer.Serialize(settings(owner.Id)));
+                games.MayCheat = HostSettingsPage.CheatRule(file);
+            }
+            var lobby = Id(games.Create(owner, "Cheats", "", 1, 10, AirGameDtos.BlindPickConfigId, "CLASSIC", "NONE"));
+            games.Join(friend, lobby, "");
+            games.Start(owner.Id, lobby, (long)(double)((AsObject)games.Get(owner.Id, lobby))["optimisticLock"]);
+            games.Pick(owner.Id, 81);
+            games.Pick(friend.Id, 61);
+            games.LockIn(owner.Id);
+            games.LockIn(friend.Id);
+            clock.Now = clock.Now.AddSeconds(PlatformGames.PostPickServerSeconds);
+            games.Tick();
+            var roster = MatchRoster.Read(Path.Combine(Directory.EnumerateDirectories(Path.Combine(root, "games")).Single(), "roster.json"));
+            return (roster.Single(p => p.PlayerId == owner.SummonerId).CanCheat, roster.Single(p => p.PlayerId == friend.SummonerId).CanCheat);
+        }
+        finally { DeleteDirectory(root); }
+    }
+
+    /// <summary>
     /// Batch 463: an ODIN custom game on The Crystal Scar (map 8) takes bot seats as a CLASSIC one does: the stock add-bot RPC, the lobby
     /// DTO and the launch, whose reserved game runs on map 8 with the bots appended to the human seat.
     /// </summary>

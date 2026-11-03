@@ -97,7 +97,7 @@ public sealed class ProtocolCombatTransport : ICombatTransport
             new TurretStatsSnapshot(Float(turret.Health), Float(turret.AttackDamage),
                 Float(turret.MaxHealth), Float(turret.Armor), Float(turret.SpellBlock),
                 Float(turret.HealthRegen), turret.Protected, Float(turret.AttackSpeedMod),
-                Targetable: turret.Alive && !TurretRules.IsFountainTurret(turret)),
+                Targetable: turret.Alive && !TurretRules.IsShrineTurret(turret)),
             syncId: _syncIds.Next(turret.NetId)));
     }
 
@@ -243,7 +243,7 @@ public sealed class ProtocolCombatTransport : ICombatTransport
     {
         if (structure.UnitType == UnitType.Turret)
         {
-            var targetable = structure.Alive && !TurretRules.IsFountainTurret(structure);
+            var targetable = structure.Alive && !TurretRules.IsShrineTurret(structure);
             return CombatPackets.TurretProtectionFlags(structure.NetId,
                 !targetable ? CombatPackets.SFlagNontargetableAll :
                     structure.Protected ? CombatPackets.SFlagNontargetableEnemy : CombatPackets.SFlagTargetableToAll,

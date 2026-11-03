@@ -204,6 +204,8 @@ public sealed partial class CombatService : IEndOfGameEngine
     /// context.
     /// </summary>
     public Action<uint>? TargetLost { get; set; }
+    /// <summary>Batch 674: every death, with its credited killer (a pet's kill is its owner's), for a map's own script (BattleTrainingScript).</summary>
+    public Action<Entity, Entity?>? UnitDied { get; set; }
     /// <summary>
     /// The Lua AI host every AI unit runs its shipped script through. Built with the match
     /// because the turret target selection it owns used to live here; a test may replace it with
@@ -680,6 +682,7 @@ public sealed partial class CombatService : IEndOfGameEngine
                 _lastDeathRecaps[unit.NetId] = recap;
         }
         _hooks.OnDeath(unit, killerNetId);
+        UnitDied?.Invoke(unit, creditedKiller);
 
         var killer = creditedKiller;
         if (unit.Kind == EntityKind.Neutral && unit.Name is "Dragon" or "Worm" &&
@@ -1003,7 +1006,7 @@ public sealed partial class CombatService : IEndOfGameEngine
         _hooks.OnItemPassiveTick(_time, dt);
 
         foreach (var dead in _world.Entities.Values.Where(entity => !entity.Alive &&
-                     (entity.UnitType == UnitType.Minion || entity.Kind == EntityKind.Neutral ||
+                     (Minions.MinionAiSystem.IsMinionUnit(entity) || entity.Kind == EntityKind.Neutral ||
                       entity.Kind.IsAttackingPet())))
         {
             _lastAggroTarget.Remove(dead.NetId);
@@ -1019,7 +1022,11 @@ public sealed partial class CombatService : IEndOfGameEngine
             if (_gameOver) break;
             // Attack cooldowns belong to every living unit, including units
             // whose ordinary basic-attack loop is not owned by this service.
-            attacker.AttackCooldown = Math.Max(0.0, attacker.AttackCooldown - dt);
+            // Batch 670: a residue under 1e-9 s is the float error of summing the steps, not time left, so a period of whole steps ends on its
+            // last step (the shrine's 0.4 s is 12 steps at 30 Hz; the residue made it 13, 2.31 attacks a second for its record's 2.5). The
+            // spell slots test their ready time the same way (BbUnitCharacterModule.CastSpellSlot, BbChampionModule).
+            var cooldown = attacker.AttackCooldown - dt;
+            attacker.AttackCooldown = cooldown > 1e-9 ? cooldown : 0.0;
             var isHero = attacker.UnitType == UnitType.Hero && attacker.Kind == EntityKind.Hero;
             var heroRouteEnded = false;
             if (isHero && (attacker.Waypoints.Count > 0 || attacker.Target is not null))
@@ -1031,6 +1038,13 @@ public sealed partial class CombatService : IEndOfGameEngine
             {
                 // The pet services own target choice and swings (QueueBasicAttack); only the aggro outline is
                 // published here, once per engage and once on target loss.
+                UpdateAggroOutline(attacker);
+                continue;
+            }
+            // Batch 664: the same for a scripted minion of BBSpawnMinion (Minion.lua, Aggro.lua): the spawned-unit AI host owns its target
+            // and swings (TibbersAiSystem), and its aggro outline is published here as a lane minion's is.
+            if (attacker.UnitType != UnitType.Minion && Pets.SpawnedUnitAi.IsLaneLess(attacker.AiScript))
+            {
                 UpdateAggroOutline(attacker);
                 continue;
             }

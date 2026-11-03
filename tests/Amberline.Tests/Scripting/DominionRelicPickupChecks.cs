@@ -138,13 +138,70 @@ public static class DominionRelicPickupChecks
     }
 
     /// <summary>
+    /// Batch 665 (owner, 3 November 2026: "shard is picked up before channeling bar goes to 0"): the greater relic's channel runs its whole
+    /// ChannelDuration (5.25 s, OdinCaptureChannelBomb.luaobj) past the relic's death. The drain kills the relic about 4.5 s in
+    /// (OdinBombSuppression: 1.5 s to engage, then 7 drains of 7000 of 50000 mana, 0.5 s apart, down to 5%). The shipped channel goes on: its
+    /// ChannelingSuccessStop sets the use cooldown 0 for a dead Target, and its ChannelingCancelStop ends a channel cancelled after the pickup
+    /// (OdinBombSuccessParticle, 1 s) without the cancel effect. The engine used to stop the channel at the relic's death (LostTarget), which
+    /// sent the forced stop (0x39) that cut the client's channel bar.
+    /// </summary>
+    [Check("dominion.greater-relic-channel-runs-to-its-end-past-the-pickup", TimeoutSeconds = 600)]
+    public static void GreaterRelicChannelRunsToItsEndPastThePickup()
+    {
+        using var match = StartMatch();
+        RunTo(match.Runtime, 182.5); // batch 476e: the crystals first spawn at game 181.96 (HUD 3:01)
+        var relic = Standing(match, "OdinCenterRelic", "LargeRelic1") ?? throw new InvalidOperationException("no greater relic stands at LargeRelic1 at 3:01");
+        var hero = match.Order;
+        hero.Position = new Position2(relic.Position.X + 200.0, relic.Position.Z);
+        // DIAGNOSTICS: test seam, as in dominion.greater-relic-use-gives-the-storm-shield-and-respawns.
+        match.Runtime.Session.Participant(OrderConnection)!.View.Visible.Add(relic.NetId);
+        var capture = new AnimationCapture();
+        match.Runtime.Delivery.AddObserver(new ReplicationObserver(99, hero.Team, hero.NetId, capture, ready: true));
+        match.Runtime.Delivery.Flush();
+        capture.Packets.Clear();
+        var start = match.Runtime.Combat.CurrentTime;
+        TestAssert.True(Use(match, hero, relic), "the server takes the champion's use of the greater relic (UseObject)");
+        double? begun = null, death = null, ended = null;
+        var forcedStops = new List<double>();
+        for (var tick = 0; tick < 8 * 30 && ended is null; tick++)
+        {
+            capture.Packets.Clear();
+            match.Runtime.Tick(Step);
+            var now = match.Runtime.Combat.CurrentTime - start;
+            if (UseChannel(match, hero, relic)) begun ??= now;
+            else if (begun is not null) ended = now;
+            if (!relic.Alive) death ??= now;
+            // StopAttack (0x39) for the champion: the forced stop that ends the client's SpellCaster and its channel bar.
+            if (capture.Packets.Any(packet => packet.Plaintext.Span.Length >= 5 && packet.Plaintext.Span[0] == 0x39 &&
+                    BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[1..]) == hero.NetId))
+                forcedStops.Add(now);
+        }
+        TestAssert.True(begun is not null && death is not null && ended is not null,
+            $"the champion channels, the relic dies and the channel ends (begun {begun}, relic dead {death}, ended {ended})");
+        TestAssert.True(death!.Value > 4.0 && death.Value < 5.0, $"the drain kills the relic about 4.5 s into the channel ({death:F3})");
+        // The server's channel starts with the use (no windup) and runs ChannelDuration from there.
+        TestAssert.True(Math.Abs(ended!.Value - begun!.Value - 5.25) <= 2 * Step,
+            $"the channel runs its whole ChannelDuration, 5.25 s, past the relic's death (from {begun:F3} to {ended:F3}, relic dead at {death:F3})");
+        TestAssert.True(forcedStops.Count == 0,
+            $"no forced stop cuts the client's channel bar before it ends by itself (0x39 at {string.Join(", ", forcedStops.Select(at => at.ToString("F3")))})");
+        TestAssert.True(!match.Runtime.Spells.UseSlotCoolingDown(hero),
+            "the use slot does not cool down: ChannelingSuccessStop sets the use cooldown 0 for a dead Target");
+        foreach (var name in new[] { "OdinCenterRelicBuff", "OdinCenterRelicBuffDamage", "OdinScoreBigRelic" })
+        {
+            var count = hero.Buffs.Count(buff => buff.Name == name);
+            TestAssert.True(count == 1, $"the champion holds one {name} after the pickup ({count})");
+        }
+        TestAssert.True(match.Failures.Records.Count == 0, "no relic script raised: " + string.Join("; ", match.Failures.Records));
+    }
+
+    /// <summary>
     /// The capture point's guardian is the other useable unit (OdinNeutralGuardian.inibin: IsUseable 1, EnemyCanUse 1, HeroUseSpell
     /// OdinCaptureChannel). The same use packet on a neutral guardian within OdinCaptureChannel's CastRange (500) starts the capture channel
     /// at it, the channel batch 449 starts from an attack order.
     /// </summary>
     /// <summary>
     /// Batch 476: a greater relic's use channel runs with no client SpellCaster, so nothing ends the Channel loop OdinCaptureChannelBomb
-    /// plays. The channel ends when its target dies (the drain kills the relic, the owner's log at 232.611): the champion must then get the
+    /// plays. The channel ends after the drain kills the relic (batch 665: at its ChannelDuration, no longer at the relic's death): the champion must then get the
     /// stop that releases the loop as its last animation packet (the server's rule in BbScriptChannels.Stop).
     /// </summary>
     [Check("dominion.greater-relic-channel-releases-its-loop-when-it-ends", TimeoutSeconds = 600)]
@@ -162,14 +219,14 @@ public static class DominionRelicPickupChecks
         match.Runtime.Delivery.Flush();
         TestAssert.True(Use(match, hero, relic), "the server takes the champion's use of the greater relic (UseObject)");
         var channelled = false;
-        for (var tick = 0; tick < 12 * 30 && (!channelled || Channels(hero)); tick++)
+        for (var tick = 0; tick < 12 * 30 && (!channelled || UseChannel(match, hero, relic)); tick++)
         {
             capture.Packets.Clear();
             match.Runtime.Tick(Step);
-            channelled |= Channels(hero);
+            channelled |= UseChannel(match, hero, relic);
         }
         TestAssert.True(channelled, "the champion channels OdinCaptureChannelBomb (the relic's Useable*HeroUseSpell)");
-        TestAssert.True(!Channels(hero) && !relic.Alive, "the channel ends with its target, the relic's death (the drain)");
+        TestAssert.True(!UseChannel(match, hero, relic) && !relic.Alive, "the channel ends after the drain killed the relic (it runs its ChannelDuration past the pickup, batch 665)");
         var tail = new List<PlaintextPacket>(capture.Packets);
         for (var tick = 0; tick < 30; tick++)
         {
@@ -316,6 +373,11 @@ public static class DominionRelicPickupChecks
 
     // The channel's own buff: OdinCaptureChannelBomb's ChannelingStart adds it to the champion (a BBSpellBuffAdd named after the script).
     private static bool Channels(Entity hero) => hero.Buffs.Any(buff => buff.Name == "OdinCaptureChannelBomb");
+
+    // The use channel itself (BbScriptChannels), aimed at the relic. The channel's own buff outlives it: OdinCaptureChannelBomb's
+    // ChannelingSuccessStop does not remove it (its ChannelingCancelStop does).
+    private static bool UseChannel(Match match, Entity hero, Entity relic) =>
+        match.Runtime.Spells.ChannelsUseAt(hero, relic, "OdinCaptureChannelBomb");
 
     // UseObject as the stock client writes it: 0x3F, the sender's net ID, the used unit's net ID.
     private static bool Use(Match match, Entity hero, Entity used)

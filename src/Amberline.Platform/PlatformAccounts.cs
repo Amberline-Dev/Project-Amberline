@@ -600,7 +600,8 @@ public sealed partial class PlatformAccounts : IDisposable
         // Batch 592: the Basic Tutorial pays no IP or XP. The client's end-of-game screen renames a GAME_TYPE points penalty to TUTORIAL for
         // a tutorial game (EndOfGameStatsController.fixPenalties, EndOfGameStatsController.as:629-641), so retail sent tutorial results with a
         // game-type penalty; Reconstruction: a full one (the client never shows the amount), sent with the results (AirGameDtos.Results).
-        if (result.MapId == GameMaps.Tutorial) return false;
+        // Batch 669: the same for Battle Training, a TUTORIAL_GAME too (Reconstruction: the client's rename covers every tutorial game).
+        if (result.Mode == GameMaps.TutorialMode) return false;
         // The release gate removes custom-game rewards only; every matchmade queue, Co-op vs. AI included, keeps paying.
         if ((!EconomyRules.CustomGameRewards && PlatformGames.QueueOf(queueId) is null) || player.IsLeaver ||
             result.DurationSeconds < EconomyRules.MinimumRewardSeconds)

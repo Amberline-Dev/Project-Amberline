@@ -161,10 +161,15 @@ public static class ServerRuntimeChecks
     {
         TestAssert.Equal(GameMaps.Tutorial, ServerOptions.Parse(["--map-id", "3"]).MapId, "--map-id 3 names the Basic Tutorial");
         TestAssert.Equal("Map3", GameDataPaths.MapFolder(GameMaps.Tutorial), "map 3 reads LEVELS/Map3");
-        TestAssert.Equal("TUTORIAL", GameMaps.ModeOf(GameMaps.Tutorial), "the mode string the client compares with \"Tutorial\"");
+        TestAssert.Equal("TUTORIAL", GameMaps.ModeOf(GameMaps.Tutorial), "the Platform's mode (AIR GameMode.TUTORIAL)");
         TestAssert.Equal("CLASSIC", GameMaps.ModeOf(GameMaps.TwistedTreeline), "Twisted Treeline stays CLASSIC");
         var synch = LoadingPackets.SynchVersionS2C(mapId: GameMaps.Tutorial).Plaintext.Span;
         TestAssert.Equal(GameMaps.Tutorial, BitConverter.ToInt32(synch.Slice(6, 4)), "SynchVersion carries map 3");
+        // Batch 674 (restated): the client is told CLASSIC, not TUTORIAL. A mode equal to "Tutorial" loads Battle Training's
+        // TutorialModeSettings.ini; any other reads Map3's Mission.ini LoadScreen "Tutorial", the Basic Tutorial's own screen
+        // (GameMaps.ClientModeOf).
+        TestAssert.Equal("CLASSIC", System.Text.Encoding.ASCII.GetString(synch.Slice(1438 - 128, 128)).TrimEnd('\0'),
+            "the Basic Tutorial's SynchVersion mode");
     }
 
     [Check("server.simulation-speed-policy")]

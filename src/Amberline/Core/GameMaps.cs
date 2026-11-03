@@ -46,10 +46,30 @@ public static class GameMaps
     public const string DominionMode = "ODIN";
 
     /// <summary>
-    /// The mode string of the Basic Tutorial: AIR <c>GameMode.TUTORIAL</c> = "TUTORIAL". The client compares the
-    /// SynchVersion mode case-blind with "Tutorial" and then loads <c>Data\LoadingScreen\TutorialModeSettings.ini</c>.
+    /// The mode string of both tutorials at the Platform: AIR <c>GameMode.TUTORIAL</c> = "TUTORIAL". The client compares the
+    /// SynchVersion mode case-blind with "Tutorial" and then loads <c>Data\LoadingScreen\TutorialModeSettings.ini</c>, Battle Training's
+    /// screen; the Basic Tutorial's client is told CLASSIC (<see cref="ClientModeOf"/>, batch 674).
     /// </summary>
     public const string TutorialMode = "TUTORIAL";
+
+    /// <summary>
+    /// Batch 669: whether a map is played in a mode. Each map has its own mode (<see cref="ModeOf"/>), and Battle Training is Summoner's Rift
+    /// in TUTORIAL: the AIR bundle calls it "Battle Training - Summoner's Rift" (chooseGameType_tutorialGameTypes_advanced), and the client's
+    /// TUTORIAL loading screen, <c>Data\LoadingScreen\TutorialModeSettings.ini</c>, is Battle Training's (advanced_tutorial_loadscreen.dds,
+    /// game_advanced_tutorial_title; the client).
+    /// </summary>
+    public static bool IsPlayedIn(int mapId, string mode) => mode == ModeOf(mapId) || (mapId == Normal && mode == TutorialMode);
+
+    /// <summary>
+    /// Batch 674: the mode string the game client is sent (SynchVersion; the hero-stats file the client reads, <c>DATA\Globals\&lt;mode&gt;_Stats</c>).
+    /// The client loads <c>Data\LoadingScreen\TutorialModeSettings.ini</c> (Battle Training's advanced_tutorial_loadscreen.dds and title) for a
+    /// mode equal, case-blind, to "Tutorial", and for any other mode <c>LEVELS\&lt;map&gt;\Mission.ini [LoadScreen] Default</c>, which on Map3 is
+    /// "Tutorial": <c>TutorialSettings.ini</c>, basic_tutorial_loadscreen.dds and the TutorialLoadScreen class. So
+    /// the Basic Tutorial's own screen shows only in a mode other than TUTORIAL, and the client ships three (CLASSIC, ODIN, TUTORIAL _Stats and
+    /// RecItems files; RecItemsTUTORIAL only for Battle Training's ten champions). Reconstruction: the Basic Tutorial's client is told CLASSIC.
+    /// The Platform's mode (AIR GameMode.TUTORIAL, the results, recent games and the reward rule) stays TUTORIAL.
+    /// </summary>
+    public static string ClientModeOf(int mapId, string mode) => mapId == Tutorial && mode == TutorialMode ? ClassicMode : mode;
 
     /// <summary>The ids <see cref="IsSupported"/> accepts, for the refusal messages of every <c>--map-id</c> gate.</summary>
     public const string SupportedText =

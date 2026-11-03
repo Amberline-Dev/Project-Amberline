@@ -57,8 +57,10 @@ public static class BehaviorTreeCaptureChecks
         TestAssert.True(host.Captures.All(capture => capture.Ticks == 1800), "every capture instance ticks 1800 times with no exception");
         TestAssert.True(Enumerable.Range(1, 5).SequenceEqual(host.Captures.Select(capture => (int)(double)capture.Variable("CapturePointID")!)),
             "the instances carry CapturePointID 1 to 5");
-        TestAssert.True(host.Captures.All(capture => (double)capture.Variable("TurretGuardId")! > 0.0),
-            "each point's guard squad is its TurretGuardId");
+        // Batch 673 (restated; batch 446 handed each point's guard squad): TurretGuardId names no live squad, so the shipped Neutralization's
+        // KillSquad (OdinScriptBehaviorTrees.xml:1470) cannot kill the point's one guardian, which lives for the match and changes team in place.
+        TestAssert.True(host.Captures.All(capture => (double)capture.Variable("TurretGuardId")! == 0.0),
+            "no point hands its guardian's squad to the tree as TurretGuardId");
 
         // The initialisation reaches its encounter nodes: the wave encounter is created (CreateEncounterFromDefinition), and
         // MeleeWaveBase is added to it. It stops at RangedWaveBase, which no shipped file holds (OdinScriptBehaviorTrees.xml:2068).
@@ -176,13 +178,11 @@ public static class BehaviorTreeCaptureChecks
         channelling[ryze] = PointGuardian(world, PointACentre());
         const double step = 1.0 / 30.0;
         host.Tick(step, step);
-        // Batch 475: the guardians are re-created on a capture, so each point's records name the guardian of their time: the first one, then
-        // the replacement (added after the run).
+        // Batch 673: a point keeps its one guardian for the match (it changes team in place), so each point's records name that unit.
         var indexOf = Enumerable.Range(2, 5).ToDictionary(position => host.Context.PointGuardian(position)!.NetId, position => position - 2);
         for (var tick = 2; tick <= 2100; tick++)
             host.Tick(tick * step, step);
-        foreach (var position in Enumerable.Range(2, 5))
-            indexOf.TryAdd(host.Context.PointGuardian(position)!.NetId, position - 2);
+        TestAssert.True(host.CapturePointOwners[1] == Team.Order, "point A is captured during the run");
         var flex = packets.Where(packet => packet.Plaintext.Span[0] == 0xDB).ToList();
         TestAssert.True(flex.Count > 0, "the 0xDB flex records are sent");
         foreach (var packet in flex)
@@ -197,10 +197,10 @@ public static class BehaviorTreeCaptureChecks
 
         var records = packets.Where(packet => packet.Plaintext.Span[0] == 0xDC).ToList();
         TestAssert.True(records.All(packet => packet.Plaintext.Span[15] == 0), "every 0xDC applies (mode 0)");
-        // Point A's records (index 0) across its guardians: each guardian is attached with the guardian's PAR type (0, MP), the first and the
-        // replacement alike.
+        // Point A's records (index 0): its guardian is attached with the guardian's PAR type (0, MP). Batch 673 (restated): one guardian through
+        // the capture, so its unchanged record is sent once (the records go out on change); batch 475's re-created guardian needed a second.
         var parTypesA = records.Where(packet => packet.Plaintext.Span[5] == 0).Select(packet => packet.Plaintext.Span[10]).ToList();
-        TestAssert.True(parTypesA.Count > 1, $"point A's 0xDC attaches each of its guardians ({parTypesA.Count} sent)");
+        TestAssert.True(parTypesA.Count >= 1, $"point A's 0xDC attaches its guardian ({parTypesA.Count} sent)");
         TestAssert.True(parTypesA.All(type => type == 0), $"point A's 0xDC names the guardian's PAR type 0 ({string.Join(",", parTypesA)})");
     }
 
@@ -217,18 +217,17 @@ public static class BehaviorTreeCaptureChecks
     }
 
     /// <summary>
-    /// Batch 475 (second follow-up, Reconstruction): a capture re-creates the point's guardian on the owner's team. AiEntityDataFile.dat:18-21
-    /// names a team guardian per owner (OdinOrderGuardian, OdinChaosGuardian) that the 126 client does not hold, and no team-change packet is
-    /// proven, so the neutral guardian is replaced. The old one leaves the world and every client silently (LeaveVisibility: no kill, no
-    /// death packet); the new one is spawned at the same place through the encounter path, so its character script runs again. The ring and
-    /// the minimap take the owner from the 0xDC-bound unit's team.
+    /// Batch 673 (restated; was "...-capture-recreates-the-guardian-on-the-owner-team", batch 475's Reconstruction): a capture changes the point's
+    /// guardian's team in place (owner decision, 3 November 2026). The point keeps its one unit, which takes the owner's team; every client that holds
+    /// it is told by UnitChangeTeam (0xE0: the unit at 5, the native team at 9; the 126 client's handler calls the unit's SetTeam). Nothing
+    /// leaves the world or the clients, no death packet goes out, and the point's records (0xDC with the PAR type 0, the graveyard's 0xDE create)
+    /// keep naming the same unit.
     /// </summary>
-    [Check("scripting.behaviour-tree-map8-capture-recreates-the-guardian-on-the-owner-team")]
-    public static void MapEightCaptureRecreatesTheGuardianOnTheOwnerTeam()
+    [Check("scripting.behaviour-tree-map8-capture-changes-the-guardians-team-in-place")]
+    public static void MapEightCaptureChangesTheGuardiansTeamInPlace()
     {
         var packets = new List<PlaintextPacket>();
-        var departed = new List<Entity>();
-        var (host, world, channelling) = NewMapEightHost(packets.Add, departed.Add);
+        var (host, world, channelling) = NewMapEightHost(packets.Add);
         const double step = 1.0 / 30.0;
         host.Tick(step, step);
         var original = host.Context.PointGuardian(2) ?? throw new InvalidOperationException("point A has a guardian");
@@ -240,28 +239,20 @@ public static class BehaviorTreeCaptureChecks
 
         TestAssert.True(host.CapturePointOwners[1] == Team.Order, "a champion held point A for 70 s: point A is Order's");
         var current = host.Context.PointGuardian(2) ?? throw new InvalidOperationException("point A still has a guardian");
-        TestAssert.True(current.NetId != original.NetId, "point A's guardian is a new unit after the capture");
-        TestAssert.True(current.Team == Team.Order, "the new guardian is on the owner's team");
-        TestAssert.True(world.Get(current.NetId) == current, "the new guardian is in the world");
-        TestAssert.True(world.Get(original.NetId) is null, "the old guardian left the world");
-        TestAssert.True(original.Alive, "the old guardian was not killed (no kill credit)");
-        // Batch 493: the leave goes through the replication's departure (ReplicationDelivery.Depart builds it for each observer that sees the unit);
-        // a 0x54 queued through Send is dropped by the delivery as refresh-rebuilt.
-        TestAssert.True(departed.Count == 1 && ReferenceEquals(departed[0], original),
-            "the old guardian departs the clients (LeaveVisibility through ReplicationDelivery.Depart)");
+        TestAssert.True(ReferenceEquals(current, original) && world.Get(original.NetId) == original && original.Alive,
+            "point A keeps its guardian through the capture (the same unit, in the world, alive)");
+        TestAssert.True(original.Team == Team.Order, "the guardian is on the owner's team");
+        var changes = packets.Select(packet => packet.Plaintext.ToArray())
+            .Where(bytes => bytes[0] == 0xE0 && BitConverter.ToUInt32(bytes, 5) == original.NetId).ToList();
+        TestAssert.True(changes.Count == 1 && changes[0].Length == 13 && BitConverter.ToInt32(changes[0], 9) == TeamMapping.ToNative(Team.Order),
+            $"one UnitChangeTeam names the guardian and Order (100) ({changes.Count} sent)");
         TestAssert.True(packets.All(packet => packet.Plaintext.Span[0] != 0xA6), "no death packet (0xA6) is sent");
-        // The new guardian is attached to the point: its first 0xDC is sent on the step after the spawn, with the guardian's PAR type (0, MP;
-        // batch 494: the client reads the point's value as GetPARPercent of that type).
-        var firstRecord = packets.FirstOrDefault(packet => packet.Plaintext.Span[0] == 0xDC && packet.Plaintext.Span[5] == 0 &&
-            BitConverter.ToUInt32(packet.Plaintext.Span.Slice(6, 4)) == current.NetId);
-        TestAssert.True(firstRecord is not null, "a 0xDC binds the new guardian (point A's index 0)");
-        TestAssert.True(firstRecord!.Plaintext.Span[10] == 0,
-            $"the new guardian's first 0xDC names its PAR type 0 (byte {firstRecord.Plaintext.Span[10]})");
-        // Batch 475 (second follow-up, root cause): the graveyard's 0xDE create names the point's guardian (BehaviorLeaves.Relics CreateRespawnPoint),
-        // and the tree creates it once. A re-created guardian needs its own create, or its graveyard is not known to the clients.
+        var record = packets.FirstOrDefault(packet => packet.Plaintext.Span[0] == 0xDC && packet.Plaintext.Span[5] == 0 &&
+            BitConverter.ToUInt32(packet.Plaintext.Span.Slice(6, 4)) == original.NetId);
+        TestAssert.True(record is not null && record.Plaintext.Span[10] == 0, "a 0xDC binds the guardian to point A with its PAR type 0");
         TestAssert.True(packets.Any(packet => packet.Plaintext.Span[0] == 0xDE && packet.Plaintext.Span.Length == 11 && packet.Plaintext.Span[5] == 0 &&
-            packet.Plaintext.Span[6] == 0 && BitConverter.ToUInt32(packet.Plaintext.Span.Slice(7, 4)) == current.NetId),
-            "a 0xDE create names the new guardian for graveyard 0 (the respawn point follows the guardian)");
+            packet.Plaintext.Span[6] == 0 && BitConverter.ToUInt32(packet.Plaintext.Span.Slice(7, 4)) == original.NetId),
+            "graveyard 0's 0xDE create names the guardian");
     }
 
     /// <summary>
@@ -424,7 +415,7 @@ public static class BehaviorTreeCaptureChecks
     /// absent from it is not channelling. Batch 467: <paramref name="send"/> records the global capture packets.
     /// </summary>
     private static (BehaviorTreeQuestHost Host, WorldState World, Dictionary<Entity, Entity> Channelling) NewMapEightHost(
-        Action<PlaintextPacket>? send = null, Action<Entity>? depart = null)
+        Action<PlaintextPacket>? send = null)
     {
         var world = new WorldState();
         var channelling = new Dictionary<Entity, Entity>();
@@ -432,8 +423,7 @@ public static class BehaviorTreeCaptureChecks
             Send: send ?? (_ => { }),
             Kill: (unit, _) => unit.Alive = false,
             AwardGold: (_, _) => true,
-            CaptureChannelTarget: hero => channelling.GetValueOrDefault(hero),
-            Depart: depart);
+            CaptureChannelTarget: hero => channelling.GetValueOrDefault(hero));
         var host = BehaviorTreeQuestHost.ForMap(GameMaps.CrystalScar, GameDataPaths.Default, world,
             (_, _) => { }, null,
             (skin, at, team) => world.Register(new Entity(world.Allocate(UnitType.Monster), EntityKind.Neutral, UnitType.Monster, team, at)

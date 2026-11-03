@@ -10,7 +10,7 @@ public sealed record MatchResult(
 {
     internal static MatchResult Capture(IReadOnlyList<SessionParticipant> participants,
         Team winner, double durationSeconds, bool surrendered, double now, LeaverRules? leaverRules = null,
-        int mapId = GameMaps.Normal, WorldState? world = null)
+        int mapId = GameMaps.Normal, WorldState? world = null, string? mode = null)
     {
         var players = participants.Select(seat =>
         {
@@ -41,7 +41,7 @@ public sealed record MatchResult(
                         seat.ConnectionId is null, statistics.TimeSinceLastDisconnect),
                 Odin: odin);
         }).ToArray();
-        return new(8, LeagueProtocolConstants.VersionString, mapId, GameMaps.ModeOf(mapId), winner.ToString(),
+        return new(8, LeagueProtocolConstants.VersionString, mapId, mode ?? GameMaps.ModeOf(mapId), winner.ToString(),
             durationSeconds, Array.AsReadOnly(players), surrendered);
     }
 }

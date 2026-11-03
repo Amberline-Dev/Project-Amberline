@@ -226,7 +226,7 @@ internal sealed class ProductionServices
                 new TurretStatsSnapshot(Float(entity.Health), Float(entity.AttackDamage),
                     Float(entity.MaxHealth), Float(entity.Armor), Float(entity.SpellBlock),
                     Float(entity.HealthRegen), entity.Protected, Float(entity.AttackSpeedMod),
-                    Targetable: entity.Alive && !TurretRules.IsFountainTurret(entity)), _sync.Next(entity.NetId))];
+                    Targetable: entity.Alive && !TurretRules.IsShrineTurret(entity)), _sync.Next(entity.NetId))];
         if (entity.Kind is EntityKind.Inhibitor or EntityKind.Nexus)
             return [CombatPackets.BuildingStats(entity.NetId, Float(entity.Health),
                 entity.Protected ? CombatPackets.SFlagNontargetableEnemy :

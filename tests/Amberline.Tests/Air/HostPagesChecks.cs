@@ -483,6 +483,7 @@ public static class HostPagesChecks
         ["Stop Amberline"] = "the dashboard and the Stop page: ends games (verb and object)",
         ["Restart Amberline"] = "the dashboard and the Restart page: ends games (verb and object)",
         ["Check now"] = "Updates: asks GitHub once",
+        ["Update now"] = "Updates and its confirm (batch 666): downloads the newer release, checks it and starts its installer",
         ["Send to players"] = "Advanced: sends the notice",
         ["Give RP"] = "Advanced: gives RP to a login",
         ["Make them log in again"] = "Advanced: ends a friend's sign-in token",
@@ -496,7 +497,7 @@ public static class HostPagesChecks
     /// <summary>The forms whose answer can take more than about 2 seconds (batch 652): each says at once what it is doing.</summary>
     private static readonly string[] Slow =
     [
-        "^/host/play$", "^/host/firewall$", "^/host/network$", "^/host/stop$", "^/host/restart$", "^/host/certificate", "^/host/updates$",
+        "^/host/play$", "^/host/firewall$", "^/host/network$", "^/host/stop$", "^/host/restart$", "^/host/certificate", "^/host/updates$", "^/host/updates/install$",
         "^/host/settings/uninstall$", "^/host/friends/password$", "^/manage/reward-code/create$", "^/host/setup/address$", "^/host/settings/address$",
         "^/setup$", "^/setup/copy$", "^/host/settings/folders$", "^/host/settings/folders/copy$",
     ];

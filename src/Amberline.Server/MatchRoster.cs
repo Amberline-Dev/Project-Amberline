@@ -21,8 +21,9 @@ public sealed record MatchPlayer(
     Dictionary<int, int>? Masteries = null,
     bool IsBot = false,
     int? PlayerId = null,
-    // DIAGNOSTICS: the playtest cheat commands and the cheat packet answer only seats that may cheat. AIR matches allow a seat only
-    // when its session reached the host PC directly; the Host API allows a seat only in a game created on the host PC; other rosters keep every seat (tools, developer matches).
+    // DIAGNOSTICS: the playtest cheat commands and the cheat packet answer only seats that may cheat. AIR matches follow
+    // PlatformGames.MayCheat (the operator's start: every human seat; home mode: none, or the host's own login while Settings allows
+    // it); the Host API allows a seat only in a game created on the host PC; other rosters keep every seat (tools, developer matches).
     bool CanCheat = true);
 
 public sealed record MatchPlayerLoadout(

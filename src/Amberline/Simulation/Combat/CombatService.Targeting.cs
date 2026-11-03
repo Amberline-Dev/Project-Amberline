@@ -136,8 +136,10 @@ public sealed partial class CombatService
     {
         // Reconstruction: the client's CollectAggroUnits has no unit-type filter, so any AI unit that targets
         // the local hero gets the yellow outline from 0xC8. Pet.lua / YorickPHPet.lua have no lane-minion
-        // state; a pet is engaged while it holds an attack target, like a minion in Engage.
-        var engaged = (unit.UnitType == UnitType.Minion &&
+        // state; a pet is engaged while it holds an attack target, like a minion in Engage. Batch 664: a scripted minion
+        // (BBSpawnMinion with Minion.lua or Aggro.lua, MinionAiSystem.IsMinionUnit) is engaged as a lane minion is: the Basic
+        // Tutorial's minions sent none (owner's hand test, 3 November 2026).
+        var engaged = (Minions.MinionAiSystem.IsMinionUnit(unit) &&
                        unit.MinionState is MinionAiState.Engage or MinionAiState.Taunted) ||
             (unit.Kind == EntityKind.Neutral && unit.NeutralState == "engage") ||
             (unit.Kind.IsAttackingPet() && unit.AttackTarget is not null);

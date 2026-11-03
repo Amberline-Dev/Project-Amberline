@@ -96,6 +96,12 @@ public sealed class HostLoop(HostPaths paths, Action<string> openBrowser, TextWr
     /// </summary>
     public UninstallPlaces Uninstall { get; set; } = UninstallPlaces.Nowhere;
 
+    /// <summary>
+    /// Where Updates asks GitHub and downloads, and how Update now starts a release (<see cref="HostReleases"/>). By default nowhere and
+    /// nothing, so a check's loop never reaches GitHub or starts a program; only <see cref="HostMode.MainAsync"/> passes the live one.
+    /// </summary>
+    public HostReleases Releases { get; set; } = HostReleases.Offline;
+
     /// <summary>The cleanup Uninstall Amberline handed the install folder to; <see cref="HostMode.MainAsync"/> starts it once the loop has ended.</summary>
     public ProcessStartInfo? Cleanup { get; internal set; }
 
@@ -199,7 +205,7 @@ public static class HostMode
         var request = ParseInstall(options);
         // A start from an unpacked release installs or updates the installed copy and starts that one instead.
         var install = request is { } asked ? HostInstall.ForRelease(paths, localAppData, Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            screen, asked.Folder, asked.Clients) : null;
+            screen, asked.Folder, asked.Clients, asked.Confirmed) : null;
         var exit = install is null && options.Length > 0
             ? Refuse(screen, "Amberline does not know these options. Start it from its desktop icon or Start Amberline.cmd.")
             : install is { AsksFolder: true } && !install.AskFolder(Console.ReadLine) ? Refuse(screen, "Amberline was not installed.", 1)
@@ -226,7 +232,7 @@ public static class HostMode
             : await RunAsync(loop = new HostLoop(paths, OpenBrowser, screen)
             {
                 Folders = FolderSetup.ThisPc(), Addresses = HostAddressSources.Live, Play = new(HostPlay.Start), Network = HostNetwork.Windows,
-                NextProcess = ThisProgram(), Restarted = restarted, Uninstall = UninstallPlaces.ThisPc(),
+                NextProcess = ThisProgram(), Restarted = restarted, Uninstall = UninstallPlaces.ThisPc(), Releases = HostReleases.Live,
             });
         // A new process that a Restart started asked for Enter itself.
         if (exit != 0 && loop?.HandedOver != true) WaitForEnter(screen);
@@ -254,12 +260,13 @@ public static class HostMode
 
     /// <summary>
     /// START-HERE's install request after <c>--home</c> (batch 637): <c>--install-to &lt;folder&gt;</c>, <c>--game &lt;folder&gt;</c>,
-    /// <c>--air &lt;folder&gt;</c> and <c>--delete-originals</c>, each optional; null for anything else.
+    /// <c>--air &lt;folder&gt;</c> and <c>--delete-originals</c>, each optional; batch 666, <see cref="HostInstall.ConfirmedOption"/> (only
+    /// Update now passes it: the host confirmed on the page). Null for anything else.
     /// </summary>
-    public static (string? Folder, HostClients? Clients)? ParseInstall(IReadOnlyList<string> options)
+    public static (string? Folder, HostClients? Clients, bool Confirmed)? ParseInstall(IReadOnlyList<string> options)
     {
         string? folder = null, game = null, air = null;
-        var delete = false;
+        var (delete, confirmed) = (false, false);
         for (var index = 0; index < options.Count; index++)
             switch (options[index])
             {
@@ -267,9 +274,10 @@ public static class HostMode
                 case "--game" when index + 1 < options.Count: game = options[++index]; break;
                 case "--air" when index + 1 < options.Count: air = options[++index]; break;
                 case "--delete-originals": delete = true; break;
+                case HostInstall.ConfirmedOption: confirmed = true; break;
                 default: return null;
             }
-        return (folder, game is null && air is null ? null : new HostClients(game, air, delete));
+        return (folder, game is null && air is null ? null : new HostClients(game, air, delete), confirmed);
     }
 
     public static async Task<int> RunAsync(HostLoop loop)

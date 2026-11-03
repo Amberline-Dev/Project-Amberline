@@ -15,9 +15,7 @@ internal sealed class BbChannel
     public required double ManaCost { get; init; }
     public required Position3 At { get; init; }
     public required Position3 End { get; init; }
-    /// <summary>
-    /// The unit the channel is aimed at. Batch 475b: it moves when that unit is replaced (<see cref="BbScriptChannels.Retarget"/>).
-    /// </summary>
+    /// <summary>The unit the channel is aimed at.</summary>
     public Entity? Target { get; set; }
     public required double Remaining { get; set; }
     /// <summary>
@@ -52,7 +50,7 @@ internal sealed class BbChannel
 /// (its registration tables) and the native <c>BBStopChanneling</c> that a script uses to end its own channel
 /// (<c>CasterVar</c>, <c>StopCondition</c>, <c>StopSource</c>); everything else here is a Reconstruction:
 /// <list type="bullet">
-/// <item>the sources: the caster's death (<c>Die</c>), the death of the unit a targeted channel was aimed at (<c>LostTarget</c>), a state that stops it from acting (a stun, silence, taunt, fear, sleep or suppression:
+/// <item>the sources: the caster's death (<c>Die</c>), a state that stops it from acting (a stun, silence, taunt, fear, sleep or suppression:
 /// <c>StunnedOrSilencedOrTaunted</c>; a root or net does not), being moved off the spot (<c>Move</c>), a fresh order of the player (<c>Move</c>,
 /// or <c>Attack</c> for an attack order) and an accepted cast (<c>Casting</c>);</item>
 /// <item>the caster is not locked while it channels: the hand-written Monsoon was cancelled by the same events and let every other cast through.</item>
@@ -67,24 +65,6 @@ internal sealed class BbScriptChannels
 
     /// <summary>The channels this engine is running (a check reads it).</summary>
     public IReadOnlyCollection<BbChannel> Active => _channels.Values;
-
-    /// <summary>
-    /// Batch 475b (Reconstruction): a channel aimed at a unit that was replaced (a point's guardian, re-created on its owner's team) takes the
-    /// replacement as its Target from the next hook on. Its elapsed time, its InstanceVars (the cast point, the hooks' variables) and its loop serial
-    /// stay as they are. The caster on <paramref name="exceptTeam"/> (the team that just captured the point) is left alone: its channel ends as a
-    /// success on the same unit (ChannelingUpdateStats, CO_EQUAL). Returns the number of channels moved.
-    /// </summary>
-    public int Retarget(Entity from, Entity to, Team exceptTeam)
-    {
-        var moved = 0;
-        foreach (var channel in _channels.Values)
-        {
-            if (!ReferenceEquals(channel.Target, from) || channel.Caster.Team == exceptTeam) continue;
-            channel.Target = to;
-            moved++;
-        }
-        return moved;
-    }
 
     public BbChannel? Of(Entity caster) => _channels.TryGetValue(caster, out var channel) ? channel : null;
 
@@ -151,14 +131,12 @@ internal sealed class BbScriptChannels
             var caster = channel.Caster;
             if (!ReferenceEquals(Of(caster), channel)) continue;
             if (!caster.Alive) { Stop(caster, Cancel, BbChannelingStopSource.ChannelingStopSource_Die); continue; }
-            // A channel aimed at a unit (Drain, Infinite Duress, Stand United) ends as ChannelingStopSource_LostTarget when that unit is gone. The
-            // scripts that watch the target themselves (Drain, Duress) say the same through BBStopChanneling. Reconstruction: the exe names the
-            // source and has no rule for it.
-            if (channel.Target is { } target && !ReferenceEquals(target, caster) && !target.Alive)
-            {
-                Stop(caster, Cancel, BbChannelingStopSource.ChannelingStopSource_LostTarget);
-                continue;
-            }
+            // Batch 665: the death of the unit a channel is aimed at does not end the channel; the shipped scripts that end on it say so
+            // themselves. DrainChannel's ChannelingUpdateActions and AlZaharNetherGrasp's buff stop with BBStopChanneling LostTarget on
+            // "Target CO_IS_DEAD", InfiniteDuress_buff when its target loses Suppression, and OdinCaptureChannelBomb runs on past the centre
+            // relic's death: its ChannelingSuccessStop sets the use cooldown 0 for a dead Target, and its ChannelingCancelStop's
+            // OdinBombSuccessParticle branch (a 1 s buff given at the pickup) ends a channel the player cancels after the pickup without
+            // the cancel effect. The engine stop added on 19 October (c55336e9e, a Reconstruction) cut that channel and its client bar at the pickup.
             var state = CharacterState.Of(caster);
             if (!state.CanCast || state.Taunted)
             {

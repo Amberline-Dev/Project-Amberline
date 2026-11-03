@@ -71,6 +71,7 @@ public static class PacketCatalogChecks
         yield return new("SpawnPackets.SpawnPet", SpawnPackets.SpawnPet(pet, 0.0));
         yield return new("SpawnPackets.CreateNeutral", SpawnPackets.CreateNeutral(neutral));
         yield return new("SpawnPackets.UnitSetMinimapIcon", SpawnPackets.UnitSetMinimapIcon(A, "CenterRelicLeft"));
+        yield return new("SpawnPackets.UnitChangeTeam", SpawnPackets.UnitChangeTeam(A, Team.Order));
         yield return new("SpawnPackets.NeutralCampEmpty", SpawnPackets.NeutralCampEmpty(7, 1));
         foreach (var packet in SpawnPackets.AllTurrets([(A, "Turret_T1_C_01", (byte)0x40)]))
             yield return new("SpawnPackets.AllTurrets", packet);

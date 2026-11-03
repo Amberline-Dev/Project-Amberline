@@ -24,6 +24,43 @@ public static class DominionMapPacketChecks
         TestAssert.Throws<ArgumentOutOfRangeException>(() => LoadingPackets.SynchVersionS2C(mapId: 9));
     }
 
+    /// <summary>
+    /// Batch 669 (next to the map 8 selectors for their decoders): Battle Training is map 1 in mode TUTORIAL, the mode whose loading screen
+    /// is Battle Training's (TutorialModeSettings.ini). The server takes it as <c>--game-mode</c>; a map keeps its own mode otherwise, and a
+    /// mode the map is not played in is refused.
+    /// </summary>
+    [Check("server.battle-training-synch-version-carries-map-1-and-the-tutorial-mode")]
+    public static void BattleTrainingIsSummonersRiftInTutorialMode()
+    {
+        var training = LoadingPackets.SynchVersionS2C(mapId: GameMaps.Normal, mode: GameMaps.TutorialMode);
+        TestAssert.Equal(1, MapIdOf(training), "Summoner's Rift");
+        TestAssert.Equal("TUTORIAL", ModeOf(training));
+        // Batch 674: the Basic Tutorial, TUTORIAL at the Platform too, tells its client CLASSIC, so the client reads Map3's own loading screen
+        // (Mission.ini LoadScreen "Tutorial", TutorialSettings.ini) and not Battle Training's (GameMaps.ClientModeOf).
+        TestAssert.Equal("CLASSIC", ModeOf(LoadingPackets.SynchVersionS2C(mapId: GameMaps.Tutorial, mode: GameMaps.TutorialMode)),
+            "the Basic Tutorial's client mode");
+        TestAssert.Equal("TUTORIAL", ServerOptions.Parse(["--map-id", "1", "--game-mode", "TUTORIAL"]).GameMode);
+        TestAssert.True(ServerOptions.Parse(["--map-id", "1"]).GameMode is null, "no --game-mode: the map's own");
+        TestAssert.Throws<ArgumentOutOfRangeException>(() => ServerOptions.Parse(["--map-id", "4", "--game-mode", "TUTORIAL"]));
+        TestAssert.Throws<ArgumentOutOfRangeException>(() => ServerOptions.Parse(["--map-id", "1", "--game-mode", "ODIN"]));
+        TestAssert.True(GameMaps.IsPlayedIn(GameMaps.Tutorial, GameMaps.TutorialMode) && GameMaps.IsPlayedIn(GameMaps.CrystalScar, GameMaps.DominionMode)
+            && !GameMaps.IsPlayedIn(GameMaps.CrystalScar, GameMaps.ClassicMode), "every other map plays only its own mode");
+
+        // The production match the Platform starts (PlatformGames.CreateBattleTraining): the player's Ryze and the nine bots, composed on
+        // Summoner's Rift in TUTORIAL, whose SynchVersion carries the mode (the server's Program path needs the ENet bridge).
+        var champions = new[] { "Ryze", "MasterYi", "Soraka", "Shen", "Sivir", "Malphite", "Sivir", "Nasus", "Annie", "MasterYi" };
+        var roster = champions.Select((champion, seat) => new Amberline.Network.Sessions.SessionParticipantDefinition((ulong)seat + 1, (uint)seat,
+            seat == 0 ? "Trainee" : $"{GameData.Default.BotName(champion)} {seat}", champion, seat < 5 ? Team.Order : Team.Chaos,
+            "SummonerHeal", "SummonerFlash", IsBot: seat != 0)).ToArray();
+        var runtime = Amberline.Network.Sessions.MatchRuntime.CreateProduction(NavigationGrid.LoadDefault(), readySettleSeconds: 0.0,
+            roster: roster, gameMode: GameMaps.TutorialMode);
+        runtime.World.Clock.SetVirtual(0.0);
+        runtime.Session.Receive(1, 0, runtime.Session.BuildKeyCheck(1));
+        var version = runtime.Session.Receive(1, 1, [0xC5]).Select(item => item.Packet).Single(packet => packet.Plaintext.Span[0] == 0x57);
+        TestAssert.Equal(1, MapIdOf(version), "the match is Summoner's Rift");
+        TestAssert.Equal("TUTORIAL", ModeOf(version), "in Battle Training's mode");
+    }
+
     [Check("server.dominion-map-8-level-files-and-map-option")]
     public static void MapEightReadsItsOwnFilesAndTheServerAcceptsIt()
     {

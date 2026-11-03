@@ -80,27 +80,39 @@ public sealed partial class MinionAiSystem
         })!;
     }
 
+    /// <summary>
+    /// Batch 664: whether a unit is a minion to the minion rules (the target ladder, the call for help, the aggro outline): a lane or
+    /// wave minion, or a unit <c>BBSpawnMinion</c> gave <c>Minion.lua</c> or <c>Aggro.lua</c>. Retail's <c>BBSpawnMinion</c> makes an
+    /// <c>obj_AI_Minion</c> whatever the script (batch 348's responder rule says the same for the call for help); this engine types such a
+    /// unit a monster (<c>BbNativeHandlers.SpawnGeneric</c>), so a rule that read the unit type alone treated the Basic Tutorial's
+    /// scripted minions as camp monsters: the Aggro.lua wizards of EventNormalBattle (TutorialScript proto 0.19) never heard the player's
+    /// attack and never hit back, and their minion.lua waves ranked the player above every enemy minion.
+    /// </summary>
+    internal static bool IsMinionUnit(Entity entity) =>
+        entity.UnitType == UnitType.Minion || Pets.SpawnedUnitAi.IsLaneLess(entity.AiScript);
+
     // Reconstruction: period 12 November 2011 ladder; an attacking turret is help, not a
     // blanket turret-first preference. Include the responder among allies.
     internal static int TargetPriority(WorldState world, Entity minion, Entity candidate, Entity? helpVictim = null)
     {
         var victim = helpVictim ?? (candidate.AttackTarget is uint id ? world.Get(id) : null);
         var ally = victim is { Alive: true } && victim.Team == minion.Team;
+        var minionCandidate = IsMinionUnit(candidate);
         if (ally && victim!.UnitType == UnitType.Hero)
         {
             if (candidate.UnitType == UnitType.Hero) return 0;
-            if (candidate.UnitType == UnitType.Minion) return 1;
+            if (minionCandidate) return 1;
         }
-        if (ally && victim!.UnitType == UnitType.Minion)
+        if (ally && IsMinionUnit(victim!))
         {
-            if (candidate.UnitType == UnitType.Minion) return 2;
+            if (minionCandidate) return 2;
             if (candidate.UnitType == UnitType.Turret) return 3;
             if (candidate.UnitType == UnitType.Hero) return 4;
         }
         if (candidate.AttackTarget == minion.NetId) return 5;
+        if (minionCandidate) return 6;
         return candidate.UnitType switch
         {
-            UnitType.Minion => 6,
             UnitType.Hero => 7,
             UnitType.Turret => 8,
             _ => 9,

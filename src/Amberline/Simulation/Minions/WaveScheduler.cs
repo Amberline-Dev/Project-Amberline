@@ -91,6 +91,21 @@ public sealed class WaveScheduler
     public IReadOnlyList<string> ActiveLanes { get; private set; } = MapDefinitions.Lanes;
 
     /// <summary>
+    /// Batch 674 (Reconstruction, Battle Training): no wave is scheduled while held; the level's own timers still run. The announcer's line
+    /// (wiki, Announcer/Tutorial): minions "normally begin spawning after ninety seconds, but for this training they will not spawn until
+    /// your champion" leaves the base. <see cref="ReleaseWaves"/> ends the hold.
+    /// </summary>
+    public bool WavesHeld { get; set; }
+
+    /// <summary>Ends <see cref="WavesHeld"/>: before the first wave, the first wave is due at once; later waves keep their cadence.</summary>
+    public void ReleaseWaves(double now)
+    {
+        if (!WavesHeld) return;
+        WavesHeld = false;
+        if (_waveIndex == 0 && _nextSpawnTime is { } next && next > now) _nextSpawnTime = now;
+    }
+
+    /// <summary>
     /// Binds a freshly created lane minion to its shipped character script (batch 159 part 2), the seam the match
     /// composition points at <c>BbUnitCharacterModule.BindUnit</c>. Null when no script engine is installed: the minion
     /// then keeps the hand-written path and gets none of the buffs its character script asks for. It runs at creation,
@@ -132,7 +147,7 @@ public sealed class WaveScheduler
         // arms a timer lazily on its first step (startClock + interval).
         _levelScript.Advance(now, now - _lastStep);
         _lastStep = now;
-        if (!AutomaticSpawningEnabled) return Array.Empty<Entity>();
+        if (!AutomaticSpawningEnabled || WavesHeld) return Array.Empty<Entity>();
         // The stock barracks update fires once per update when the time since its last trigger
         // reaches WaveSpawnRate, counts the wave before it calls Lua, and stores the trigger time: a wave missed during a
         // stall is never replayed and the next one is due a whole interval after the trigger. A tick that is merely a few

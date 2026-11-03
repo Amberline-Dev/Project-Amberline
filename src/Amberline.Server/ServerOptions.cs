@@ -34,7 +34,9 @@ public sealed record ServerOptions(
     IReadOnlyList<MatchPlayer>? Players = null,
     bool LauncherControl = false,
     bool ManagedStatus = false,
-    int MapId = 1)
+    int MapId = 1,
+    // Batch 669: the SynchVersion mode when it is not the map's own (GameMaps.IsPlayedIn): Battle Training is map 1 in TUTORIAL.
+    string? GameMode = null)
 {
     public const ushort DefaultPort = 5119;
     // Ten roster seats plus a new transport while a crashed seat is replaced.
@@ -100,6 +102,8 @@ public sealed record ServerOptions(
                 "Simulation speed must be finite and between 0.1 and 10.");
         if (!GameMaps.IsSupported(MapId))
             throw new ArgumentOutOfRangeException(nameof(MapId), $"Map id must be {GameMaps.SupportedText}.");
+        if (GameMode is { } gameMode && !GameMaps.IsPlayedIn(MapId, gameMode))
+            throw new ArgumentOutOfRangeException(nameof(GameMode), $"Map {MapId} is not played in mode {gameMode}.");
         if (MaxEvents is < 1 or > 1024)
             throw new ArgumentOutOfRangeException(nameof(MaxEvents), "Max events must be 1..1024.");
         if (VisibilityBaseline && MinionFidelity)
@@ -145,6 +149,7 @@ public sealed record ServerOptions(
         var launcherControl = result.LauncherControl;
         var managedStatus = false;
         var mapId = result.MapId;
+        var gameMode = result.GameMode;
         MatchPlayer[]? players = null;
 
         for (var index = 0; index < args.Count; index++)
@@ -205,13 +210,14 @@ public sealed record ServerOptions(
                 case "max-events": maxEvents = ParseInt(value, "--max-events"); break;
                 case "roster": players = MatchRoster.Read(value); break;
                 case "map-id": mapId = ParseInt(value, "--map-id"); break;
+                case "game-mode": gameMode = value; break;
                 default: throw new ArgumentException($"Unknown option '--{name}'.");
             }
         }
 
         return new ServerOptions(bind, port, peerLimit, channelLimit, mode, order, chaos,
             speed, dataRoot, logDirectory, maxEvents,
-            visibilityBaseline, minionFidelity, validateOnly, players, launcherControl, managedStatus, mapId).Validate();
+            visibilityBaseline, minionFidelity, validateOnly, players, launcherControl, managedStatus, mapId, gameMode).Validate();
     }
 
     public static string Usage() => """
@@ -232,6 +238,7 @@ public sealed record ServerOptions(
           --launcher-control             Signal readiness; stop on stdin 'stop' or EOF.
           --managed-status               Emit structured match status for the host manager.
           --map-id <1|2|3|4|8>          1 Summoner's Rift; 2 the Harrowing rift (Autumn, LEVELS/Map2); 3 the Basic Tutorial (LEVELS/Map3); 4 Twisted Treeline (LEVELS/Map4); 8 The Crystal Scar (Dominion, LEVELS/Map8).
+          --game-mode <TUTORIAL>        Battle Training: Summoner's Rift (--map-id 1) in the TUTORIAL mode; otherwise each map plays its own.
           --speed <0.1..10>              Simulation speed multiplier.
           --visibility-baseline           Solo vision probe mode (DEV_VISIBILITY_BASELINE).
           --minion-fidelity               Solo mid-lane fidelity mode (MINION_FIDELITY_MODE).

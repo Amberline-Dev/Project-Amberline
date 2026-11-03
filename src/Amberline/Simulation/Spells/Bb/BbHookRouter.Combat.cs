@@ -83,6 +83,14 @@ internal sealed partial class BbHookRouter
     private double RunCharPreDamage(Entity target, Entity? source, double amount, DamageType type, DamageSourceKind? kind)
     {
         if (CharacterOf(target) is not { } script || script.Event("CharOnPreDamage") is null || !Owns(target)) return amount;
+        // NOT RETAIL (batch 671, owner decision 3 November 2026: "Minions should be able to destroy friendly towers", both teams' minions the
+        // other team's): the tutorial turrets' only CharOnPreDamage (CharScriptChaosTurretTutorial and CharScriptOrderTurretTutorial, the same
+        // blocks) keeps a lethal hit from a non-hero attacker that is not DAMAGESOURCE_RAW at one health, so in retail a minion never fells them
+        // and only a champion or the script's own raw ApplyDamage (EventMinionAttack, TutorialScript proto 0.70) does. Here it is not run,
+        // except on the player's own last tower (batch 675, owner decision 3 November 2026: "protect it"): Order's BACK_TOWER, TutorialScript's
+        // secondOrderTurret (Turret_T1_C_07, CreateChildTurret tower 1, the Inhibitor tier), which EventMinionAttack opens to the Chaos waves
+        // (proto 0.70 pc 0011-0018), keeps the shipped hook and stays at one health against them as in retail.
+        if (target.BoundCharacter is "ChaosTurretTutorial" or "OrderTurretTutorial" && !IsOrderBackTower(target)) return amount;
         var scope = NewScope(target, source, target, target, null, CharInstanceVars(target));
         scope.Vars["DamageAmount"] = amount;
         scope.Vars["DamageType"] = DamageTypeNumber(type);
@@ -93,6 +101,9 @@ internal sealed partial class BbHookRouter
         Run(script, "CharOnPreDamage", scope, frame);
         return ChangedHit(frame, scope, amount);
     }
+
+    private static bool IsOrderBackTower(Entity turret) => turret.Team == Team.Order &&
+        MapDefinitions.TurretTiers.TryGetValue(turret.Name, out var tier) && tier == TurretTier.Inhibitor;
 
     // ------------------------------------------------------------------------------------------------------------
     // BuffOnDealDamage

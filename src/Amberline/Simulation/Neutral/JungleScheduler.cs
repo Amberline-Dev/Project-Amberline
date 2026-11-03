@@ -242,7 +242,14 @@ public sealed class JungleScheduler
             home = home with { Y = _navigation.HeightAt(new Position2(home.X, home.Z)) };
         if (request.Member == 1) state.CurrentGroupPosition = home;
         var groupPosition = state.CurrentGroupPosition;
-        var face = request.Face;
+        // Batch 672: the face point stands on the terrain by the same rule (Reconstruction, as above). The client's 0x66 spawn facing is
+        // normalize(face point - position) in 3D, with (0, 0, 1) only when the two are exactly equal,
+        // and it becomes the unit's target facing. A standing unit's per-frame turn
+        // can never reach a vertical target and yaws for ever. Map2's camp 13 (the Ghost of Urf) spawns and faces on the
+        // same Make3DPoint(2532.0, 44.4, 9940.0): with only its spawn on the ground, the face point sat 0.19 above him and he spun in place.
+        var face = _navigation is not null
+            ? request.Face with { Y = _navigation.HeightAt(new Position2(request.Face.X, request.Face.Z)) }
+            : request.Face;
         // Batch 159 part 2: the remembered hero level is bookkeeping here, not a health term. The growth it used to
         // buy is Spells/HPByPlayerLevel.luaobj's own (see RestampPlayerLevel), so the spawn table is asked for the
         // base pool and the script's buff raises it during the bind below; asking the table for the level as well

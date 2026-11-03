@@ -9,13 +9,23 @@ namespace Amberline.Platform;
 /// (<see cref="HostSteps.MapSettings"/>), the game and AIR client folders (<see cref="HostFolders.MapSettings"/>, which restarts), the
 /// update check (the Updates page) and the Play file (H8's download, and the certificate's Make new Play files). A change friends
 /// must hear about says so and links the Play file. Batch 656: Sign-ups holds the switch of <see cref="HostSelfRegistration"/> and, while
-/// it is on, the link to send. Uninstall Amberline (<see cref="HostUninstall"/>) is its last section.
+/// it is on, the link to send. Batch 666: Cheat commands holds the switch of <see cref="CheatRule"/>. Uninstall Amberline
+/// (<see cref="HostUninstall"/>) is its last section.
 /// </summary>
 public static class HostSettingsPage
 {
     public const string PagePath = "/host/settings";
     public const string NamePath = PagePath + "/name", AddressPath = PagePath + "/address", FoldersPath = PagePath + "/folders",
-        UninstallPath = PagePath + "/uninstall", RegisterPath = PagePath + "/register";
+        UninstallPath = PagePath + "/uninstall", RegisterPath = PagePath + "/register", CheatsPath = PagePath + "/cheats";
+
+    /// <summary>
+    /// DIAGNOSTICS (batch 666; owner, 3 November 2026: "Disable cheats", off for everyone, the host included, with a Settings switch):
+    /// the home host's cheat rule for <see cref="PlatformGames.MayCheat"/>. A seat may cheat only while Settings' "Allow cheat commands in
+    /// my games" is on (<see cref="PlatformSettings.AllowCheats"/>, off for new and existing installs) and only when it is the host's own
+    /// login (<c>hostAccount</c>). It reads <c>platform.json</c> as each game starts; a file it cannot read allows nobody.
+    /// </summary>
+    public static Func<long, bool> CheatRule(string settingsFile) => account =>
+        HostMode.ReadOrDefault(settingsFile) is { AllowCheats: true, HostAccount: { } own } && own == account;
 
     private const string PlayFileLink = $"<a href={HostInvite.PlayFilePath} download>Download the Play file</a>";
 
@@ -37,6 +47,16 @@ public static class HostSettingsPage
                     StatusCodes.Status400BadRequest);
             signUp.Set(form["on"] == "on");
             return Results.Redirect(PagePath + "?saved=register");
+        });
+        app.MapPost(CheatsPath, async (HttpContext context, IAntiforgery antiforgery) =>
+        {
+            var form = await HostSteps.FormAsync(context, antiforgery);
+            if (form is null)
+                return HostMode.Page(Render(loop, steps, signUp, Program.RegistrationToken(context, antiforgery), "", HostSteps.Expired),
+                    StatusCodes.Status400BadRequest);
+            // Batch 657's one way to save: a failed read writes nothing, and the page says so.
+            HostMode.Change(loop.Paths.Settings, saved => saved with { AllowCheats = form["on"] == "on" });
+            return Results.Redirect(PagePath + "?saved=cheats");
         });
         app.MapGet(UninstallPath, (HttpContext context, IAntiforgery antiforgery) =>
             UninstallPage(loop, Program.RegistrationToken(context, antiforgery), games(), null, false, false));
@@ -73,6 +93,7 @@ public static class HostSettingsPage
             "address" => $"<p class=notice role=status>Saved. Send your friends the new Play file: their old one looks at the old address. {PlayFileLink}</p>",
             "folders" => "<p class=notice role=status>Saved. Amberline restarted to use the new folders.</p>",
             "register" => "<p class=notice role=status>Saved.</p>",
+            "cheats" => "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
             _ => "",
         };
         var address = string.IsNullOrWhiteSpace(steps.PublicHost) ? "Not chosen yet."
@@ -98,6 +119,11 @@ public static class HostSettingsPage
             <label class=choice><input type=checkbox name=on value=on{{(signUp.On ? " checked" : "")}}>Let people register themselves</label>
             <div class=buttons><button type=submit>Save</button></div></form>
             {{signUp.Link(steps.PublicHost)}}</section>
+            <section class=folder aria-labelledby=cheats-title><h2 id=cheats-title>Cheat commands</h2>
+            <form method=post action={{CheatsPath}}>{{token}}
+            <label class=choice><input type=checkbox name=on value=on aria-describedby=cheats-hint{{(settings.AllowCheats ? " checked" : "")}}>Allow cheat commands in my games</label>
+            <p class=hint id=cheats-hint>Only your own login can use them. Your friends never can.</p>
+            <div class=buttons><button type=submit>Save</button></div></form></section>
             <section class=folder aria-labelledby=uninstall-title><h2 id=uninstall-title>Uninstall Amberline</h2>
             <p><a href={{UninstallPath}}>Uninstall Amberline</a></p></section>
             """;

@@ -195,8 +195,9 @@ public static class AirIntegrationChecks
         var recipes = (ArrayCollection)rpc.Route("combiner", "inventoryService", "getAllRuneCombiners", [])!;
         var prior = File.ReadAllText(Path.Combine(directory, "accounts.json"));
         TestAssert.Throws<ArgumentException>(() => rpc.Route("combiner", "inventoryService", "useGrabBag", [1]));
-        // Batch 580: the Basic Tutorial (0) is a game now (server.air-tutorial-*); Battle Training (1) is still refused.
-        TestAssert.Throws<ArgumentException>(() => rpc.Route("combiner", "gameService", "createTutorialGame", [1]));
+        // Batch 580: the Basic Tutorial (0) is a game now (server.air-tutorial-*); batch 669: so is Battle Training (1,
+        // server.air-battle-training-*). A type the client never sends (2) is still refused.
+        TestAssert.Throws<ArgumentException>(() => rpc.Route("combiner", "gameService", "createTutorialGame", [2]));
         TestAssert.Equal(prior, File.ReadAllText(Path.Combine(directory, "accounts.json")), "deferred actions cannot grant runes or complete tutorial flags");
         TestAssert.False(accounts.Get(account.Id).TutorialFlag, "retain the tutorial offer as requested");
         TestAssert.Equal(5, recipes.Count);

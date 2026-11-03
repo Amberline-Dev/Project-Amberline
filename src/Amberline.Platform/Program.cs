@@ -24,6 +24,8 @@ public sealed record PlatformSettings(string DataRoot, string ServerExecutable, 
     public long? HostAccount { get; init; }
     /// <summary>Settings' "Let people register themselves" (<see cref="HostSelfRegistration"/>, batch 656); off unless the host turned it on.</summary>
     public bool SelfRegistration { get; init; }
+    /// <summary>Settings' "Allow cheat commands in my games" (batch 666): off unless the host turned it on, then for the host's own login only.</summary>
+    public bool AllowCheats { get; init; }
     /// <summary>The data format that wrote this file (<see cref="HostChecks.DataVersion"/>; a file without it is format 1).</summary>
     public int DataVersion { get; init; } = HostChecks.DataVersion;
 
@@ -117,6 +119,8 @@ public static class Program
         accounts.RecoverResults(manager, Console.Out);
         var sessions = new PlatformSessions(accounts);
         var games = new PlatformGames(accounts, manager, settings.GameHost);
+        // DIAGNOSTICS (owner, 3 November 2026: "Disable cheats"): in home mode only Settings' switch gives cheats, to the host's own login.
+        if (host is not null) games.MayCheat = HostSettingsPage.CheatRule(host.Paths.Settings);
         var services = new PlatformServices(accounts, sessions, games, settings.HttpPort);
         await using var chat = new AirXmppHost(accounts, sessions, Path.Combine(home, "social"), settings.XmppPort);
         chat.ActiveChampion = games.ActivePresenceChampion;
@@ -217,7 +221,7 @@ public static class Program
         // NOT RETAIL: the host pages' shell and stylesheet (HostPages), after the gate so its refusal pages stay bare.
         if (host is not null) HostPages.Use(app, host, () => steps!.ServerName, nav: true);
         if (host is not null) HostPlay.Map(app, host, settings);
-        if (host is not null) HostUpdates.Map(app, host);
+        if (host is not null) HostUpdates.Map(app, host, () => HostDashboard.RunningGames(manager).Count);
         // NOT RETAIL: Invite a friend and Friends: friends' logins and the Play file, under the gated /host pages.
         if (host is not null) HostInvite.Map(app, host, () => steps!.PublicHost, () => steps!.ServerName, accounts, sessions, remoteAccess,
             settings.RemotePort, pin, signUp);

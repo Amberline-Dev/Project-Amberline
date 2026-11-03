@@ -171,7 +171,6 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
         TraceCaptures(now); // DIAGNOSTICS: batch 478 trace (env AMBERLINE_CAPTURE_TRACE); reads only.
         if (!_relicsStarted) StartRelicsAndShrines();
         ServeRelics(now);
-        ServeRespawns();
         for (var index = 0; index < _instances.Count; index++)
             if (IsRunning(_questNames[index])) _instances[index].Tick(now, dt);
         HoldLateChampions(now);
@@ -487,121 +486,27 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     /// as a success only when its Target, the guardian, is on the champion's team (ChannelingUpdateStats: BBGetTeamID of Target and Owner,
     /// CO_EQUAL, BBStopChanneling ChannelingStopCondition_Success), and OdinGuardianBuff draws the guardian by its own team (TEAM_NEUTRAL,
     /// TEAM_ORDER, TEAM_CHAOS branches of OnBuffActivate), so retail's guardian changes team with its point. The shipped trees never touch the
-    /// guardian on a capture (their SpawnPointGuard creates and deletes an encounter and returns no squad, :4945), so the change is the engine's.
-    /// The guardian is the one standing within the point's radius, the rule the count uses (<see cref="BehaviorLeaves.ChannelsCapture"/>).
-    /// Batch 475 (second follow-up, Reconstruction): the team is not changed on the unit (no team-change packet is proven). The neutral guardian
-    /// is replaced by one of the new owner's team: AiEntityDataFile.dat:18-21 names a team guardian per owner (OdinOrderGuardian and
-    /// OdinChaosGuardian), which the 126 client does not hold, so the team guardian is the neutral character on the owner's team. The old one
-    /// leaves the world and every client silently (LeaveVisibility), and no kill or death packet is sent; the new one spawns at the point
-    /// through the encounter path (its character script runs again, so OdinGuardianBuff picks its team branch). Its records go out on the
-    /// next step, after the spawn's delivery flush (a record for a unit a client does not hold is dropped by the client).
+    /// guardian on a capture (their SpawnPointGuard creates and deletes an encounter and returns no squad, :4945), and no shipped script names a
+    /// team change, so the change is the engine's. The guardian is the one standing within the point's radius, the rule the count uses
+    /// (<see cref="BehaviorLeaves.ChannelsCapture"/>).
+    /// Batch 673 (owner decision, 3 November 2026: the guardian changes team in place; replaces batch 475's re-creation): the point keeps its one
+    /// guardian, which takes the owner's team, and every client that holds it is told by UnitChangeTeam (0xE0; proven in the 126 client:
+    /// its handler calls the unit's SetTeam, see SpawnPackets.UnitChangeTeam). So its buffs, its channels, its pool and its records stay on the
+    /// unit, and OdinGuardianBuff's BuffOnUpdateStats sees BBGetTeamID differ from InstanceVars.MyTeam (block 4): it raises the crystal (Activate,
+    /// Idle1 overridden by Floating) for an owner and lowers it (Deactivate) when neutral, swaps its particles and moves its 800 sight. The
+    /// owner's capture channel ends itself as a success at its next update (the teams now match); the other team's goes on on the same unit.
     /// </summary>
     private void GuardianTakesOwner(int position, BehaviorTreeInstance capture, Team owner)
     {
-        if (capture.Variable("CapturePosition") is not Position3 at) return;
         // Batch 480b (Reconstruction): the point changes owner through its capture channel, which still runs here (it ends as a success on the
         // guardian after this change, ChannelingUpdateStats), so the channel aimed at the guardian that holds the point on the new owner's side
         // names the capturer. A point taken without a hero's channel leaves no capturer (0).
-        _lastCapturerNetIds[owner] = _guardians.TryGetValue(position, out var holder) &&
-            Context.Capture?.CapturerOf?.Invoke(holder, owner) is { } capturer
+        _lastCapturerNetIds[owner] = _guardians.TryGetValue(position, out var guardian) &&
+            Context.Capture?.CapturerOf?.Invoke(guardian, owner) is { } capturer
                 ? capturer.NetId : 0u;
-        var previous = 0u;
-        Entity? replaced = null;
-        var carried = new List<(string Name, uint CasterNetId, double ExpiresAt, int Stacks)>();
-        if (_guardians.Remove(position, out var old))
-        {
-            previous = old.NetId;
-            replaced = old;
-            // Batch 479h (Reconstruction): retail keeps this guardian and changes its team in place, so its suppression and team stacks stay on it and
-            // an enemy's channel goes on (OdinCaptureChannel ChannelingUpdateStats block 5.1 tests OdinGuardianSuppressionChaos on the guardian). The
-            // replacement is a new unit, so these buffs are carried to it below, with their caster, expiry and stack count.
-            // Batch 493 (Reconstruction): only the stacks of the channels that go on, the other teams' (the owner's end as a success on the old
-            // guardian, EndGuardian below, and their ChannelingSuccessStop takes their stacks), and the suppression after them and only with them:
-            // its activation creates odin_suppression.troy, and its stats hook clears it at once when no stack is there yet (BuffOnUpdateStats
-            // block 4, both counts 0). G1 showed that blip on every replacement (created and killed in the same step). The capturer's own stack,
-            // carried before, was removed by nothing and stayed for the rest of its 30 s, so an enemy channel started in that time found both teams'
-            // stacks and its suppression cleared itself (block 3: no drain).
-            var stacks = old.Buffs
-                .Where(buff => buff.Name == "OdinGuardianSuppressionOrder" && owner != Team.Order ||
-                               buff.Name == "OdinGuardianSuppressionChaos" && owner != Team.Chaos)
-                .Select(buff => (buff.Name, buff.CasterNetId, buff.ExpiresAt, buff.Stacks)).ToList();
-            carried.AddRange(stacks);
-            // Batch 550: with them the PrilisasBlessing copies of those channels (OdinCaptureChannel ChannelingStart puts one on the guardian for a
-            // Priscilla's Blessing holder; BehaviorLeaves.CaptureRateScale reads it), so a neutralise that goes on to a capture keeps its rate.
-            if (stacks.Count > 0)
-                carried.AddRange(old.Buffs.Where(buff => buff.Name == "OdinGuardianSuppression" ||
-                        buff.Name == "PrilisasBlessing" && Context.World.Get(buff.CasterNetId) is { } holder && holder.Team != owner)
-                    .Select(buff => (buff.Name, buff.CasterNetId, buff.ExpiresAt, buff.Stacks)));
-            // Batch 570 (Reconstruction): the quest target's mark goes on too, whoever holds the point. CharScriptOdinQuestIndicator gives the
-            // guardian within 300 OdinQuestIndicator only in its CharOnActivate (25000 s), and a team neutralises its target before it captures
-            // it, so the mark went out at the neutralisation for the rest of the quest. The marker's death still clears it from the replacement
-            // (OdinQuestParticleRemover's BuffOnDeath: the units within 300 holding OdinGuardianBuff).
-            carried.AddRange(old.Buffs.Where(buff => buff.Name == QuestIndicator).Select(buff => (buff.Name, buff.CasterNetId, buff.ExpiresAt, buff.Stacks)));
-            // The channel that captured the point ends when its Target is on the channeller's team (ChannelingUpdateStats, CO_EQUAL), so the
-            // old guardian takes the owner's team before it leaves; EndGuardian ends that channel on it as a success.
-            old.Team = owner;
-            // Batch 493 (Reconstruction): it ends before it leaves: the owner's channels on it end as a success, then its buffs end through the lifecycle
-            // (BbSummonerModule.EndReplacedGuardian), so their OnBuffDeactivate kills their particles and capture sounds and removes OdinGuardianBuff's
-            // vision bubbles (blocks 6 and 7 give both teams' sight; its deactivation removes them). The loop over Payload.VisionBubbles that stood here
-            // removed nothing: a script's bubbles are the world's (BBAddUnitPerceptionBubble), not the payload's.
-            Context.Capture?.EndGuardian?.Invoke(old, owner);
-            Context.World.Remove(old.NetId);
-            // The silent removal: the same LeaveVisibility the replication sends when a unit goes out of sight. Not a death (0xA6, NpcDie).
-            // Batch 493: through the replication's own leave (Depart); the 0x54 queued through Send here before was dropped as refresh-rebuilt.
-            Context.Capture?.Depart?.Invoke(old);
-        }
-        // Batch 536 (Reconstruction): the replacement's squad is not handed to the tree as TurretGuardId. The shipped Neutralization runs
-        // KillSquad TurretGuardId (OdinScriptBehaviorTrees.xml:1470) before this change, so with the owned guardian's squad there it killed that
-        // guardian: an 0xA6 death to every client (owner game 359f35d6, 31 October: guardians 0x40030008 at 94.42 and 0x40030015 at 204.84),
-        // and the death cleared its buffs, so no team stack was carried and the enemy channel that neutralised the point cancelled itself on the
-        // replacement (OdinCaptureChannel ChannelingUpdateStats block 5). Retail's guardian keeps its unit through a neutralisation, and the
-        // shipped SpawnPointGuard (:4945) writes no SquadId, so the shipped flow names no live squad there. This method removes the old guardian
-        // silently (batch 475). The start's TurretGuardId (StartCapturePoints) is the neutral guardian's, which no Neutralization reaches.
-        SpawnGuardian(position, at, owner);
-        capture.SetVariable("TurretGuardId", 0.0);
-        // Batch 512 (Reconstruction): the replacement starts at the tree's progress under its new owner, before its creation block goes out, so
-        // the meter goes on from where it was (a capture flips at 99, not 100, so a full spawn pool would step back at the next SetValue).
-        if (_guardians.TryGetValue(position, out var fresh) && capture.Variable("CaptureProgress") is double progress)
-            fresh.Mana = BehaviorLeaves.CaptureMeterPool(fresh, progress, owner);
-        // Batch 479h (Reconstruction): the carried team stacks are on the replacement before the channels are retargeted, so an enemy channel that
-        // goes on finds its stack at its next update.
-        if (carried.Count > 0 && _guardians.TryGetValue(position, out var carrier)) Context.Capture?.CarryBuffs?.Invoke(carrier, carried);
-        // Batch 475b (review): an enemy channel aimed at the removed guardian goes on with the replacement (the one that captured has ended as a
-        // success on the old unit, EndGuardian). The channels keep their elapsed time and their hook variables.
-        if (replaced is not null && _guardians.TryGetValue(position, out var replacement))
-            Context.Capture?.RetargetChannels?.Invoke(replaced, replacement, owner);
-        // Batch 475 (second follow-up, root cause): the graveyard's 0xDE create names the point's guardian, and the tree sends it once. The new
-        // guardian gets its graveyard's create (and its team state) on the next step, after its creation flush.
-        if (previous != 0 && Context.SentCapture.ContainsKey((DominionPackets.RespawnPointOpcode, previous))) _respawnDue.Add(position);
-    }
-
-    // Batch 475 (second follow-up): the replacement guardians' graveyard records, sent on the step after the spawn (the spawn's creation flush
-    // runs between the steps). The 0xDE create names the guardian (BehaviorLeaves.Relics CreateRespawnPoint), then the team state if one is set.
-    private readonly HashSet<int> _respawnDue = new();
-
-    // Batch 510: the guardian's pool (the capture ring and the channel bar, GetPARPercent through the point record, batches 493e and 494) has one
-    // writer on the wire. Batch 493a's ease here was a second one: it started from its own last value, so every 0.25 s step went out raw, then the
-    // ease pulled it back by most of a step (owner game 1552b1c4, guardian 0x40030000 at 175.076 s: 25727 eased, 26558 raw, 25838 eased).
-    // Batch 512 (owner: "one timer"): that writer is the point tree's CapturePoint_SetValue (BehaviorLeaves.CapturePointSetValue), no longer
-    // the scripts' BBIncPAR; the creation block carries the pool too (ProductionMatchComposition.ReplicatesPar).
-
-    private void ServeRespawns()
-    {
-        foreach (var position in _respawnDue.ToArray())
-        {
-            if (!_guardians.TryGetValue(position, out var guardian)) continue;
-            var graveyard = position - 2;
-            var create = DominionPackets.CreateRespawnPoint((byte)graveyard, guardian.NetId);
-            Context.SentCapture[(DominionPackets.RespawnPointOpcode, guardian.NetId)] = create;
-            Context.Capture?.Send?.Invoke(create);
-            if (Context.RespawnTeams.TryGetValue(graveyard, out var mask))
-            {
-                var state = DominionPackets.SetRespawnPointState(guardian.NetId, mask);
-                Context.SentCapture[(DominionPackets.RespawnPointOpcode, guardian.NetId)] = state;
-                Context.Capture?.Send?.Invoke(state);
-            }
-            _respawnDue.Remove(position);
-        }
+        if (guardian is null) return;
+        guardian.Team = owner;
+        Context.Capture?.Send?.Invoke(SpawnPackets.UnitChangeTeam(guardian.NetId, owner));
     }
 
     /// <summary>
@@ -626,8 +531,8 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     /// takes the point's own inputs, so one instance runs per named point, CapturePointID 1 to 5 (Locations.dat names CapturePointA to E).
     /// On the first step each point spawns its guard squad (the PointGuard encounter, see EncounterService) and its two point turrets
     /// (batch 448: one per team, hidden at the start, standing on the point), then its instance starts with the point's inputs: its position,
-    /// its id and name, the manager's capture radius (600), an unowned point with no progress, and the guard squad as TurretGuardId. The shipped
-    /// trees' own TurretGuardId is never written (SpawnPointGuard names EncounterId, not SquadId), so the caller supplies it.
+    /// its id and name, the manager's capture radius (600), an unowned point with no progress, and no squad as TurretGuardId (batch 673; batch 446
+    /// handed the guard squad). The shipped trees' own TurretGuardId is never written (SpawnPointGuard names EncounterId, not SquadId).
     /// </summary>
     private void StartCapturePoints()
     {
@@ -654,7 +559,11 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
             // docs: "the order turret at the prototype capture point"); GetUnitsInTargetArea needs them as its caster.
             instance.SetVariable("OrderTurret", _turrets.GetValueOrDefault((Team.Order, index + 2)));
             instance.SetVariable("ChaosTurret", _turrets.GetValueOrDefault((Team.Chaos, index + 2)));
-            instance.SetVariable("TurretGuardId", (double)(guard ?? 0));
+            // Batch 673 (Reconstruction): no live squad. The shipped Neutralization runs KillSquad TurretGuardId (OdinScriptBehaviorTrees.xml:1470)
+            // and the shipped SpawnPointGuard (:4945, also the capture branches' :1372 and :1444) writes no SquadId, so the shipped flow names no
+            // live squad there; retail's guardian lives through a neutralisation. The guardian's own squad here killed it there (an 0xA6 to every
+            // client, batch 536: owner game 359f35d6, 31 October), now that the point keeps that one unit for the match.
+            instance.SetVariable("TurretGuardId", 0.0);
             _captures.Add(instance);
         }
     }
@@ -808,17 +717,14 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     }
 
     // Reconstruction: the guard is the PointGuard encounter, spawned neutral at the point (the shipped SpawnPointGuard creates and
-    // deletes that encounter in one step and never spawns a squad from it; see EncounterService).
-    private int? SpawnPointGuard(int position, Position3 at) => SpawnGuardian(position, at, Team.Neutral);
-
-    // Batch 475 (second follow-up): a point's guardian on a team (the owner's on a capture, neutral at the start). The encounter path runs the
-    // character script again, so OdinGuardianBuff picks the team branch. The guardian is kept in _guardians for PointGuardian, GuardiansAttack,
-    // the capture count and the taunt.
-    private int? SpawnGuardian(int position, Position3 at, Team team)
+    // deletes that encounter in one step and never spawns a squad from it; see EncounterService). It is the point's guardian for the whole
+    // match (batch 673: it changes team in place, GuardianTakesOwner), kept in _guardians for PointGuardian, GuardiansAttack, the capture count
+    // and the taunt.
+    private int? SpawnPointGuard(int position, Position3 at)
     {
         if (Context.Encounters is not { } encounters) return null;
         if (encounters.CreateEncounter("PointGuard", 1, "") is not { } encounter) return null;
-        var squad = encounters.SpawnSquad(encounter, new Position2(at.X, at.Z), team, "");
+        var squad = encounters.SpawnSquad(encounter, new Position2(at.X, at.Z), Team.Neutral, "");
         if (squad is { } id && encounters.Squad(id)?.Units.FirstOrDefault() is { } guardian)
         {
             // Batch 475 (Reconstruction): the owner's test showed a health bar on the point's guardian. No shipped Odin script names a bar hide,
@@ -826,6 +732,10 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
             guardian.HealthBarHidden = true;
             // Batch 512: its pool is the point tree's capture meter from now on (the spawn's own OdinGuardianBuff halving of a neutral one has run).
             guardian.ParIsCaptureMeter = true;
+            // Batch 673 (Reconstruction, batch 475 decision a): both teams see the point's guardian, whoever owns it. OdinGuardianBuff gives the
+            // 800 sight around it to its owner alone once the point is taken (BuffOnUpdateStats 4.2, 4.3.1, 4.10.6); the guardian itself is the
+            // point's structure, and the ring and the minimap show its owner to both teams.
+            guardian.SeenByBothTeams = true;
             _guardians[position] = guardian;
         }
         return squad;

@@ -44,7 +44,7 @@ public sealed class MatchRuntimeNetwork : IDisposable
             0x09, 0x17, 0x19, 0x23, 0x3E, DuelSession.UseObjectOpcode, EmotePackets.ClientOpcode, 0x53, 0x55, 0x59, 0x5A, 0x60, 0x75, 0x87,
             0x94, 0xA2, 0xA4, SurrenderPackets.ClientOpcode, PausePackets.PauseOpcode,
             PausePackets.ResumeOpcode, 0xB6, 0xC5, 0xC6, 0xC7,
-            TutorialPackets.PopupClosedClientOpcode, TutorialPackets.AudioEventFinishedClientOpcode,
+            TutorialPackets.PopupClosedClientOpcode, TutorialPackets.AudioEventFinishedClientOpcode, DominionPackets.QuestEventClientOpcode,
         }));
 
     private readonly MatchRuntime _runtime;

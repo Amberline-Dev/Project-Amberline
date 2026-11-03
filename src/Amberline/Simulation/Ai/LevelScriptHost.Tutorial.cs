@@ -202,7 +202,40 @@ public sealed partial class LevelScriptHost
         if (callback.Length == 0) return;
         _tutorialSteps.Add((_now, callback));
         TutorialLog?.Invoke("tutorial.step", new Dictionary<string, object?> { ["step"] = callback, ["at"] = _now });
-        Run(callback, () => _state.CallGlobal(callback));
+        _waveShift = callback == "EventTurretDeath" ? ChampionBattleMidway() : null;
+        try
+        {
+            Run(callback, () => _state.CallGlobal(callback));
+        }
+        finally
+        {
+            _waveShift = null;
+        }
+    }
+
+    // The offset EventTurretDeath's wave is spawned with (ChampionBattleMidway); null outside that step.
+    private Position2? _waveShift;
+
+    /// <summary>
+    /// NOT RETAIL (batch 671, owner decision 3 November 2026: "Master YI and the wave should spawn midway from the enemy tower to the enemy
+    /// nexus and he should respawn"). Retail's EventTurretDeath (TutorialScript proto 0.74) frees Master Yi where he stands, at the Chaos
+    /// spawn point (OnTutorialInit's Stun and SetNoRender, proto 0.3 pc 0252-0275), and its SpawnChaosMinions (proto 0.69) puts the wave on
+    /// chaosBasicSpawnPoints and chaosWizardSpawnPoints around the Chaos HQ (the four basic points' centre is the HQ's to 15 units); he respawns
+    /// at that spawn point and nothing in the script sends him back. Here, before that step runs, he is moved (the script's own
+    /// TeleportToPosition, while still unseen) to the floor point midway between firstChaosTurret and the Chaos HQ, he respawns there, and the
+    /// step's wave spawns on its shipped points moved by the HQ-to-midpoint offset, so its wizards stay behind its melee minions. Returns that
+    /// offset, or null when a unit is missing.
+    /// </summary>
+    private Position2? ChampionBattleMidway()
+    {
+        if (GlobalUnit("firstChaosTurret") is not { } turret || FindNexus(Team.Chaos) is not { } hq ||
+            !_state.TryGetGlobal("botID", out var botValue) || EntityOf([botValue], 0) is not { } bot) return null;
+        var midway = new Position2((turret.Position.X + hq.Position.X) / 2.0, (turret.Position.Z + hq.Position.Z) / 2.0);
+        midway = _navigation?.NearestMovementFloor(midway, maxCells: 4) ?? midway;
+        Body("ChampionBattleMidway", () => _state.CallGlobal("TeleportToPosition", botValue,
+            PointValue(new Position3(midway.X, _navigation?.HeightAt(midway) ?? 0.0, midway.Z))));
+        bot.RespawnPoint = midway;
+        return new Position2(midway.X - hq.Position.X, midway.Z - hq.Position.Z);
     }
 
     private void NoteTutorialTimer(string name)
@@ -246,15 +279,23 @@ public sealed partial class LevelScriptHost
 
     /// <summary>
     /// The tutorial bots' scripted fights (<see cref="DirectTutorialBots"/>): from the step that frees the bot (the script's global), it
-    /// attacks the target (another global) until its first death.
+    /// attacks the target (another global) whenever it is alive (batch 671; until its first death before).
+    /// <para>
+    /// Batch 664 (owner's hand test, 3 November 2026: "Minions froze after destroying last turret"): Master Yi's fight starts at
+    /// EventTurretDeath, the step that frees him (proto 0.74 pc 0013-0022 removes his Stun and SetNoRender), not at EventLookOut. EventTurretDeath
+    /// then waits for the player's camera to come within 1200 of him (<c>RegisterOnCameraNearUnitCallback(playerID, botID, 1200,
+    /// 'EventLookOut')</c>), and EventLookOut's line is "look out": it makes him mortal and names the champion battle (proto 0.77). Batch
+    /// 580 sent him only from EventLookOut, so he stood at his fountain, the camera of a player pushing the lane never found him and the
+    /// tutorial stopped there, its Order minions standing at the dampener the script keeps invulnerable and untargetable until
+    /// EventGreatWork (proto 0.81). Reconstruction: his own <c>MasterYi_Basic</c> AI does not ship; he comes for the player while still
+    /// invulnerable, which EventLookOut lifts.
+    /// </para>
     /// </summary>
     private static readonly (string Step, string Bot, string Target)[] TutorialBotFights =
     [
         ("EventOhNo", "allyID", "firstChaosTurret"),
-        ("EventLookOut", "botID", "playerID"),
+        ("EventTurretDeath", "botID", "playerID"),
     ];
-
-    private readonly HashSet<string> _botFightsDone = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Reconstruction (batch 580): the tutorial's own bot AI (<c>MasterYi_Basic</c>, <c>Nunu_Basic</c>, the <c>TutorialManager</c>) does not ship,
@@ -266,10 +307,13 @@ public sealed partial class LevelScriptHost
     /// (EnemyMinionSetup) and die (PostDeathBubble); the position's name says it is owned there. It attacks the script's
     /// <c>firstChaosTurret</c>.</item>
     /// <item>The enemy champion stays at its fountain under Stun and SetNoRender until EventTurretDeath (proto 0.74 pc 0013-0022) frees it;
-    /// EventLookOut (proto 0.77) makes it mortal, highlights it and waits for its death (EventGreatWork), the "champion battle" objective.
-    /// It attacks the player.</item>
+    /// from then it attacks the player (batch 664), and EventLookOut (proto 0.77), when the player's camera finds it, makes it mortal,
+    /// highlights it and waits for its death (EventGreatWork), the "champion battle" objective.</item>
     /// </list>
-    /// A freed bot leaves the bot script for good; the order is renewed while it is alive and has none, and ends at its first death.
+    /// A freed bot leaves the bot script for good; the order is renewed while it is alive and has none. NOT RETAIL (batch 671, owner decision
+    /// 3 November 2026: Master Yi "should respawn"): the fight goes on after a respawn (batch 580 ended it at the bot's first death, and Yi
+    /// stood at his fountain from then on); Yi respawns midway (<see cref="ChampionBattleMidway"/>) and comes for the player again. Nunu's
+    /// death timer outlasts the tutorial.
     /// </summary>
     private void DirectTutorialBots()
     {
@@ -277,17 +321,11 @@ public sealed partial class LevelScriptHost
         if (TutorialBotAttack is not { } attack || _endOfGame) return;
         foreach (var (step, botName, targetName) in TutorialBotFights)
         {
-            if (_botFightsDone.Contains(step) || !TutorialStepRan(step) || GlobalUnit(botName) is not { } bot) continue;
-            if (!bot.Alive)
-            {
-                if (_botFightsStarted.Contains(step)) _botFightsDone.Add(step);
-                continue;
-            }
+            if (!TutorialStepRan(step) || GlobalUnit(botName) is not { Alive: true } bot) continue;
             if (bot.AttackTarget is not null || bot.HeroPursuit is not null || bot.Buffs.Any(buff => buff.Name == "Stun") ||
                 GlobalUnit(targetName) is not { Alive: true } target ||
                 _botOrderAt.TryGetValue(step, out var ordered) && _now < ordered + TutorialBotOrderSeconds)
                 continue;
-            _botFightsStarted.Add(step);
             _botOrderAt[step] = _now;
             TutorialLog?.Invoke("tutorial.bot-order", new Dictionary<string, object?>
             {
@@ -297,7 +335,6 @@ public sealed partial class LevelScriptHost
         }
     }
 
-    private readonly HashSet<string> _botFightsStarted = new(StringComparer.Ordinal);
     private readonly Dictionary<string, double> _botOrderAt = new(StringComparer.Ordinal);
 
     /// <summary>Reconstruction: a scripted fight's order is renewed no more than once in this many seconds (it ends when its target is out of sight).</summary>
@@ -699,6 +736,13 @@ public sealed partial class LevelScriptHost
         // reading of the misspelling is not in the shipped files.
         if (function == "BBSpellBuffRemove" && parameters["TargetVar"] is null && parameters["TargetBar"] is string misspelled)
             parameters["TargetVar"] = misspelled;
+        // NOT RETAIL (batch 671): EventTurretDeath's wave spawns midway (ChampionBattleMidway).
+        if (function == "BBSpawnMinion" && _waveShift is { } shift && parameters["PosVar"] is string shiftedVar &&
+            scope[shiftedVar] is BbTable shipped && shipped["x"] is double shippedX && shipped["z"] is double shippedZ)
+        {
+            var moved = new Position2(shippedX + shift.X, shippedZ + shift.Z);
+            scope[shiftedVar] = BbTable.Point(moved.X, _navigation?.HeightAt(moved) ?? shipped["y"] as double? ?? 0.0, moved.Z);
+        }
         // Reconstruction (batch 576): a unit the script spawns on a blocked cell starts on the nearest floor cell, the search batch 556 gives a
         // hero's spawn slot (four cells at most). SpawnStartingMinions puts a Red_Minion_Basic at (8133, 8059) (proto 0.5 pc 0202-0218), 77
         // units from Turret_T2_L_01 and inside its footprint, where it stood for the whole skirmish (batch 563: 233 blocked-cell lines). The

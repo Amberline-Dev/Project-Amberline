@@ -85,7 +85,9 @@ internal static class ProductionMatchComposition
         IMovementDiagnosticSink? movementDiagnostics = null,
         bool botsControlAllSeats = false,
         Func<double>? scriptClock = null,
-        int mapId = GameMaps.Normal)
+        int mapId = GameMaps.Normal,
+        // Batch 669: the SynchVersion and result mode when it is not the map's own (Battle Training: map 1 in TUTORIAL).
+        string? gameMode = null)
     {
         ArgumentNullException.ThrowIfNull(navigation);
         var data = gameData ?? GameData.Default;
@@ -619,7 +621,7 @@ internal static class ProductionMatchComposition
         var cheats = new ProductionCheatService(combat);
         var chat = new ProductionChatService(combat, effects, speed, world, stats, navigation, data, playtest);
         var session = new DuelSession(new SessionDependencies(stats, sync,
-            sessionMovement, sessionCombat, sessionEffects, shop, cheats, chat) { MapId = mapId }, world, data,
+            sessionMovement, sessionCombat, sessionEffects, shop, cheats, chat) { MapId = mapId, Mode = gameMode ?? GameMaps.ModeOf(mapId) }, world, data,
             orderChampion, solo ? orderChampion : chaosChampion,
             originalRosterCounts,
             matchCipher, readySettleSeconds,
@@ -815,6 +817,17 @@ internal static class ProductionMatchComposition
                 else if (TutorialPackets.AudioEventFinishedId(payload) is uint id) level.TutorialAudioFinished(id, combat.CurrentTime);
             };
         }
+        // Batch 674: Battle Training (Summoner's Rift in TUTORIAL) runs its own script next to the shipped LevelScript: the quests, the weaker
+        // enemy turrets and the trainee's bonus (BattleTrainingScript, Reconstruction). Its quests and pings go to the trainee's team.
+        BattleTrainingScript? training = null;
+        if (mapId == GameMaps.Normal && gameMode == GameMaps.TutorialMode)
+        {
+            training = new BattleTrainingScript(world, catalog, combat, spells, stats, waves,
+                packet => delivery.EnqueueForTeam(Team.Order, packet), combatTransport.SendTurretStats,
+                () => session.Participants.FirstOrDefault(seat => !seat.IsBot && seat.Team == Team.Order)?.Hero);
+            combat.UnitDied = training.UnitDied;
+            session.TutorialAcknowledgement = payload => training.ClientEvent(payload);
+        }
         // Batch 466: what a capture point guardian may attack (an enemy, targetable to it, not a ward).
         bool GuardianMayAttack(Entity guardian, Entity target) =>
             WorldState.IsEnemy(guardian, target) && CombatService.IsAutoAcquirable(target) && combat.IsTargetable(target, guardian);
@@ -840,16 +853,8 @@ internal static class ProductionMatchComposition
                 DamageNexusAboveFloor: (team, amount, showLoss) => combat.DamageDominionNexusAboveFloor(team, amount, showLoss),
                 // Batch 517 (Reconstruction): a champion counts on its point once its capture channel has charged (1.5 s), not from the click.
                 CaptureChannelTarget: hero => spells.ChargedCaptureTarget(hero),
-                // Batch 475b: a channel aimed at a replaced guardian continues on the replacement.
-                RetargetChannels: (from, to, team) => spells.RetargetCaptureChannels(from, to, team),
-                // Batch 479h (Reconstruction): the replaced guardian's suppression and team stacks go to its replacement.
-                CarryBuffs: (replacement, carried) => spells.CarryGuardianBuffs(replacement, carried),
                 // Batch 480b: the capturing hero of a point (the display source of its score damage).
                 CapturerOf: (guardian, team) => spells.CapturerOf(guardian, team),
-                // Batch 493 (Reconstruction): a replaced guardian's capture ends and its buffs end (their deactivation kills their particles) before it leaves.
-                EndGuardian: (guardian, owner) => spells.EndReplacedGuardian(guardian, owner),
-                // Batch 493 (Reconstruction): the replaced guardian leaves the clients that see it (the leave a queued 0x54 never got).
-                Depart: delivery.Depart,
                 // Batch 462: the point turrets' render and targetability blocks go out through Send (global) with the match's sync ids.
                 SyncId: sync.Next,
                 // Batch 662: an owned guardian runs Turret.luaobj (GuardianTurretAi; batch 501's tower tree leaves keep Sees). It keeps batch
@@ -891,6 +896,7 @@ internal static class ProductionMatchComposition
             ApplyDeferredOrders = () => { gameplay.PlayDueEmotes(); gameplay.ApplyQueuedWindupOrders(); gameplay.StartDueCaptures(); },
             PlaytestDiagnostics = playtest,
             Quests = quests,
+            MapScript = training is null ? null : training.Tick,
         };
         var dependencies = new MatchRuntimeDependencies(
             hooks, hooks, hooks, dispatcher, hooks.BuffServices, rng,

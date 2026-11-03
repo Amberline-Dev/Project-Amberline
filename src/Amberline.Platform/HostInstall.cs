@@ -186,6 +186,15 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     /// <summary>The game and AIR client to bring into <see cref="Folder"/> (START-HERE passes them); null brings none.</summary>
     public HostClients? Clients { get; init; }
 
+    /// <summary>
+    /// Batch 666 (owner, 3 November 2026: one click): the option only Update now passes to the unpacked <c>Start Amberline.cmd</c>
+    /// (<see cref="HostUpdates.UpdateAsync"/>). The host confirmed on the page, so the window does not ask for Enter before updating.
+    /// </summary>
+    public const string ConfirmedOption = "--update-confirmed";
+
+    /// <summary>The update was confirmed on the page (<see cref="ConfirmedOption"/>): <see cref="Confirm"/> is not asked. Nothing else changes.</summary>
+    public bool Confirmed { get; init; }
+
     public string App => Folder is null ? Path.GetFullPath(Path.Combine(localAppData, "Amberline", "app")) : Path.Combine(Folder, "app");
     public string Previous => App + ".previous";
     private string Staging => App + ".new";
@@ -215,10 +224,10 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     /// (START-HERE's <c>--install-to</c>), else the one the pointer names, else none (the user's folder, or a question).
     /// </summary>
     public static HostInstall? ForRelease(HostPaths paths, string localAppData, string desktop, TextWriter screen, string? folder = null,
-        HostClients? clients = null)
+        HostClients? clients = null, bool confirmed = false)
     {
         if (!OperatingSystem.IsWindows()) return null;
-        var install = new HostInstall(paths, localAppData, desktop, screen) { Clients = clients };
+        var install = new HostInstall(paths, localAppData, desktop, screen) { Clients = clients, Confirmed = confirmed };
         if (HostVersion.Read(install.Release).Version is null || HostPaths.InstallFolder(paths.App) is not null ||
             string.Equals(install.Release, install.App, StringComparison.OrdinalIgnoreCase)) return null;
         install.Folder = folder ?? FolderMove.ReadPointer(localAppData);
@@ -321,9 +330,13 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
             {
                 screen.WriteLine(installed is null ? $"This zip has Amberline {offered}. The Amberline on this PC has no version number."
                     : $"You have Amberline {installed}. This zip has Amberline {offered}.");
-                screen.WriteLine("Updating ends any game in progress. Your settings and friends stay. To keep the one you have, close this window.");
-                screen.WriteLine(ContinueLine);
-                if (!Confirm()) return 1;
+                if (Confirmed) screen.WriteLine(ConfirmedLine);
+                else
+                {
+                    screen.WriteLine("Updating ends any game in progress. Your settings and friends stay. To keep the one you have, close this window.");
+                    screen.WriteLine(ContinueLine);
+                    if (!Confirm()) return 1;
+                }
             }
             var where = Folder ?? "your user folder";
             screen.WriteLine($"Copying Amberline {offered} into {where}. This takes up to a minute.");
@@ -473,6 +486,8 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
 
     /// <summary>Batch 653: the word list's pause, and the line while the installed Amberline starts until its page answers.</summary>
     public const string ContinueLine = "Press Enter to continue.";
+    /// <summary>The window's line instead of the question when Update now started it (<see cref="Confirmed"/>).</summary>
+    public const string ConfirmedLine = "You chose Update now on Amberline's page, so the update goes on. Your settings and friends stay.";
     public const string StartingLine = "Starting Amberline and opening its page in your browser. This takes a few seconds.";
 
     /// <summary>

@@ -99,7 +99,7 @@ public sealed partial class PlatformAccounts
             pending.Accounts is null || pending.Players is null || pending.Players.Length != result.Players.Count ||
             pending.Accounts.Length != receipt.Accounts.Length ||
             pending.Players.Any(p => p is null) || pending.Players.Select((p, index) => p.PlayerId ?? index + 1).Distinct().Count() != pending.Players.Length ||
-            !receipt.Accounts.Order().SequenceEqual(pending.Accounts.Order()) || !Amberline.Core.GameMaps.IsSupported(result.MapId) || result.Mode != Amberline.Core.GameMaps.ModeOf(result.MapId))
+            !receipt.Accounts.Order().SequenceEqual(pending.Accounts.Order()) || !Amberline.Core.GameMaps.IsSupported(result.MapId) || !Amberline.Core.GameMaps.IsPlayedIn(result.MapId, result.Mode))
             throw new InvalidDataException("Result does not match the durable platform handoff.");
         foreach (var player in result.Players)
         {

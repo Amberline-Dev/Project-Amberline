@@ -33,6 +33,8 @@ public sealed partial class DuelSession
     private readonly SessionSpawnService _spawn;
     private readonly LegacyBlowfishCipher _cipher;
     private readonly int _mapId;
+    /// <summary>The SynchVersion and result mode (<see cref="SessionDependencies.Mode"/>, batch 669).</summary>
+    private readonly string _mode;
     private readonly ISessionMovementService _movement;
     private readonly ISessionCombatService _combat;
     private readonly ISessionEffectService _effects;
@@ -149,8 +151,10 @@ public sealed partial class DuelSession
             _mapBounds.MinX > _mapBounds.MaxX || _mapBounds.MinZ > _mapBounds.MaxZ)
             throw new ArgumentOutOfRangeException(nameof(mapBounds), "Map bounds must be finite and ordered.");
         _pingRate = pingRateLimiter ?? new PingRateLimiter();
+        _mode = dependencies.Mode ?? GameMaps.ModeOf(dependencies.MapId);
+        // Batch 674: the hero-stats file is the client's mode's (GameMaps.ClientModeOf: the Basic Tutorial's client runs CLASSIC).
         _spawn = new SessionSpawnService(World, GameData, dependencies.HeroStats, dependencies.SyncIds,
-            visibilityBaseline, minionFidelity, GameMaps.ModeOf(dependencies.MapId));
+            visibilityBaseline, minionFidelity, GameMaps.ClientModeOf(dependencies.MapId, _mode));
         _mapId = dependencies.MapId;
         _movement = dependencies.Movement;
         _combat = dependencies.Combat;
@@ -211,7 +215,7 @@ public sealed partial class DuelSession
         // snapshot without changing the post-game transport state.
         UpdateConnectedAfk(allowGameOver: true);
         var result = MatchResult.Capture(_participants, winner,
-            Math.Max(0.0, now - _startClock), surrendered, now, LeaverRules.Load(GameData.Paths), _mapId, World);
+            Math.Max(0.0, now - _startClock), surrendered, now, LeaverRules.Load(GameData.Paths), _mapId, World, _mode);
         _terminalClock = _startClock + result.DurationSeconds;
         _terminalClassicStats.Clear();
         foreach (var participant in _participants)
@@ -798,7 +802,7 @@ public sealed partial class DuelSession
                 if (!Started)
                 {
                     output.AddRange(ToParticipant(participantForInput,
-                        [LoadingPackets.SynchVersionS2C(players: Roster, mapId: _mapId),
+                        [LoadingPackets.SynchVersionS2C(players: Roster, mapId: _mapId, mode: _mode),
                          LoadingPackets.WorldSendGameNumber()]));
                     if (!participantForInput.Spawned && participantForInput.SpawnAt is null)
                         participantForInput.SpawnAt = now;
@@ -810,7 +814,7 @@ public sealed partial class DuelSession
                     // running, so answer it and arm the existing-hero spawn
                     // baseline without rebuilding any world state.
                     output.AddRange(ToParticipant(participantForInput,
-                        [LoadingPackets.SynchVersionS2C(players: Roster, mapId: _mapId),
+                        [LoadingPackets.SynchVersionS2C(players: Roster, mapId: _mapId, mode: _mode),
                          LoadingPackets.WorldSendGameNumber()]));
                     if (!participantForInput.Spawned && participantForInput.SpawnAt is null)
                         participantForInput.SpawnAt = now;
@@ -822,8 +826,9 @@ public sealed partial class DuelSession
             case TutorialPackets.PopupClosedClientOpcode:
             case TutorialPackets.AudioEventFinishedClientOpcode:
             case TutorialPackets.CameraClientOpcode:
+            case DominionPackets.QuestEventClientOpcode:
                 // Batch 563: the Basic Tutorial's acknowledgements (TutorialPackets); the hook is set on map 3 only. Batch 580: and the
-                // camera report its RegisterOnCameraNearUnitCallback watches.
+                // camera report its RegisterOnCameraNearUnitCallback watches. Batch 674: and Battle Training's quest events (map 1 in TUTORIAL).
                 if (Started) TutorialAcknowledgement?.Invoke(plaintext.ToArray());
                 break;
             case PingPackets.ClientOpcode:
@@ -1273,7 +1278,7 @@ public sealed partial class DuelSession
                 { Spawned: true, Ready: true, ConnectionId: long connectionId })
                 continue;
             foreach (var turret in MapEntities.Where(entity => entity.UnitType == UnitType.Turret &&
-                         entity.Alive && !TurretRules.IsFountainTurret(entity)))
+                         entity.Alive && !TurretRules.IsShrineTurret(entity)))
                 output.Add(new SessionOutboundPacket(connectionId,
                     ProtocolCombatTransport.StructureProtectionPacket(turret, _spawn.SyncIds.Next(turret.NetId))));
         }

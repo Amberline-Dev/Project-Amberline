@@ -158,7 +158,9 @@ public static class VisibilityRules
     {
         ArgumentNullException.ThrowIfNull(entity);
         // Batch 457: a turret the clients hold as a minion (the Odin point turrets, OdinOrderTurretShrine) is no scene shrine on the wire.
-        return entity.IsSceneTurret && entity.Name.EndsWith("Shrine", StringComparison.OrdinalIgnoreCase);
+        // Batch 665: the shrine is TurretRules.IsShrineTurret's (Summoner's Rift's fountain tier, every Crystal Scar turret), not a name that ends
+        // in "Shrine": the Crystal Scar's Turret_OrderTurretShrine1 and Turret_ChaosTurretShrine1 (CreateLevelProps) went out as lane towers.
+        return entity.IsSceneTurret && Simulation.Combat.TurretRules.IsShrineTurret(entity);
     }
 
     /// <summary>
@@ -437,7 +439,7 @@ public static class VisibilityRules
         ArgumentNullException.ThrowIfNull(revealsStealth);
         ArgumentNullException.ThrowIfNull(entity);
         if (entity.UnitType == UnitType.Missile || !entity.Alive) return false;
-        if (entity.Team == team) return true;
+        if (entity.Team == team || entity.SeenByBothTeams) return true;
         var specific = SpecificReveal(world, team, entity);
 
         var isBuilding = IsBuilding(entity);
@@ -522,10 +524,10 @@ public static class VisibilityRules
                 candidates.Add(revealed);
 
         // An allied entity is always available to its own observer even when a
-        // malformed position falls outside the spatial index query.
+        // malformed position falls outside the spatial index query; so is a unit both teams see (batch 673).
         foreach (var entity in world.Entities.Values)
         {
-            if (entity.UnitType != UnitType.Missile && entity.Team == team)
+            if (entity.UnitType != UnitType.Missile && (entity.Team == team || entity.SeenByBothTeams))
                 candidates.Add(entity);
         }
 

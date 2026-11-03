@@ -23,16 +23,8 @@ public sealed record CapturePointHooks(
     TowerHooks? Tower = null,
     // Batch 471: a packet for one team's clients only (the quest tracker, 0x90, and the quest announcement).
     Action<Team, PlaintextPacket>? SendTeam = null,
-    // Batch 475b: the capture channels aimed at a replaced guardian take its replacement (from, to, the team that captured: left alone).
-    Func<Entity, Entity, Team, int>? RetargetChannels = null,
-    // Batch 479h (Reconstruction): the team stacks and the suppression a replaced guardian held go to its replacement (name, caster, expiry, stacks).
-    Action<Entity, IReadOnlyList<(string Name, uint CasterNetId, double ExpiresAt, int Stacks)>>? CarryBuffs = null,
     // Batch 480b: the hero whose capture channel (aimed at this guardian, on this team's side) took the point: the score's display source.
     Func<Entity, Team, Entity?>? CapturerOf = null,
-    // Batch 493 (Reconstruction): a replaced guardian ends before it leaves: its new owner's channels as a success, then its buffs (their deactivation).
-    Action<Entity, Team>? EndGuardian = null,
-    // Batch 493 (Reconstruction): a unit that left the world alive (a replaced guardian): the clients that see it get its leave (ReplicationDelivery.Depart).
-    Action<Entity>? Depart = null,
     // Batch 505: a point event's damage to a team's nexus, down to the floor (CombatService.DamageDominionNexusAboveFloor).
     // Batch 531: the third argument shows the loss as floating text (a capture does, a neutralise does not).
     Action<Team, double, bool>? DamageNexusAboveFloor = null);

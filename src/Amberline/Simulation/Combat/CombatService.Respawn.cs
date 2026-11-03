@@ -138,7 +138,7 @@ public sealed partial class CombatService
         // Scene/__Spawn_T1.SCB and __Spawn_T2.SCB (MapLayout, read from the player's files since batch 595). Owner decision, 18
         // October 2026: the Order anchor is that exact point (MapDefinitions.HeroSpawn), no longer rounded to whole units.
         // The hero's respawn-location getter is a stub in the client (server only).
-        unit.Position = FountainOf(unit.Team);
+        unit.Position = unit.RespawnPoint ?? FountainOf(unit.Team);
         var stats = _heroStats ?? throw new InvalidOperationException(
             "hero respawns require the match HeroStatsService");
         stats.Refresh(unit);

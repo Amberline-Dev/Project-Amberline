@@ -5,6 +5,7 @@ using Amberline.Network.Protocol;
 using Amberline.Network.Replication;
 using Amberline.Network.Sessions;
 using Amberline.Simulation.BehaviorTrees;
+using Amberline.Simulation.Spells;
 
 namespace Amberline.Tests;
 
@@ -33,8 +34,8 @@ public static class DominionGuardianChecks
     private sealed record Match(MatchRuntime Runtime, Entity Order, Entity Chaos, Entity InitialGuardian, BehaviorTreeQuestHost Quests,
         Position2 OrderHome, Position2 ChaosHome) : IDisposable
     {
-        // Batch 475 (second follow-up): a capture re-creates the point's guardian on the owner's team, so the guardian is the point's current
-        // one (the start's guardian until the first capture).
+        // The point's guardian as the host holds it. Batch 673: a capture changes its team in place, so it is the start's guardian all match
+        // (batch 475 re-created it on each change of hands).
         public Entity Guardian => Quests.Context.PointGuardian(PointIndex + 2) ?? InitialGuardian;
 
         // The process default goes back to map 1 (DominionBaseChecks' pattern).
@@ -114,6 +115,38 @@ public static class DominionGuardianChecks
             if (minion.Health < before) hits++;
         }
         TestAssert.True(hits is >= 4 and <= 6, $"one shot a second, its Spell1's Cooldown 1: {hits} hits in 5 s");
+    }
+
+    /// <summary>
+    /// Batch 670 (owner, 3 November 2026: "Check turret attack speed on all maps"): the guardian of an owned point fires its Spell1 once per the
+    /// Spell1's shipped Cooldown (OdinNeutralGuardian.inibin Spell1 OdinGuardianSpellAttackCast, Cooldown 1; no shipped script changes the
+    /// guardian's attack speed or cooldown: CharScriptOdinNeutralGuardian, OdinGuardianBuff and OdinGuardianStatsByLevel hold none). A cooldown
+    /// of whole 30 Hz steps takes exactly that many steps.
+    /// </summary>
+    [Check("dominion.guardian-fires-once-per-its-spell-cooldown", TimeoutSeconds = 300)]
+    public static void TheGuardianFiresOncePerItsSpellCooldown()
+    {
+        using var match = StartMatch();
+        Capture(match, match.Order);
+        var (runtime, guardian) = (match.Runtime, match.Guardian);
+        match.Order.Position = match.OrderHome;
+        match.Chaos.Position = match.ChaosHome;
+        var spell = GameData.Default.Champion(GuardianName).SpellNames[0];
+        var cooldown = GameData.Default.Spell(spell, 5).Cooldowns[0];
+        runtime.World.Register(new Entity(runtime.World.Allocate(UnitType.Minion), EntityKind.Minion, UnitType.Minion, Team.Chaos,
+            Offset(guardian, -800.0)) { Health = 1e7, MaxHealth = 1e7, Name = "Dummy" });
+        var casts = new List<double>();
+        var ready = CastAt(guardian);
+        for (var tick = 0; tick < (int)Math.Round(10.0 / Step); tick++)
+        {
+            runtime.Tick(Step);
+            if (CastAt(guardian) > ready + 1e-9) casts.Add(runtime.World.Clock.Now());
+            ready = CastAt(guardian);
+        }
+        TestAssert.True(casts.Count >= 5, $"the guardian casts {spell} on the Chaos minion ({casts.Count} casts in 10 s)");
+        var interval = (casts[^1] - casts[0]) / (casts.Count - 1);
+        var steps = Math.Ceiling(cooldown / Step - 1e-6) * Step;
+        TestAssert.Near(steps, interval, 1e-6, $"one {spell} every {interval:0.0000} s, its Cooldown {cooldown} s");
     }
 
     /// <summary>
@@ -311,7 +344,8 @@ public static class DominionGuardianChecks
     /// <summary>
     /// A point the enemy neutralises keeps its guardian, which goes neutral and then takes the next owner's team (OdinGuardianBuff redraws
     /// the guardian for every team change, the neutral one included), so the point changes hands again. A guard for the bot match's
-    /// "points change hands" measure: it passes on master too (batch 461 open question 1 does not occur in this flow).
+    /// "points change hands" measure. Batch 673 (restated): the guardian changes team in place, so it is one unit throughout, and the channel that
+    /// neutralised the point goes on to capture it.
     /// </summary>
     [Check("dominion.neutralized-point-keeps-its-guardian-and-changes-hands-again", TimeoutSeconds = 300)]
     public static void ANeutralizedPointKeepsItsGuardianAndChangesHandsAgain()
@@ -323,14 +357,11 @@ public static class DominionGuardianChecks
         chaos.Position = Offset(guardian, -300.0);
         TestAssert.True(runtime.Spells.BeginCaptureChannel(chaos, guardian), "the Chaos champion channels on the Order point");
         TestAssert.True(Until(runtime, () => Owner(match) == Team.Neutral, 20.0), $"point C is neutralised (owner {Owner(match)}, progress {match.Quests.Captures[PointIndex].Variable("CaptureProgress")}, channel {runtime.Spells.CaptureChannelTarget(chaos)?.Name}, chaos {chaos.Position} alive {chaos.Alive} hp {chaos.Health:F0}, buffs {string.Join(",", chaos.Buffs.Select(b => b.Name))})");
-        // Batch 475: each change re-creates the point's guardian (BehaviorTreeQuestHost.GuardianTakesOwner), so the point's guardian is the current one.
-        TestAssert.True(match.Guardian.Alive && match.Guardian.Team == Team.Neutral,
-            $"the point's guardian lives and is neutral (alive {match.Guardian.Alive}, team {match.Guardian.Team})");
-        // Batch 475: the channel on the neutralised guardian ended with it (the guardian was replaced), so Chaos channels the new one.
-        TestAssert.True(runtime.Spells.BeginCaptureChannel(chaos, match.Guardian), "the Chaos champion channels on the point's new guardian");
-        TestAssert.True(Until(runtime, () => Owner(match) == Team.Chaos, 20.0), "point C becomes Chaos's");
-        TestAssert.True(match.Guardian.Alive && match.Guardian.Team == Team.Chaos,
-            $"the point's guardian is Chaos's (alive {match.Guardian.Alive}, team {match.Guardian.Team})");
+        TestAssert.True(ReferenceEquals(match.Guardian, guardian) && guardian.Alive && guardian.Team == Team.Neutral,
+            $"the point's guardian lives and is neutral (alive {guardian.Alive}, team {guardian.Team})");
+        TestAssert.True(Until(runtime, () => Owner(match) == Team.Chaos, 20.0), "the same channel goes on and point C becomes Chaos's");
+        TestAssert.True(ReferenceEquals(match.Guardian, guardian) && guardian.Alive && guardian.Team == Team.Chaos,
+            $"the point's guardian is Chaos's (alive {guardian.Alive}, team {guardian.Team})");
     }
 
     /// <summary>
@@ -410,52 +441,177 @@ public static class DominionGuardianChecks
     }
 
     /// <summary>
-    /// Batch 479: the replacement guardian of a captured point carries the pool and the PAR the tree sets: MaxMana 50000 and the full pool, in its
-    /// 0xCC on the wire. Batch 512: the pool is the tree's progress under the new owner (CaptureMeterPool), so it starts where the flip happened
-    /// (above 99 of 100) and fills as the owner's regen takes the progress to 100.
+    /// Batch 479: the guardian of a captured point carries the pool and the PAR the tree sets: MaxMana 50000 and the full pool, in its 0xCC on the
+    /// wire. Batch 512: the pool is the tree's progress under the new owner (CaptureMeterPool), so it goes on from the flip (above 99 of 100) and
+    /// fills as the owner's regen takes the progress to 100. Batch 673 (restated; was "...-guardian-replacement-carries-the-pool-and-par"): the
+    /// guardian changes team in place, so it is the same unit with its own pool.
     /// </summary>
-    [Check("dominion.guardian-replacement-carries-the-pool-and-par", TimeoutSeconds = 300)]
-    public static void TheReplacementGuardianCarriesThePoolAndItsPar()
+    [Check("dominion.captured-guardian-keeps-its-pool-and-par", TimeoutSeconds = 300)]
+    public static void TheCapturedGuardianKeepsItsPoolAndItsPar()
     {
         using var match = StartMatch();
         var seat = Observe(match, Team.Order);
-        var previous = match.Guardian;
+        var guardian = match.Guardian;
         Capture(match, match.Order);
-        var replacement = match.Guardian;
-        TestAssert.True(replacement.NetId != previous.NetId, "the capture replaces point C's guardian");
-        TestAssert.True(replacement.MaxMana == 50000.0, $"the replacement has MaxMana 50000 (was {replacement.MaxMana:F0})");
-        TestAssert.True(replacement.Mana >= 0.99 * 50000.0, $"the replacement of an owned point starts at the flip's progress, 99 of 100 or more (PAR {replacement.Mana:F0})");
+        TestAssert.True(ReferenceEquals(match.Guardian, guardian) && guardian.Team == Team.Order, "the capture keeps point C's guardian, now Order's");
+        TestAssert.True(guardian.MaxMana == 50000.0, $"the guardian has MaxMana 50000 (was {guardian.MaxMana:F0})");
+        TestAssert.True(guardian.Mana >= 0.99 * 50000.0, $"the owned point's pool goes on from the flip's progress, 99 of 100 or more (PAR {guardian.Mana:F0})");
         for (var tick = 0; tick < 60; tick++) match.Runtime.Tick(Step);
-        var blocks = ParBlocks(seat, replacement.NetId);
+        var blocks = ParBlocks(seat, guardian.NetId);
         TestAssert.True(blocks.Count > 0 && blocks[^1] == (50000f, 50000f),
-            $"the replacement's last 0xCC carries PAR and max PAR 50000 ({(blocks.Count > 0 ? $"{blocks[^1].Current:F0}/{blocks[^1].Max:F0}" : "none sent")})");
+            $"the guardian's last 0xCC carries PAR and max PAR 50000 ({(blocks.Count > 0 ? $"{blocks[^1].Current:F0}/{blocks[^1].Max:F0}" : "none sent")})");
     }
 
     /// <summary>
-    /// Batch 493: the guardian a capture replaces ends its buffs before it leaves, so every odin_suppression and Odin-Capture-Filling particle bound to it
-    /// (the capture sounds: OdinGuardianSuppression's and OdinCaptureSoundFilling's BBSpellEffectRemove in OnBuffDeactivate) gets its 0x3D. The 0x8C
-    /// carries the name hash at 6, the effect at 25 and the bound unit at 29; the 0x3D the effect at 5.
+    /// Batch 493: every odin_suppression and Odin-Capture-Filling particle bound to the guardian (the capture sounds: OdinGuardianSuppression's and
+    /// OdinCaptureSoundFilling's BBSpellEffectRemove in OnBuffDeactivate) gets its 0x3D once the capture is over. The 0x8C carries the name hash at
+    /// 6, the effect at 25 and the bound unit at 29; the 0x3D the effect at 5. Batch 673 (restated; was "...-replaced-guardian-kills-its-capture-
+    /// particles"): the guardian keeps its unit, so its buffs end through the scripts (the capture channel's ChannelingSuccessStop takes its stack,
+    /// the suppression ends with no stack left), not through the replacement's forced end.
     /// </summary>
-    [Check("dominion.replaced-guardian-kills-its-capture-particles", TimeoutSeconds = 300)]
-    public static void TheReplacedGuardianKillsItsCaptureParticles()
+    [Check("dominion.captured-guardian-kills-its-capture-particles", TimeoutSeconds = 300)]
+    public static void TheCapturedGuardianKillsItsCaptureParticles()
     {
         using var match = StartMatch();
         var seat = Observe(match, Team.Order);
-        var previous = match.Guardian;
+        var guardian = match.Guardian;
         Capture(match, match.Order);
-        TestAssert.True(match.Guardian.NetId != previous.NetId, "the capture replaces point C's guardian");
+        Advance(match.Runtime, 1.0);
+        TestAssert.True(ReferenceEquals(match.Guardian, guardian), "the capture keeps point C's guardian");
         var names = new[] { SpellPackets.BuffNameHash("odin_suppression"), SpellPackets.BuffNameHash("Odin-Capture-Filling") };
         var created = seat.Packets.Select(packet => packet.Plaintext.ToArray())
             .Where(bytes => bytes.Length >= 33 && bytes[0] == 0x8C && names.Contains(BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(6))) &&
-                            BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(29)) == previous.NetId)
+                            BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(29)) == guardian.NetId)
             .Select(bytes => BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(25))).ToHashSet();
         var killed = seat.Packets.Select(packet => packet.Plaintext.ToArray())
             .Where(bytes => bytes.Length >= 9 && bytes[0] == 0x3D)
             .Select(bytes => BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(5))).ToHashSet();
-        TestAssert.True(created.Count > 0, "the capture channel's particles were created on the old guardian");
+        TestAssert.True(created.Count > 0, "the capture channel's particles were created on the guardian");
         TestAssert.True(created.All(killed.Contains),
-            $"every capture particle of the old guardian is killed (alive: {string.Join(", ", created.Where(id => !killed.Contains(id)).Select(id => $"0x{id:X8}"))})");
+            $"every capture particle of the guardian is killed once the capture is over (alive: {string.Join(", ", created.Where(id => !killed.Contains(id)).Select(id => $"0x{id:X8}"))}; buffs {string.Join(",", guardian.Buffs.Select(b => b.Name))})");
     }
+
+    /// <summary>
+    /// Batch 665 (owner, 3 November 2026: "Dominion shrines no attack animation"). The guardian's shot is its Spell1, OdinGuardianSpellAttackCast,
+    /// whose spell data names AnimationName Attack1 (AnimEffects.list: Capture_Point_Tower_Attack.troy on the crystal). The client's spellbook
+    /// plays it from the cast answer (0xBD); only the ExtraSpell1 missile (0x41) went out, so the crystal never moved. Each shot is now announced
+    /// to every client that holds the guardian, with the cast's spell, slot 0 and the target.
+    /// </summary>
+    [Check("dominion.guardian-shot-is-announced-as-its-attack-cast", TimeoutSeconds = 300)]
+    public static void TheGuardianShotIsAnnouncedAsItsAttackCast()
+    {
+        using var match = StartMatch();
+        Capture(match, match.Order);
+        var (runtime, guardian, chaos) = (match.Runtime, match.Guardian, match.Chaos);
+        match.Order.Position = match.OrderHome;
+        Advance(runtime, 1.0);
+        var seats = new[] { Observe(match, Team.Order), Observe(match, Team.Chaos) };
+        var before = CastAt(guardian);
+        chaos.Position = Offset(guardian, -EnemyDistance);
+        Advance(runtime, 3.0);
+        TestAssert.True(CastAt(guardian) > before, "the guardian fires on the Chaos champion");
+        var hash = SpellSystem.ProtocolHash("OdinGuardianSpellAttackCast");
+        foreach (var seat in seats)
+        {
+            var casts = seat.Packets.Select(packet => packet.Plaintext.ToArray())
+                .Where(bytes => bytes.Length > 9 && bytes[0] == SpellPackets.CastSpellAnswerOpcode &&
+                                BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(1)) == guardian.NetId).ToList();
+            var missiles = seat.Packets.Count(packet => packet.Plaintext.Span.Length >= 5 && packet.Plaintext.Span[0] == 0x41 &&
+                BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[1..]) == guardian.NetId);
+            TestAssert.True(casts.Count >= 2 && casts.Count >= missiles - 1,
+                $"each shot is announced as the guardian's cast ({casts.Count} casts, {missiles} missiles)");
+            TestAssert.True(casts.All(bytes => bytes.AsSpan().IndexOf(BitConverter.GetBytes(hash)) >= 0),
+                "the cast names OdinGuardianSpellAttackCast, the Spell1 whose AnimationName is Attack1");
+        }
+    }
+
+    /// <summary>
+    /// Batch 673 (owner, 3 November 2026: "the crystal never rises up"; decision: the guardian changes team in place). The point's crystal rises
+    /// through the shipped OdinGuardianBuff: its BuffOnUpdateStats block 4, on the guardian's change of team (BBGetTeamID against
+    /// InstanceVars.MyTeam), plays Activate and overrides Idle1 with Floating for an Order or Chaos owner (4.10, 4.11) and plays Deactivate and
+    /// clears the override for a neutral one (4.12); OnBuffActivate plays neither. So the point keeps its one guardian, which changes team: every
+    /// client is told so by UnitChangeTeam (0xE0: the unit at 5, the native team at 9; the 126 client's handler calls the unit's SetTeam),
+    /// and both clients get the animation and the override. The script moves the 800 sight to the owner alone (4.2, 4.3.1, 4.10.6); the guardian
+    /// stays visible to both teams (batch 475, decision a).
+    /// </summary>
+    [Check("dominion.captured-guardian-changes-team-in-place-and-raises-its-crystal", TimeoutSeconds = 300)]
+    public static void TheCapturedGuardianChangesTeamInPlaceAndRaisesItsCrystal()
+    {
+        using var match = StartMatch();
+        var seats = new[] { (Team.Order, Observe(match, Team.Order)), (Team.Chaos, Observe(match, Team.Chaos)) };
+        Advance(match.Runtime, 0.5);
+        var guardian = match.Guardian;
+        Capture(match, match.Order);
+        Advance(match.Runtime, 0.5);
+        TestAssert.True(ReferenceEquals(match.Guardian, guardian) && guardian.Alive && guardian.Team == Team.Order,
+            $"the point keeps its guardian, which takes Order's team (guardian 0x{match.Guardian.NetId:X8}, was 0x{guardian.NetId:X8}, team {match.Guardian.Team})");
+        TestAssert.True(guardian.ScriptAnimationOverrides.TryGetValue("idle1", out var idle) && idle == "Floating",
+            "the captured guardian's Idle1 is overridden by Floating, so its crystal stays up");
+        foreach (var (team, seat) in seats)
+        {
+            TestAssert.True(TeamChanges(seat, guardian).LastOrDefault() == TeamMapping.ToNative(Team.Order),
+                $"the {team} client is told the guardian's new team (0xE0, Order 100; got {string.Join(", ", TeamChanges(seat, guardian))})");
+            TestAssert.True(Animations(seat, guardian).Contains("Activate"),
+                $"the {team} client sees the crystal rise (Activate; played: {string.Join(", ", Animations(seat, guardian))})");
+            TestAssert.True(seat.Packets.Any(packet => packet.Plaintext.Span.Length >= 5 && packet.Plaintext.Span[0] == 0x6E &&
+                    BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[1..]) == guardian.NetId),
+                $"the {team} client is sent the Floating override (SetAnimStates, 0x6E)");
+            TestAssert.True(!LeftSight(seat, guardian), $"the {team} client keeps the guardian in sight (no LeaveVisibility)");
+        }
+        TestAssert.True(SightOf(match, guardian, Team.Order) && !SightOf(match, guardian, Team.Chaos),
+            $"the guardian's 800 sight is its owner's alone (OdinGuardianBuff 4.2, 4.3.1, 4.10.6; bubbles {Bubbles(match, guardian)})");
+
+        match.Order.Position = match.OrderHome;
+        var chaos = match.Chaos;
+        chaos.Position = Offset(guardian, -300.0);
+        TestAssert.True(match.Runtime.Spells.BeginCaptureChannel(chaos, guardian), "the Chaos champion channels on the Order point");
+        TestAssert.True(Until(match.Runtime, () => Owner(match) == Team.Neutral, 20.0), "point C is neutralised");
+        Advance(match.Runtime, 0.5);
+        TestAssert.True(ReferenceEquals(match.Guardian, guardian) && guardian.Alive && guardian.Team == Team.Neutral,
+            "the neutralised point keeps the same guardian, now neutral");
+        TestAssert.True(!guardian.ScriptAnimationOverrides.ContainsKey("idle1"), "the neutralised guardian rests again (no Idle1 override)");
+        foreach (var (team, seat) in seats)
+        {
+            TestAssert.True(TeamChanges(seat, guardian).LastOrDefault() == TeamMapping.ToNative(Team.Neutral),
+                $"the {team} client is told the guardian is neutral again (0xE0, 300)");
+            TestAssert.True(Animations(seat, guardian).Contains("Deactivate"),
+                $"the {team} client sees the crystal lower (Deactivate; played: {string.Join(", ", Animations(seat, guardian))})");
+            TestAssert.True(!LeftSight(seat, guardian), $"the {team} client still sees the guardian");
+        }
+        TestAssert.True(SightOf(match, guardian, Team.Order) && SightOf(match, guardian, Team.Chaos),
+            $"the neutral guardian gives both teams its 800 sight again (OdinGuardianBuff 4.12.7, 4.12.8; bubbles {Bubbles(match, guardian)})");
+    }
+
+    // The native teams of the UnitChangeTeam packets (0xE0, 13 bytes: the unit at 5, the team at 9) a seat was sent for a unit.
+    private static List<int> TeamChanges(SeatCapture seat, Entity unit) => seat.Packets
+        .Select(packet => packet.Plaintext.ToArray())
+        .Where(bytes => bytes.Length == 13 && bytes[0] == 0xE0 && BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(5)) == unit.NetId)
+        .Select(bytes => BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(9)))
+        .ToList();
+
+    // The animation names of the PlayAnimation packets (0xB8: net id at 1, the name from 13) a seat was sent for a unit.
+    private static List<string> Animations(SeatCapture seat, Entity unit) => seat.Packets
+        .Select(packet => packet.Plaintext.ToArray())
+        .Where(bytes => bytes.Length > 13 && bytes[0] == 0xB8 && BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(1)) == unit.NetId)
+        .Select(bytes => System.Text.Encoding.ASCII.GetString(bytes, 13, Array.IndexOf(bytes, (byte)0, 13) - 13))
+        .ToList();
+
+    // Whether a seat was told the unit left its sight after it last entered it (LeaveVisibility after the last EnterVisibility, 0xC2).
+    private static bool LeftSight(SeatCapture seat, Entity unit)
+    {
+        var stream = seat.Packets.Select(packet => packet.Plaintext.ToArray()).ToList();
+        var seen = stream.FindLastIndex(bytes => bytes.Length >= 5 && bytes[0] == VisionPackets.EnterVisibilityOpcode &&
+            BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(1)) == unit.NetId);
+        var leaves = VisionPackets.LeaveVisibility(unit.NetId).Select(packet => packet.Plaintext.ToArray()).ToList();
+        return seen < 0 || stream.Skip(seen + 1).Any(bytes => leaves.Any(leave => leave.AsSpan().SequenceEqual(bytes)));
+    }
+
+    // Whether a team holds a live 800 perception bubble on the unit (OdinGuardianBuff's BBAddUnitPerceptionBubble).
+    private static bool SightOf(Match match, Entity unit, Team team) => match.Runtime.World.TimedVisionBubbles.Any(bubble =>
+        bubble.Team == team && bubble.AnchorNetId == unit.NetId && bubble.Remaining > 0.0 && Math.Abs(bubble.Radius - 800.0) < 0.5);
+
+    private static string Bubbles(Match match, Entity unit) => string.Join(", ", match.Runtime.World.TimedVisionBubbles
+        .Where(bubble => bubble.AnchorNetId == unit.NetId).Select(bubble => $"{bubble.Team} {bubble.Radius:F0} {bubble.Remaining:F0}s"));
 
     /// <summary>A replication observer's packets: the seat's client, as the replication layer gives it to the client.</summary>
     private sealed class SeatCapture : IReplicationTransport
@@ -529,14 +685,14 @@ public static class DominionGuardianChecks
     }
 
     /// <summary>
-    /// Batch 475b (review): an enemy channel that is aimed at a guardian when the guardian is replaced keeps going on the replacement. Order captures
-    /// point C (its own channel ends as a success). Chaos then channels the Order-owned point: the point goes neutral, which replaces the guardian
-    /// again, and Chaos's channel is aimed at the neutral replacement and neutralises the point with it, as the shipped OdinCaptureChannel does. The shipped
-    /// contest stops a capture while both teams' champions count (CapturePointMath, "Chaos Control" needs no Order champion), so the channel is
-    /// started on the owned point. Reconstruction: retail's guardian changes team in place, so the channel keeps the same unit.
+    /// Batch 475b (review): an enemy channel aimed at the guardian when the point changes hands keeps going. Order captures point C (its own
+    /// channel ends as a success). Chaos then channels the Order-owned point: the point goes neutral, and Chaos's channel goes on, as the shipped
+    /// OdinCaptureChannel does. The shipped contest stops a capture while both teams' champions count (CapturePointMath, "Chaos Control" needs no
+    /// Order champion), so the channel is started on the owned point. Batch 673 (restated; was "...-enemy-channel-follows-the-replaced-guardian"):
+    /// retail's guardian changes team in place, so the channel keeps the same unit.
     /// </summary>
-    [Check("dominion.enemy-channel-follows-the-replaced-guardian", TimeoutSeconds = 300)]
-    public static void AnEnemyChannelFollowsTheReplacedGuardian()
+    [Check("dominion.enemy-channel-stays-on-the-guardian-through-the-neutralise", TimeoutSeconds = 300)]
+    public static void AnEnemyChannelStaysOnTheGuardianThroughTheNeutralise()
     {
         using var match = StartMatch();
         var (runtime, chaos) = (match.Runtime, match.Chaos);
@@ -547,25 +703,23 @@ public static class DominionGuardianChecks
         chaos.Position = Offset(owned, -300.0);
         TestAssert.True(runtime.Spells.BeginCaptureChannel(chaos, owned), "Chaos starts the capture channel on the Order-owned guardian");
         TestAssert.True(Until(runtime, () => Owner(match) == Team.Neutral, 60.0), "Chaos's channel neutralises point C");
-        // Batch 536: the shipped Neutralization's KillSquad (OdinScriptBehaviorTrees.xml:1470) killed the owned guardian first (its 0xA6, its
-        // buffs gone with the death), so nothing was carried and the channel cancelled itself on the replacement (ChannelingUpdateStats block 5).
-        TestAssert.True(owned.Alive, "the neutralised guardian leaves without a death (no KillSquad kill)");
-        var neutralGuardian = match.Guardian;
-        TestAssert.True(!ReferenceEquals(neutralGuardian, owned), "the point's guardian is re-created on the neutral team");
+        // Batch 536: the shipped Neutralization's KillSquad (OdinScriptBehaviorTrees.xml:1470) killed the owned guardian (its 0xA6, its buffs gone
+        // with the death), and the channel cancelled itself (ChannelingUpdateStats block 5). Batch 673: TurretGuardId names no live squad.
+        TestAssert.True(owned.Alive && ReferenceEquals(match.Guardian, owned) && owned.Team == Team.Neutral,
+            "the neutralised point keeps its guardian, alive and neutral (no KillSquad kill)");
         var aimed = runtime.Spells.CaptureChannelTarget(chaos);
-        TestAssert.True(aimed == neutralGuardian,
-            $"Chaos's channel is aimed at the replacement guardian, not the removed one (aimed at {(aimed is null ? "nothing" : $"0x{aimed.NetId:X8}")}, " +
-            $"replacement 0x{neutralGuardian.NetId:X8}, removed 0x{owned.NetId:X8}; Chaos buffs {string.Join(",", chaos.Buffs.Select(b => b.Name))}; " +
-            $"replacement buffs {string.Join(",", neutralGuardian.Buffs.Select(b => b.Name))})");
+        TestAssert.True(aimed == owned,
+            $"Chaos's channel goes on, aimed at the same guardian (aimed at {(aimed is null ? "nothing" : $"0x{aimed.NetId:X8}")}, guardian 0x{owned.NetId:X8}; " +
+            $"Chaos buffs {string.Join(",", chaos.Buffs.Select(b => b.Name))}; guardian buffs {string.Join(",", owned.Buffs.Select(b => b.Name))})");
     }
 
     /// <summary>
-    /// Batch 550: a Priscilla's Blessing holder's channel keeps its blessing through the replacement. OdinCaptureChannel's ChannelingStart puts the
-    /// holder's PrilisasBlessing on the guardian it channels (Items/3183.luaobj keeps the buff on the holder); retail's guardian changes team in
-    /// place, so the copy stays, and the replacement carries it with the channel's team stack (BehaviorTreeQuestHost.GuardianTakesOwner).
+    /// Batch 550: a Priscilla's Blessing holder's channel keeps its blessing through a change of hands. OdinCaptureChannel's ChannelingStart puts
+    /// the holder's PrilisasBlessing on the guardian it channels (Items/3183.luaobj keeps the buff on the holder). Batch 673 (restated; was
+    /// "...-prilisas-blessing-follows-the-replaced-guardian"): retail's guardian changes team in place, so the copy simply stays on it.
     /// </summary>
-    [Check("dominion.prilisas-blessing-follows-the-replaced-guardian", TimeoutSeconds = 300)]
-    public static void PriscillasBlessingFollowsTheReplacedGuardian()
+    [Check("dominion.prilisas-blessing-stays-on-the-guardian-through-the-neutralise", TimeoutSeconds = 300)]
+    public static void PriscillasBlessingStaysOnTheGuardianThroughTheNeutralise()
     {
         using var match = StartMatch();
         var (runtime, chaos) = (match.Runtime, match.Chaos);
@@ -580,22 +734,22 @@ public static class DominionGuardianChecks
         TestAssert.True(Until(runtime, () => owned.Buffs.Any(buff => buff.Name == "PrilisasBlessing"), 1.0),
             "ChannelingStart copies the holder's blessing onto the guardian");
         TestAssert.True(Until(runtime, () => Owner(match) == Team.Neutral, 60.0), "Chaos's channel neutralises point C");
-        var replacement = match.Guardian;
-        TestAssert.True(!ReferenceEquals(replacement, owned) && runtime.Spells.CaptureChannelTarget(chaos) == replacement,
-            "Chaos's channel goes on with the neutral replacement");
-        TestAssert.Equal(1, replacement.Buffs.Count(buff => buff.Name == "PrilisasBlessing" && buff.CasterNetId == chaos.NetId),
-            $"the replacement carries the channel's blessing copy (buffs {string.Join(",", replacement.Buffs.Select(b => b.Name))})");
+        TestAssert.True(ReferenceEquals(match.Guardian, owned) && runtime.Spells.CaptureChannelTarget(chaos) == owned,
+            "Chaos's channel goes on with the same, now neutral, guardian");
+        TestAssert.Equal(1, owned.Buffs.Count(buff => buff.Name == "PrilisasBlessing" && buff.CasterNetId == chaos.NetId),
+            $"the guardian keeps the channel's blessing copy (buffs {string.Join(",", owned.Buffs.Select(b => b.Name))})");
     }
 
     /// <summary>
-    /// Batch 567 (Reconstruction): a neutralise replaces the guardian, and what it carries keeps its owner and its clock, as retail's guardian keeps
-    /// its instances. Two Chaos champions channel the Order-owned point a second apart. The replacement holds each one's OdinGuardianSuppressionChaos
-    /// (its own caster and expiry: OdinCaptureChannel ChannelingStart block 9, BUFF_STACKS_AND_RENEWS per caster) and the suppression with the start
-    /// of the instance it replaces. So the suppression's update (BuffOnUpdateActions block 1, every 0.25 s, from TimePassed 1.5) adds the neutral
-    /// branch's capture sound, OdinCaptureSoundFilling (block 1.3.7.10.3), at its next line; with a re-stamped StartTime it waited 1.5 s.
+    /// Batch 567: what the guardian holds through a neutralise keeps its owner and its clock. Two Chaos champions channel the Order-owned point a
+    /// second apart; the guardian keeps each one's OdinGuardianSuppressionChaos (its own caster and expiry: OdinCaptureChannel ChannelingStart
+    /// block 9, BUFF_STACKS_AND_RENEWS per caster) and the suppression's instance. So the suppression's update (BuffOnUpdateActions block 1, every
+    /// 0.25 s, from TimePassed 1.5) adds the neutral branch's capture sound, OdinCaptureSoundFilling (block 1.3.7.10.3), at its next line.
+    /// Batch 673 (restated; was "...-replaced-guardian-keeps-each-casters-stack-and-the-suppression-clock"): the guardian changes team in place,
+    /// so these are its own instances, not carried copies.
     /// </summary>
-    [Check("dominion.replaced-guardian-keeps-each-casters-stack-and-the-suppression-clock", TimeoutSeconds = 300)]
-    public static void TheReplacedGuardianKeepsEachCastersStackAndTheSuppressionClock()
+    [Check("dominion.neutralised-guardian-keeps-each-casters-stack-and-the-suppression-clock", TimeoutSeconds = 300)]
+    public static void TheNeutralisedGuardianKeepsEachCastersStackAndTheSuppressionClock()
     {
         using var match = StartMatch(secondChaos: true);
         var (runtime, chaos) = (match.Runtime, match.Chaos);
@@ -615,16 +769,15 @@ public static class DominionGuardianChecks
             .ToDictionary(buff => buff.CasterNetId, buff => runtime.Combat.CurrentTime + buff.ExpiresAt);
         TestAssert.True(stacks.ContainsKey(chaos.NetId) && stacks.ContainsKey(second.NetId), "the two stacks name their two casters");
         TestAssert.True(Until(runtime, () => Owner(match) == Team.Neutral, 60.0), "the two channels neutralise point C");
-        var replacement = match.Guardian;
-        TestAssert.True(!ReferenceEquals(replacement, owned), "the point's guardian is re-created on the neutral team");
+        TestAssert.True(ReferenceEquals(match.Guardian, owned) && owned.Team == Team.Neutral, "the neutralised point keeps its guardian, now neutral");
         foreach (var (caster, endsAt) in stacks)
-            TestAssert.True(replacement.Buffs.Any(buff => buff.Name == ChaosStack && buff.CasterNetId == caster &&
+            TestAssert.True(owned.Buffs.Any(buff => buff.Name == ChaosStack && buff.CasterNetId == caster &&
                     Math.Abs(runtime.Combat.CurrentTime + buff.ExpiresAt - endsAt) < 2 * Step),
-                $"the replacement carries 0x{caster:X8}'s stack, ending at its own {endsAt:0.000} (now {runtime.Combat.CurrentTime:0.000}, has " +
-                $"{string.Join(",", replacement.Buffs.Where(buff => buff.Name == ChaosStack).Select(buff => $"0x{buff.CasterNetId:X8}+{buff.ExpiresAt:0.000}"))})");
-        TestAssert.True(Until(runtime, () => replacement.Buffs.Any(buff => buff.Name == "OdinCaptureSoundFilling"), 0.5),
-            $"the carried suppression keeps its clock: the capture sound goes on within one update (buffs {string.Join(",", replacement.Buffs.Select(b => b.Name))})");
-        // The channels that neutralised the point go on to take it, as on retail's one guardian (no second click).
+                $"the guardian keeps 0x{caster:X8}'s stack, ending at its own {endsAt:0.000} (now {runtime.Combat.CurrentTime:0.000}, has " +
+                $"{string.Join(",", owned.Buffs.Where(buff => buff.Name == ChaosStack).Select(buff => $"0x{buff.CasterNetId:X8}+{buff.ExpiresAt:0.000}"))})");
+        TestAssert.True(Until(runtime, () => owned.Buffs.Any(buff => buff.Name == "OdinCaptureSoundFilling"), 0.5),
+            $"the suppression keeps its clock: the capture sound goes on within one update (buffs {string.Join(",", owned.Buffs.Select(b => b.Name))})");
+        // The channels that neutralised the point go on to take it, on the one guardian (no second click).
         TestAssert.True(Until(runtime, () => Owner(match) == Team.Chaos ||
                 runtime.Spells.CaptureChannelTarget(chaos) is null || runtime.Spells.CaptureChannelTarget(second) is null, 30.0) &&
             Owner(match) == Team.Chaos, $"both Chaos channels go on until point C is Chaos's (owner {Owner(match)}, " +

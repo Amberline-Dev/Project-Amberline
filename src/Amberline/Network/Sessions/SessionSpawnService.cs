@@ -355,12 +355,14 @@ public sealed class SessionSpawnService
             // Reconstruction: retail's packet set for a shrine is not recovered; this sends no EnterLocalVisibility (0xB5) for a shrine, since it would light a health bar that an untargetable tower never shows.
             // (NOTES.md recorded a stat block making the laser tower render destroyed in an early build; the destroyed skin is drawn only
             // for a missing or inactive child or CharacterState bit 13, none of which this block sets, but no native client has seen it.)
-            var shrine = turret.Name.EndsWith("Shrine", StringComparison.OrdinalIgnoreCase);
+            // Batch 665: the shrine (untargetable, its character script's SetTargetable false) is VisibilityRules.IsShrine's, which takes the
+            // Crystal Scar's four base shrines too (two of them end in "Shrine1" and got the 0xB5 that lit their bar).
+            var shrine = VisibilityRules.IsShrine(turret);
             packets.Add(CombatPackets.TurretStats(turret.NetId,
                 new TurretStatsSnapshot(Float32(turret.Health), Float32(turret.AttackDamage),
                     Float32(turret.MaxHealth), Float32(turret.Armor), Float32(turret.SpellBlock),
                     Float32(turret.HealthRegen), turret.Protected || shrine, Float32(turret.AttackSpeedMod),
-                    Targetable: turret.Alive && !TurretRules.IsFountainTurret(turret)),
+                    Targetable: turret.Alive && !shrine),
                 syncId: _syncIds.Next(turret.NetId)));
             if (shrine) continue;
             packets.Add(VisionPackets.EnterLocalVisibility(turret.NetId,

@@ -218,6 +218,12 @@ public sealed partial class Entity
     /// </summary>
     public bool NoRender { get; set; }
     public bool Visible { get; set; }
+
+    /// <summary>
+    /// Batch 673 (Reconstruction, batch 475 decision a): a unit every team sees, wherever it stands: a capture point's guardian, the point's
+    /// structure, whose owner the ring and the minimap show to both teams (VisibilityRules.RevealsEntity). Its own sight stays its scripts'.
+    /// </summary>
+    public bool SeenByBothTeams { get; set; }
     public bool Created { get; set; } = true;
     public double Health { get; set; }
     public double MaxHealth { get; set; }
@@ -435,6 +441,12 @@ public sealed partial class Entity
     public double NeutralScalingElapsed { get; set; }
     public double ForcedMoveGrace { get; set; }
     public bool Protected { get; set; }
+
+    /// <summary>
+    /// NOT RETAIL (batch 671): where this hero respawns instead of its team's spawn point (retail's respawn location is the fountain). Null
+    /// for every hero but the Basic Tutorial's Master Yi (the owner's decision of 3 November 2026, LevelScriptHost.ChampionBattleMidway).
+    /// </summary>
+    public Position2? RespawnPoint { get; set; }
 
     /// <summary>
     /// Batch 457: a server turret whose client object is a minion of its character. The stock client makes no turret of a packet: a CreateTurret

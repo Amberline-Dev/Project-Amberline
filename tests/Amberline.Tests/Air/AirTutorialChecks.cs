@@ -14,6 +14,8 @@ public static class AirTutorialChecks
 {
     private const string Version = "1.45.11_10_04_15_28";
     private const string BotAlias = "com.riotgames.platform.game.BotParticipant";
+    // GameTypeConfig.ADVANCED_TUTORIAL_GAMETYPE_ID (GameTypeConfig.as:22).
+    private const int AdvancedTutorialConfigId = 11;
 
     [Check("server.air-tutorial-basic-launches-ashe-with-nunu-and-master-yi")]
     public static void BasicTutorialLaunches() => BasicAsync().GetAwaiter().GetResult();
@@ -79,6 +81,84 @@ public static class AirTutorialChecks
         }
     }
 
+    /// <summary>
+    /// Batch 669: <c>gameService.createTutorialGame(1)</c>, Battle Training (the play menu's battle_training entry,
+    /// ChooseGameFlowViewLayoutDefinition.as:158). The stock client opens a guided champion select on it (AdvancedTutorialController) that
+    /// offers Garen, Ryze and Ashe, and the bundle names the map: "Battle Training - Summoner's Rift". The game is Summoner's Rift in mode
+    /// TUTORIAL (the mode that loads Data\LoadingScreen\TutorialModeSettings.ini, advanced_tutorial_loadscreen.dds), the player and four bots
+    /// against five.
+    /// </summary>
+    [Check("server.air-battle-training-starts-summoners-rift-with-four-bot-allies")]
+    public static void BattleTrainingStarts() => BattleTrainingAsync().GetAwaiter().GetResult();
+
+    private static async Task BattleTrainingAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"league-air-battle-training-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            using var accounts = new PlatformAccounts(Path.Combine(root, "accounts"));
+            await using var manager = NonLaunchingManager(root);
+            var clock = new ManualClock();
+            var games = new PlatformGames(accounts, manager, "127.0.0.1", clock);
+            var sessions = new PlatformSessions(accounts);
+            var rpc = new PlatformServices(accounts, sessions, games);
+            var account = accounts.RegisterPublic("battletrainee", "testing-password", "Battle Trainee", maxed: false);
+            var session = sessions.Login("rpc", account.Username, sessions.IssueTicket(account), Version);
+            TestAssert.True(sessions.AuthenticateChannel("rpc", account.Username, session.Token));
+            static int Id(string name) => AirGameDtos.ChampionNames.Single(pair => pair.Value == name).Key;
+            TestAssert.False(new[] { "Garen", "Ryze", "Ashe" }.Any(name => PlatformEconomy.CanPlay(accounts.Get(account.Id), Id(name), accounts.EconomyRules)),
+                "the new account owns none of the tutorial's champions");
+
+            var game = (AsObject)rpc.Route("rpc", "gameService", "createTutorialGame", [1d])!;
+            TestAssert.Equal("CHAMP_SELECT", game["gameState"], "the guided champion select (ChampionSelectionController.as:1286)");
+            TestAssert.Equal("TUTORIAL_GAME", game["gameType"]);
+            TestAssert.Equal("TUTORIAL", game["gameMode"]);
+            TestAssert.Equal(GameMaps.Normal, game["mapId"], "Summoner's Rift");
+            TestAssert.Equal(AdvancedTutorialConfigId, game["gameTypeConfigId"], "GameTypeConfig.ADVANCED_TUTORIAL_GAMETYPE_ID");
+            var config = AirDtos.GameTypes().Cast<AsObject>().Single(c => Equals(c["id"], (double)AdvancedTutorialConfigId));
+            TestAssert.True((double)config["mainPickTimerDuration"] > 60 + 3, "longer than the client's 60-second warning");
+            var one = ((ArrayCollection)game["teamOne"]).Cast<AsObject>().ToArray();
+            var two = ((ArrayCollection)game["teamTwo"]).Cast<AsObject>().ToArray();
+            TestAssert.Equal(5, one.Length);
+            TestAssert.Equal(5, two.Length);
+            TestAssert.Equal((double)account.Id, one[0]["accountId"], "the player leads team one");
+            TestAssert.True(one.Skip(1).Concat(two).All(p => p.TypeName == BotAlias), "the other nine seats are bots");
+            var bots = ((ArrayCollection)game["playerChampionSelections"]).Cast<AsObject>()
+                .Select(s => (string)s["summonerInternalName"]).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+            TestAssert.Equal(new[] { "bot_Annie_200", "bot_Malphite_200", "bot_MasterYi_100", "bot_MasterYi_200", "bot_Nasus_200",
+                "bot_Shen_100", "bot_Sivir_100", "bot_Sivir_200", "bot_Soraka_100" }, bots, "the player picks; the bots hold their champions");
+
+            // The guided grid lists only the tutorial's three (AdvancedTutorialController.tutorialChampions), owned or not.
+            TestAssert.Throws<ArgumentException>(() => rpc.Route("rpc", "gameService", "selectChampion", [(double)Id("Annie")]));
+            var picked = (AsObject)rpc.Route("rpc", "gameService", "selectChampion", [(double)Id("Ryze")])!;
+            TestAssert.Equal(Id("Ryze"), ((ArrayCollection)picked["playerChampionSelections"]).Cast<AsObject>()
+                .Single(s => !((string)s["summonerInternalName"]).StartsWith("bot_", StringComparison.Ordinal))["championId"]);
+            rpc.Route("rpc", "gameService", "championSelectCompleted", []);
+            TestAssert.Equal("POST_CHAMP_SELECT", ((AsObject)games.Current(account.Id)!)["gameState"]);
+            clock.Now += TimeSpan.FromSeconds(PlatformGames.PostPickServerSeconds + 1);
+            games.Tick();
+            TestAssert.Equal("START_REQUESTED", ((AsObject)games.Current(account.Id)!)["gameState"]);
+
+            var roster = MatchRoster.Read(Path.Combine(Directory.EnumerateDirectories(Path.Combine(root, "games")).Single(), "roster.json"));
+            TestAssert.Equal(10, roster.Length);
+            TestAssert.True(roster[0] is { IsBot: false, Champion: "Ryze", Team: Team.Order }, "the lent Ryze on Order");
+            TestAssert.Equal(4, roster.Count(p => p.IsBot && p.Team == Team.Order));
+            TestAssert.Equal(5, roster.Count(p => p.IsBot && p.Team == Team.Chaos));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private sealed class ManualClock : TimeProvider
+    {
+        public DateTimeOffset Now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
     private static async Task BasicAsync()
     {
         var root = Path.Combine(Path.GetTempPath(), $"league-air-tutorial-{Guid.NewGuid():N}");
@@ -96,9 +176,10 @@ public static class AirTutorialChecks
             var session = sessions.Login("rpc", account.Username, sessions.IssueTicket(account), Version);
             TestAssert.True(sessions.AuthenticateChannel("rpc", account.Username, session.Token));
 
-            // Battle Training (1) has no shipped map or script of its own: still the client's own unsupported-mode text.
-            TestAssert.Throws<ArgumentException>(() => rpc.Route("rpc", "gameService", "createTutorialGame", [1d]));
-            TestAssert.True(games.Current(account.Id) is null, "a refused Battle Training leaves no game");
+            // Batch 669: Battle Training (1) is a game now (server.air-battle-training-starts-summoners-rift-with-four-bot-allies); a type the
+            // client never sends is still refused with its own unsupported-mode text and leaves no game.
+            TestAssert.Throws<ArgumentException>(() => rpc.Route("rpc", "gameService", "createTutorialGame", [2d]));
+            TestAssert.True(games.Current(account.Id) is null, "a refused tutorial type leaves no game");
 
             // The basic tutorial comes back launching: the client accepts a tutorial GameDTO only in champion select or START_REQUESTED.
             var game = (AsObject)rpc.Route("rpc", "gameService", "createTutorialGame", [0d])!;

@@ -1,5 +1,6 @@
 using Amberline.Core;
 using Amberline.Data;
+using Amberline.Network.Sessions;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 using Amberline.Simulation.Runtime;
 using Amberline.Simulation.Spells.Bb;
@@ -45,15 +46,20 @@ public static class AttackCadenceChecks
             if (attacker.AttackCooldown > cooldown + 1e-9) starts.Add(match.Now);
             cooldown = attacker.AttackCooldown;
         }
-        TestAssert.True(starts.Count >= 3, $"{attacker.Name} swings at least three times in {seconds} s (it swung {starts.Count} times)");
-        return (starts[^1] - starts[0]) / (starts.Count - 1);
+        TestAssert.True(starts.Count >= 4, $"{attacker.Name} swings at least four times in {seconds} s (it swung {starts.Count} times)");
+        // Batch 670: from the second swing. The first can be this loop's own call, made between steps, whose cooldown the next step already
+        // counts down; a unit with its own AI (the lane minion) then swings inside the step, so that first interval was one step short.
+        return (starts[^1] - starts[1]) / (starts.Count - 2);
     }
 
     private static void AssertCadence(string label, double period, double interval)
     {
-        // The step rounds a period up to whole steps: the measured interval is the period or at most one step more.
-        TestAssert.True(interval >= period - 1e-6 && interval <= period + Step + 1e-6,
-            $"{label}: one swing every {interval:0.0000} s, the record's period {period:0.0000} s ({1.0 / period:0.000} attacks per second)");
+        // The step rounds a period up to whole steps: the measured interval is the first whole step at or after the period. Batch 670: a period of
+        // whole steps (the shrine's 0.4 s, 12 steps; the melee minion's 0.8 s; the tutorial turret's 1.0 s) takes exactly that many (batch 660
+        // allowed one step more, which the countdown's float residue added).
+        var steps = Math.Ceiling(period / Step - 1e-6) * Step;
+        TestAssert.Near(steps, interval, 1e-6,
+            $"{label}: one swing every {interval:0.0000} s, the record's period {period:0.0000} s ({1.0 / period:0.000} attacks per second) is {steps:0.0000} s in whole steps");
     }
 
     /// <summary>
@@ -120,5 +126,93 @@ public static class AttackCadenceChecks
             Team.Chaos, new Position2(7060, 7000)) { Health = 1e7, MaxHealth = 1e7, Name = "Dummy" });
         AssertCadence(minion.Name, RecordPeriod(minion.Name),
             MeanInterval(match, minion, 8.0, () => match.Runtime.Combat.QueueBasicAttack(minion, dummy)));
+    }
+
+    /// <summary>
+    /// Batch 670 (owner, 3 November 2026: "Check turret attack speed on all maps"): every turret CreateLevelProps makes on every shipped map
+    /// (Summoner's Rift, the Harrowing rift, the tutorial, Twisted Treeline, the Crystal Scar), run by the production composition (its character
+    /// script and Turret.luaobj), swings at its record's period over the multiplier its shipped character script gives it. The multiplier is
+    /// 1.3 when the character's CharOnActivate adds TurretAssistManager, which adds PersonalTurretAssistBonus to the turret itself
+    /// (IncPermanentPercentAttackSpeedMod +0.3, batch 660); 1 otherwise (the shrines, the Crystal Scar's shrines, the tutorial's two turrets,
+    /// whose CharOnActivate adds only TurretDamageManager). The expectation reads the shipped inibin and the shipped character script, not the
+    /// production tables. Each turret has a 1e7-health enemy minion 450 units toward the map's centre; the window ends before any wave arrives.
+    /// The Crystal Scar's capture point guardians are DominionGuardianChecks' (they need a captured point).
+    /// </summary>
+    [Check("combat.turrets-on-every-map-swing-at-their-shipped-rate", Serial = true, TimeoutSeconds = 600)]
+    public static void TurretsOnEveryMapSwingAtTheirShippedRate()
+    {
+        const double Window = 12.0;
+        try
+        {
+            foreach (var mapId in new[] { GameMaps.Normal, GameMaps.Harrowing, GameMaps.Tutorial, GameMaps.TwistedTreeline, GameMaps.CrystalScar })
+            {
+                var paths = GameDataPaths.Default.ForMap(mapId);
+                GameData.ConfigureDefault(paths);
+                SessionParticipantDefinition[] roster = [new(1, 0, "Order", "Annie", Team.Order), new(2, 1, "Chaos", "Annie", Team.Chaos)];
+                using var runtime = MatchRuntime.CreateProduction(NavigationGrid.Load(paths), GameData.Default, readySettleSeconds: 0.0,
+                    roster: roster, mapId: mapId);
+                runtime.World.Clock.SetVirtual(0.0);
+                runtime.Session.CreateWorld();
+                for (var index = 0; index < roster.Length; index++)
+                {
+                    TestAssert.True(runtime.Session.Authenticate(100L + index, runtime.Session.BuildKeyCheck(roster[index].PlayerId)) is not null,
+                        $"map {mapId} seat {index} authenticates");
+                    runtime.Session.Spawn(100L + index);
+                    TestAssert.True(runtime.Session.MarkReady(100L + index), $"map {mapId} seat {index} is ready");
+                }
+                runtime.Session.RunSchedulers();
+                TestAssert.True(runtime.Session.Started, $"map {mapId} starts");
+                runtime.Tick(Step);
+
+                var layout = MapDefinitions.Layout;
+                var centre = new Position2((layout.OrderSpawn.X + layout.ChaosSpawn.X) / 2, (layout.OrderSpawn.Z + layout.ChaosSpawn.Z) / 2);
+                var turrets = runtime.World.Entities.Values.Where(unit => unit.UnitType == UnitType.Turret && layout.TurretTiers.ContainsKey(unit.Name))
+                    .OrderBy(unit => unit.Name, StringComparer.Ordinal).ToArray();
+                TestAssert.Equal(layout.Turrets.Count, turrets.Length, $"map {mapId}: every CreateLevelProps turret stands");
+                foreach (var turret in turrets)
+                {
+                    var (dx, dz) = (centre.X - turret.Position.X, centre.Z - turret.Position.Z);
+                    var length = Math.Max(1.0, Math.Sqrt(dx * dx + dz * dz));
+                    runtime.World.Register(new Entity(runtime.World.Allocate(UnitType.Minion), EntityKind.Minion, UnitType.Minion,
+                        turret.Team == Team.Order ? Team.Chaos : Team.Order,
+                        new Position2(turret.Position.X + dx / length * 450.0, turret.Position.Z + dz / length * 450.0))
+                        { Health = 1e7, MaxHealth = 1e7, Name = "Dummy" });
+                }
+
+                var starts = turrets.ToDictionary(turret => turret, _ => new List<double>());
+                var cooldowns = turrets.ToDictionary(turret => turret, turret => turret.AttackCooldown);
+                for (var tick = 0; tick < (int)Math.Round(Window / Step); tick++)
+                {
+                    runtime.Tick(Step);
+                    var now = runtime.World.Clock.Now();
+                    foreach (var turret in turrets)
+                    {
+                        if (turret.AttackCooldown > cooldowns[turret] + 1e-9) starts[turret].Add(now);
+                        cooldowns[turret] = turret.AttackCooldown;
+                    }
+                }
+
+                foreach (var turret in turrets)
+                {
+                    var tier = layout.TurretTiers[turret.Name];
+                    var character = layout.TurretCharacter(tier, turret.Team);
+                    // OrderTurretShrine ships no character script.
+                    var script = CaseInsensitivePaths.Resolve(paths.Under("DATA", "Characters", character, "Scripts", "CharScript" + character + ".luaobj"));
+                    var assisted = File.Exists(script) &&
+                                   System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(script)).Contains("TurretAssistManager", StringComparison.Ordinal);
+                    var period = RecordPeriod(character, assisted ? 1.3 : 1.0);
+                    var swings = starts[turret];
+                    var interval = swings.Count >= 3 ? (swings[^1] - swings[0]) / (swings.Count - 1) : double.NaN;
+                    Console.WriteLine($"map {mapId} {turret.Name} {character} {tier} assist={assisted} shipped {period:0.0000} s " +
+                                      $"({1.0 / period:0.000}/s) ours {interval:0.0000} s over {swings.Count} swings, AttackPeriod {turret.AttackPeriod:0.0000}");
+                    TestAssert.True(swings.Count >= 3, $"map {mapId} {turret.Name} ({character}) swings at least three times in {Window} s ({swings.Count})");
+                    AssertCadence($"map {mapId} {turret.Name} ({character}, {tier})", period, interval);
+                }
+            }
+        }
+        finally
+        {
+            GameData.ConfigureDefault(GameDataPaths.Default);
+        }
     }
 }

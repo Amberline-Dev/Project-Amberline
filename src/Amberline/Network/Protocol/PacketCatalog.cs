@@ -176,6 +176,7 @@ public sealed class PacketCatalog
         c.Row(0x80, "SpawnMinion", creates: [5]);
         c.Row(0x3C, "SpawnPet", refs: one, creates: [5]);
         c.Row(0x66, "CreateNeutral", creates: [5]);
+        c.Row(0xE0, "UnitChangeTeam", refs: [5]); // batch 673: SpawnPackets.UnitChangeTeam, the unit at 5
         c.Row(0xE1, "UnitSetMinimapIcon", refs: [5]); // batch 511: SpawnPackets.UnitSetMinimapIcon, the unit at 5
 
         // --- Channel 3, visibility and perception ---

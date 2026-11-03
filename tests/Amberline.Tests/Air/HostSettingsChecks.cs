@@ -93,6 +93,18 @@ public static class HostSettingsChecks
             TestAssert.Equal(HostAddress.Lan, Setting(home, "addressSource"), "and where it came from");
             TestAssert.Equal(updatesBefore, File.Exists(updates) ? File.ReadAllText(updates) : null, "Settings' address leaves the update choice alone");
 
+            // Batch 666: cheat commands, off until the host ticks the switch and saves; Save with it unticked turns them off again.
+            const string cheatBox = "<input type=checkbox name=on value=on aria-describedby=cheats-hint";
+            Has(page, $"action={HostSettingsPage.CheatsPath}", cheatBox + ">Allow cheat commands in my games</label>", "Only your own login can use them.");
+            TestAssert.False(Cheats(home), "platform.json allows no cheats at first");
+            await SavedAsync(browser, HostSettingsPage.CheatsPath, "cheats", HostSettingsPage.PagePath, ("on", "on"));
+            Has(await GetAsync(browser, HostSettingsPage.PagePath + "?saved=cheats"), "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
+                cheatBox + " checked>Allow cheat commands in my games");
+            TestAssert.True(Cheats(home), "platform.json allows the cheats");
+            TestAssert.Equal("192.168.1.20", Setting(home, "publicHost"), "the switch keeps the other settings");
+            await SavedAsync(browser, HostSettingsPage.CheatsPath, "cheats", HostSettingsPage.PagePath);
+            TestAssert.False(Cheats(home), "unticked and saved: no cheats");
+
             // The folders: the first run's rows and checks; a saved choice restarts Amberline (in this process: the check's loop has no next one).
             var folders = await FolderPageAsync(browser, HostSettingsPage.FoldersPath);
             Has(folders, "Found:</span> " + WebUtility.HtmlEncode(home.Game), $"action={HostSettingsPage.FoldersPath}",
@@ -462,6 +474,12 @@ public static class HostSettingsChecks
 
     private static string Entries(string folder) => string.Join(", ", Directory.EnumerateFileSystemEntries(folder).Select(Path.GetFileName).Order(StringComparer.Ordinal));
 
+    private static bool Cheats(Home home)
+    {
+        using var json = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings));
+        return json.RootElement.TryGetProperty("allowCheats", out var value) && value.GetBoolean();
+    }
+
     private static string? Setting(Home home, string name)
     {
         using var json = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings));
@@ -474,9 +492,13 @@ public static class HostSettingsChecks
     }
 
     /// <summary>A save that sends the browser back to Settings with its note.</summary>
-    private static async Task SavedAsync(HttpClient browser, string path, string saved, params (string Name, string Value)[] fields)
+    private static Task SavedAsync(HttpClient browser, string path, string saved, params (string Name, string Value)[] fields) =>
+        SavedAsync(browser, path, saved, path, fields);
+
+    /// <summary>The same, for a form on <paramref name="tokenPage"/> (batch 666: Settings' own cheat switch has no page of its own).</summary>
+    private static async Task SavedAsync(HttpClient browser, string path, string saved, string tokenPage, params (string Name, string Value)[] fields)
     {
-        using var answer = await PostAsync(browser, path, path, fields);
+        using var answer = await PostAsync(browser, path, tokenPage, fields);
         TestAssert.Equal(HttpStatusCode.Redirect, answer.StatusCode, await answer.Content.ReadAsStringAsync());
         TestAssert.Equal($"{HostSettingsPage.PagePath}?saved={saved}", answer.Headers.Location?.OriginalString, "back to Settings");
     }

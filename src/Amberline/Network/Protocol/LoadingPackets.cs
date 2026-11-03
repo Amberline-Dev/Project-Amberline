@@ -205,7 +205,11 @@ public static class LoadingPackets
         string championName = "Annie",
         IReadOnlyList<LeagueLoadingPlayer>? players = null,
         string version = LeagueProtocolConstants.VersionString,
-        int mapId = GameMaps.Normal)
+        int mapId = GameMaps.Normal,
+        // Batch 669: the mode string after the version; null is the map's own. The client stricmps it with "Tutorial" to load
+        // Data\LoadingScreen\TutorialModeSettings.ini, Battle Training's screen. Batch 674: the client is sent
+        // GameMaps.ClientModeOf, so the Basic Tutorial (map 3, TUTORIAL) gets CLASSIC and its own Map3 Mission.ini screen.
+        string? mode = null)
     {
         var roster = NormalizePlayers(players, LeagueProtocolConstants.DefaultPlayerId, "Player1", championName);
         ProtocolEncoding.RequireAsciiLength(version, 255, nameof(version));
@@ -222,7 +226,7 @@ public static class LoadingPackets
         for (var index = roster.Length; index < 12; index++)
             WriteEmptyPlayerLiteInfo(writer);
         ProtocolEncoding.WriteFixedAscii(writer, version, 256, 255);
-        ProtocolEncoding.WriteFixedAscii(writer, GameMaps.ModeOf(mapId), 128, 127);
+        ProtocolEncoding.WriteFixedAscii(writer, GameMaps.ClientModeOf(mapId, mode ?? GameMaps.ModeOf(mapId)), 128, 127);
         writer.Flush();
         RequireLength(stream, 1438, nameof(SynchVersionS2C));
         return ProtocolEncoding.Packet(

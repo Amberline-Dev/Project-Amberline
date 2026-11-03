@@ -186,7 +186,7 @@ public sealed partial class ReplicationDelivery
             // removed and recreated (which would resend C2 every flush), and
             // a hidden ball can emit its one leave sequence.
             if (observer.View.BallStates.ContainsKey(netId)) continue;
-            var entity = World.Get(netId) ?? _departed.GetValueOrDefault(netId);
+            var entity = World.Get(netId);
             if (entity is not null)
                 _deferredLeaves[observer].AddRange(Services.BuildLeave(entity, observer));
             // The client keeps drawing a dash it saw start after the actor

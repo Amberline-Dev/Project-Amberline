@@ -911,14 +911,10 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     private bool IsPlacemarkerCube(Entity unit) => (unit.Placemarker || unit.Name is "TestCube" or "SpellBook1" || IsTestCubeCharacter(unit)) &&
         (Amberline.Simulation.Buffs.CharacterState.ActionWord(unit) & Amberline.Simulation.Buffs.CharacterState.NoRenderBit) != 0;
 
-    // Batch 521 (Reconstruction, owner evidence): Dominion's opening barrier (CharScriptOdinOpeningBarrier) binds its forcefield to itself
-    // (OdinOpeningBarrierParticle.luaobj, BindObjectVar Owner). A bound emitter is hidden whenever it leaves the client's visible list (the client's list routine
-    // passes !m_IsInView to its system), and the wall's four layers of Odin_Forcefield_green.troy are one particle each from a one-second emitter
-    // (e-life 1, e-rate 1, p-life 1000000), so a hidden layer never comes back: the owner (31 October 2026) saw the blur go "after I look away and
-    // back". The script's SetForceRenderParticles is retail's answer, but the 0xCC ActionState word does not reach the client's CharacterState
-    // for script units (batch 396 measurement), so the barrier's effects are sent the placemarker way (batch 397): unbound, at its point. The
-    // barrier never moves and every wall emitter is world-oriented (e-local-orient 0), so the dome is drawn where it was.
-    private static bool IsOpeningBarrier(Entity unit) => unit.Name == "OdinOpeningBarrier";
+    // Batch 668: Dominion's opening barrier keeps the script's bind (OdinOpeningBarrierParticle.luaobj, BindObjectVar Owner). Batch 521 sent it
+    // unbound to keep the blur after the camera looks away, but the client drops the particles of any system that leaves the view unless the troy
+    // sets SimulateWhileOffScreen, bound or not, and SetForceRenderParticles only lets a NoRender
+    // unit draw its particles. So retail loses the wall's one-shot layers too.
 
     // Batch 431 (Reconstruction, batch 431 evidence): Xerath's launcher cube (skin XerathArcaneBarrageLauncher, Placemarker false) runs the shipped
     // CharScriptTestCube, the TestCube placemarker script (its CharOnActivate sets NoRender on the cube). Its warning effect was sent bound to a cube the
@@ -1028,8 +1024,7 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
             // Batch 398: a target that is another unit (Karthus's wall beam aims at Karthus) keeps its net id, point and live positions, as a bound
             // effect's does; only a target that IS the cube goes to 0 (with the cube's point). Reconstruction: the wire of an unbound effect with a unit
             // target is not recovered; this takes the bound effect's target fields.
-            var barrier = bound is { } wall && IsOpeningBarrier(wall) ? wall : null;
-            var placemarker = bound is { } cube && IsPlacemarkerCube(cube) ? cube : barrier;
+            var placemarker = bound is { } cube && IsPlacemarkerCube(cube) ? cube : null;
             // Batch 431 (Reconstruction): a placemarker effect aimed at another placemarker cube (Karthus's wall beam, each post's target) names that
             // cube's point, not its net id. The stock client places a unit end at the unit's own position, which a post inside a building can leave
             // (the beam then moves off its pillar); a point stays where the script put the cube.
@@ -1050,9 +1045,7 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
                 livePositions: (placemarker is null || beam is not null || postTarget is not null) && faces && persistent ? () => (PositionOf(sourceOperand) ?? (bound ?? targetObject)!.Position,
                     PositionOf(targetOperand) ?? targetObject!.Position) : null,
                 flags: (ushort)((faces ? 0x0080 : 0) | (barePar ? 0x0100 : 0)), targetBoneName: call.Value("TargetBoneName") as string, unbound: fallback,
-                // Batch 521: the barrier's unbound forcefield keeps the audience its binding gave it, the barrier's own team, which sees its own unit
-                // wherever it is (the script's FOWTeam names the other team: TEAM_CHAOS for the Order barrier's green).
-                fowTeam: barrier?.Team ?? EffectTeam(call, "FOWTeam", "FOWTeamOverrideVar") ?? placemarker?.Team) : 0u;
+                fowTeam: EffectTeam(call, "FOWTeam", "FOWTeamOverrideVar") ?? placemarker?.Team) : 0u;
             // Batch 398 (Reconstruction): an unbound placemarker effect the script never removes ends with its cube. The client's bound emitter ends with its
             // unit, and this effect is sent unbound, so BbBuffRuntime.OnUnitDeath kills it when the cube's corpse goes (batch 404).
             // Batch 419 (Reconstruction, batch 418 evidence): a cube that is already dead has had its OnUnitDeath, so its effect ends with its corpse from here.

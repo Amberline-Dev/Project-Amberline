@@ -145,6 +145,11 @@ public sealed class SessionDependencies
 {
     /// <summary>The map this match is played on (<see cref="GameMaps"/>): it picks the SynchVersion map id and the lane minion skin.</summary>
     public int MapId { get; init; } = GameMaps.Normal;
+    /// <summary>
+    /// Batch 669: the SynchVersion, hero-stats and result mode; null is the map's own (<see cref="GameMaps.ModeOf"/>). Battle Training names
+    /// TUTORIAL on map 1 (<see cref="GameMaps.IsPlayedIn"/>).
+    /// </summary>
+    public string? Mode { get; init; }
 
     public SessionDependencies(
         HeroStatsService heroStats,

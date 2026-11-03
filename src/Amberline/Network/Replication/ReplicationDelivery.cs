@@ -139,8 +139,6 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         _pending.Add(message);
     }
 
-    // Batch 493: the units Depart named since the last flush, by net id.
-    private readonly Dictionary<uint, Entity> _departed = new();
 
     public void Flush()
     {
@@ -284,7 +282,6 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         _queuedTemplateIds.Clear();
         _freshReplication.Clear();
         _preparedShrines.Clear();
-        _departed.Clear();
         _spellTooltipsSent.Clear();
         try { AfterVisibilityFlush?.Invoke(); }
         catch { /* diagnostics never affect observer delivery */ }

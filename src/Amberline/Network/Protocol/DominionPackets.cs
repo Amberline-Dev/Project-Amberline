@@ -193,6 +193,22 @@ public static class DominionPackets
         return Packet(bytes);
     }
 
+    /// <summary>
+    /// Batch 674: OnQuestEvent, 10 bytes: the quest event at +5 (u8; eQuestEvent 0 roll over, 1 roll out, 2 mouse down, 3 mouse up)
+    /// and the quest id at +6 (i32) (the AntiBot build's struct and enum, where it is 216 next to OnTutorialPopupClosed 215; the 126 build
+    /// sends OnTutorialPopupClosed as 0xD5 and this as 0xD6, the client). The tracker's roll-over sends it only for a quest added
+    /// with the flag (handleRolloverCallbacks); its click sends a mouse down once per quest.
+    /// </summary>
+    public const byte QuestEventClientOpcode = 0xD6;
+    public const byte QuestRollOver = 0;
+    public const byte QuestMouseDown = 2;
+
+    /// <summary>The event and quest id of a <see cref="QuestEventClientOpcode"/> payload, or null for any other.</summary>
+    public static (byte Event, uint QuestId)? QuestEvent(ReadOnlySpan<byte> payload) =>
+        payload.Length >= 10 && payload[0] == QuestEventClientOpcode
+            ? (payload[5], BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(6, 4)))
+            : null;
+
     public const byte FloatingTextOpcode = 0x1C;
 
     /// <summary>FLOATTEXT_Score (DATA/CFG/defaults/GamePermanent.cfg:382-394: Arial 14, white, decay 3.5 s).</summary>

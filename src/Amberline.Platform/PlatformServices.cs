@@ -284,10 +284,14 @@ public sealed class PlatformServices
                 case ("gameService", "listAllPracticeGames"):
                     return games.List();
                 case ("gameService", "createTutorialGame"):
-                    // Batch 580: 0 is the Basic Tutorial (CreateTutorialGameController.as:75), a one-player map-3 game. 1, Battle Training,
-                    // has no shipped map or script of its own and stays refused (advancedTutorialEnabled is false, AirDtos.ClientSystemStates).
-                    if (N(0) != 0) throw AirFault.ModeNotSupported("this server");
-                    return games.CreateTutorial(account);
+                    // Batch 580: 0 is the Basic Tutorial (CreateTutorialGameController.as:75), a one-player map-3 game. Batch 669: 1 is
+                    // Battle Training, Summoner's Rift in TUTORIAL with bots (PlatformGames.CreateBattleTraining).
+                    return N(0) switch
+                    {
+                        0 => games.CreateTutorial(account),
+                        1 => games.CreateBattleTraining(account),
+                        _ => throw AirFault.ModeNotSupported("this server"),
+                    };
                 case ("gameService", "createPracticeGame"):
                     return games.Create(account, S(0), A(5) is null ? "" : S(5), Integer(Field(Fields(A(2)), "mapId")), N(3), N(4), S(1), S(6));
                 case ("gameService", "joinGame"):

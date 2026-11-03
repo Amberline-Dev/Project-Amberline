@@ -79,15 +79,16 @@ public sealed partial class CombatService
 
     private void CallLaneHelp(Entity victim, Entity attacker, DamageSourceKind? sourceKind)
     {
-        if (!victim.Alive || victim.UnitType is not (UnitType.Hero or UnitType.Minion) ||
+        // Batch 664: a scripted minion (Minion.lua, Aggro.lua) calls for help as a lane minion does (MinionAiSystem.IsMinionUnit).
+        if (!victim.Alive || victim.UnitType != UnitType.Hero && !Minions.MinionAiSystem.IsMinionUnit(victim) ||
             sourceKind == DamageSourceKind.Spell || victim.LaneHelpCallRemaining > 0.0 ||
             !WorldState.IsEnemy(victim, attacker) ||
             victim.Buffs.Any(buff => buff.Name == "GuardianAngel")) return;
         // Preserve owner attribution for champion damage without making pets
         // eligible as a new target class in the lane selector.
         var aggressor = ResolveHeroOwner(attacker) ?? attacker;
-        if (!aggressor.Alive || aggressor.UnitType is not
-            (UnitType.Hero or UnitType.Minion or UnitType.Turret)) return;
+        if (!aggressor.Alive || aggressor.UnitType is not (UnitType.Hero or UnitType.Turret) &&
+            !Minions.MinionAiSystem.IsMinionUnit(aggressor)) return;
         var priority = Minions.MinionAiSystem.TargetPriority(_world, victim, aggressor, victim);
         if (priority > 4) return;
         victim.LaneHelpCallRemaining = 1.0;

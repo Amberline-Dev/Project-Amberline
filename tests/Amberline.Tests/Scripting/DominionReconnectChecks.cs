@@ -70,7 +70,9 @@ public static class DominionReconnectChecks
             // structure: in the 126 client structures (turrets, inhibitors, nexuses) stay visible to both teams; the neutral guardian already carries
             // both teams' sight (OdinGuardianBuff blocks 6 and 7); and the ring and the minimap show each owner to both teams, which needs every client
             // to hold and show the bound unit (the 0xDC proof: a client applies a record only to a unit it holds). The live Chaos client (captures[1],
-            // connected during the swap) gets the swapped guardian's creation with its visibility (0xC2 after its 0x66), and keeps it (no 0x54 leave).
+            // connected through the capture) holds the guardian from its creation with its visibility (0xC2 after its 0x66), and keeps it (no 0x54
+            // leave). Batch 673: the guardian changes team in place (0xE0), so its creation is the start's, and OdinGuardianBuff gives its 800 sight to
+            // Order alone; the guardian stays seen by both teams (Entity.SeenByBothTeams).
             var liveChaos = captures[1].Packets.Select(packet => packet.Plaintext.ToArray()).ToList();
             var liveCreated = liveChaos.FindLastIndex(packet => Creates(packet, guardianA.NetId));
             var liveSeen = liveCreated >= 0 ? liveChaos.FindIndex(liveCreated + 1, packet => packet[0] == VisionPackets.EnterVisibilityOpcode &&
@@ -79,6 +81,10 @@ public static class DominionReconnectChecks
             var leaves = VisionPackets.LeaveVisibility(guardianA.NetId).Select(packet => packet.Plaintext.ToArray()).ToList();
             TestAssert.True(!liveChaos.Skip(liveSeen + 1).Any(packet => leaves.Any(leave => leave.AsSpan().SequenceEqual(packet))),
                 "the live Chaos client keeps the owned guardian in sight (no LeaveVisibility after it)");
+            TestAssert.True(liveChaos.Any(packet => packet.Length == 13 && packet[0] == 0xE0 &&
+                    BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(5)) == guardianA.NetId &&
+                    BinaryPrimitives.ReadInt32LittleEndian(packet.AsSpan(9)) == TeamMapping.ToNative(Team.Order)),
+                "the live Chaos client is told point A's guardian is Order's (UnitChangeTeam, 0xE0)");
 
             // A quest set goes out at 5:00 (each team holds a point); then both nexuses lose health (DIAGNOSTICS: the damage seam the quest sap uses).
             while (runtime.Combat.CurrentTime + Step / 2 < 300.5) runtime.Tick(Step);
@@ -145,8 +151,8 @@ public static class DominionReconnectChecks
             // state, which no shipped flow sends yet: nothing calls RespawnLogic, batch 453), both 0xDD meters, each the last one the staying
             // client got.
             var received = Last(stream);
-            // Batch 475: a re-created guardian replaces the old unit, so the records of a point name its current guardian (the old one's records
-            // are not repeated); the team meters and the quests have no unit.
+            // The records of a point name its current guardian (batch 475's re-created guardians left old ones' records behind; batch 673 keeps one
+            // unit); the team meters and the quests have no unit.
             var current = Enumerable.Range(2, 5).Select(point => Guardian(runtime, quests, point - 1).NetId).ToHashSet();
             foreach (var (key, packet) in expected.Where(pair => pair.Key.Opcode != DominionPackets.QuestUpdateOpcode &&
                 (pair.Key.Opcode == DominionPackets.SetGameScoreOpcode || current.Contains(pair.Key.Key))))

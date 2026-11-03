@@ -75,6 +75,9 @@ internal sealed class ProductionSimulationDriver : IMatchSimulationDriver
 
     /// <summary>Map 8's quest host (Dominion); null on Summoner's Rift and the Harrowing rift, which run no behaviour trees.</summary>
     public BehaviorTreeQuestHost? Quests { get; init; }
+
+    /// <summary>Batch 674: a map's own server script, ticked once per step with the game time (Battle Training's; null elsewhere).</summary>
+    public Action<double>? MapScript { get; init; }
     public PlaytestDiagnostics? PlaytestDiagnostics { get; init; }
 
     public ProductionSimulationDriver(WorldState world, ReplicationDelivery delivery,
@@ -177,6 +180,8 @@ internal sealed class ProductionSimulationDriver : IMatchSimulationDriver
         }
         // Dominion's quests run once per step, after the minions and camps they may read.
         if (!_combat.GameOver && !_visibilityBaseline) Quests?.Tick(_combat.CurrentTime, dt);
+        // Past the game over too, so the step that fells the nexus can still complete its quest.
+        if (!_visibilityBaseline) MapScript?.Invoke(_combat.CurrentTime);
         // The source pre-combat turret-vision phase reveals a shrine from
         // provider LOS or an existing valid target, and clears its team bit
         // before a hidden TargetLaser can be emitted.

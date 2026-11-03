@@ -336,6 +336,9 @@ leaves it without saving; after **Save** Settings says **Saved.**
 - **Play file**: **Download the Play file**, and **Make new Play files**, which makes a new certificate and restarts: every
   friend's Play file stops working, so send them all the new one. It asks first; **Cancel** comes back to Settings.
 - **Sign-ups**: see below.
+- **Cheat commands**: **Allow cheat commands in my games** is off at first, for everyone, you included. Tick it and choose
+  **Save** to let your own login use the testing commands in games that start from then on. Your friends never can. Untick it
+  and **Save** to turn them off again.
 - **Uninstall Amberline**: see below.
 
 ### Sign-ups
@@ -374,8 +377,24 @@ The **Updates** page shows your version and what the last check found. The tick 
 **Save**; the page then says **Saved.**); **Check now** asks GitHub once, which takes up to 20 seconds. Amberline never downloads
 or installs anything by itself.
 
-When a new version is out, the page shows **Amberline 1.2.3 is out** (with the new number), its notes, **Open the download page**
-and how to update:
+When a new version is out, the page shows **Amberline 1.2.3 is out** (with the new number), its notes and **Update now**:
+
+1. Choose **Update now**. If a game is running, the page first says **Updating ends the game in progress.**; choose **Update
+   now** again to go on, or **Cancel**.
+2. The page shows the download, for example **Downloading Amberline 1.2.3 (220 MB). This takes a few minutes.**, with a
+   progress bar. Keep the page and the Amberline window open.
+3. Amberline takes the zip and its `.sha256` file only from this repository's own release of that version. It checks the zip's
+   size and SHA-256, and that it holds that version. Then it opens a new Amberline window (look on the taskbar). That window
+   works as if you had double-clicked the new zip's `Start Amberline.cmd`, without asking you again: it names both versions and
+   says **You chose Update now on Amberline's page, so the update goes on.** It stops the running Amberline, installs the new
+   one and starts it, and its page opens in your browser. Your settings and friends stay. If the new version does not start,
+   the version you had comes back by itself.
+4. If any check fails, the page says why in one sentence and **The Amberline you have keeps running.** Nothing was installed,
+   and the download is deleted.
+
+The download goes into the `data\updates` folder of your install. The next update replaces it.
+
+You can still update by hand. Under **Or update by hand**, the page has **Open the download page** and the steps:
 
 1. Download the new zip from this repository's Releases page and unzip it.
 2. Double-click its `Start Amberline.cmd`. The window names your version and the zip's, says that updating ends any game in

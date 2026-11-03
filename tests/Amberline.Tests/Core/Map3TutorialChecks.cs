@@ -178,8 +178,11 @@ public static class Map3TutorialChecks
             });
             Console.WriteLine(report.Summary());
             // Batch 593: the script's walking minions (the opening skirmish and the later replacements) brush a blocked cell for one step
-            // now and then (seed 563: 17 visits of 0.1 s each); the wire stays clean.
-            TestAssert.True(report is { Outcome: "natural", Winner: "Order", PacketViolations: 0, LifecycleViolations: 0, InvariantEvents: <= 24 },
+            // now and then (seed 563: 17 visits of 0.1 s each); the wire stays clean. Batch 664: the scripted minions now fight as minions (they
+            // answer calls for help and rank enemy minions above the player, MinionAiSystem.IsMinionUnit), so they chase one another through
+            // the turret footprints more often: seed 563 has 63 such visits of 0.1 s, all by script minions (master 2a33fcc9 capped at 1500 s
+            // with 394). The bound is the known brush, not a new mechanism.
+            TestAssert.True(report is { Outcome: "natural", Winner: "Order", PacketViolations: 0, LifecycleViolations: 0, InvariantEvents: <= 80 },
                 report.Summary());
             TestAssert.True(level!.TutorialSteps[0] is { Step: "OnTutorialInit", At: < 1.0 }, "the tutorial starts at the game's start");
             TestAssert.Equal(16, opening.Count, "the sixteen units of the opening skirmish");
@@ -193,6 +196,161 @@ public static class Map3TutorialChecks
                          "EventGreatWork", "EventInhibitorDisabled", "EventAlmostThere", "EventSucceedDelay", "EventSucceededCombined",
                      })
                 TestAssert.True(steps.Contains(lesson), $"the tutorial reaches {lesson}");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+
+    /// <summary>
+    /// Batch 664 (owner's hand test, 3 November 2026), the Basic Tutorial headless (seed 664):
+    /// <list type="bullet">
+    /// <item>"Champ doesn't get damaged": EventNormalBattle's Aggro.lua wizards (TutorialScript proto 0.19) answer the player's attack
+    /// (Aggro.lua OnCallForHelp, proto 0.3) and wound her before the level-up lesson (EventLevelUp, proto 0.22, then EventWounded's heal
+    /// lesson). TutorialPlayerBuff only scales a hit by the health left and keeps the last point (DATA/Spells/TutorialPlayerBuff.luaobj).</item>
+    /// <item>"Minions do not show yellow targeting border": a scripted minion that attacks the player sends her the 0xC8 outline.</item>
+    /// <item>"Minions froze after destroying last turret": Master Yi, freed by EventTurretDeath (proto 0.74), comes for the player before
+    /// EventLookOut (the camera finding him, proto 0.77) instead of waiting for it at his fountain.</item>
+    /// <item>The turret Nunu attacks (firstChaosTurret, Turret_T2_L_01): its server health only falls after EventOhNo.</item>
+    /// <item>Batch 671, "Tower attacked by nunu has no HP and full heals when he attacks" (the owner's game log of 3 November): the health the
+    /// player's client holds for that turret, mirrored from what her seat is sent (0xCC LOCAL1 bit 8, the turret's mHP, and 0xB5's mHP). Each
+    /// reveal wrote the turret's IsTargetableToTeam value 0x1800000 (OnTutorialInit's SetTargetable false) into bit 8, the minion layout's
+    /// field: mHP 4.7e-38, an empty bar, until Nunu's first hit sent 1224.8.</item>
+    /// </list>
+    /// </summary>
+    [Check("map3.tutorial-hand-test-findings", Serial = true, TimeoutSeconds = 600)]
+    public static void TheTutorialHandTestFindings()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "league-map3-findings-" + Guid.NewGuid().ToString("N"));
+        LevelScriptHost? level = null;
+        Entity? ashe = null, yi = null, turret = null;
+        var clock = 0.0;
+        double lastAsheHealth = double.NaN, lastTurret = double.NaN, yiOrderedAt = double.NaN;
+        string? yiOrderedAfter = null;
+        double fightDamage = 0.0, turretHeals = 0.0, turretLowest = double.MaxValue;
+        // Batch 675: the player's own last tower (secondOrderTurret, Turret_T1_C_07) under the Chaos waves once EventMinionAttack opens it.
+        Entity? backTower = null;
+        var backLowest = double.MaxValue;
+        var outlines = new List<(uint Unit, uint Target)>();
+        var minionIds = new HashSet<uint>();
+        // Every mHP the player's seat is sent, per unit: 0xCC LOCAL1 bit 8 (a turret's mHP) and 0xB5's mHP at +9 (VisionPackets.EnterLocalVisibility).
+        var clientHealth = new List<(uint Unit, float Health, bool AfterOhNo)>();
+        // Batch 671, the owner's tutorial rules: where Yi is freed and EventTurretDeath's wave spawns, and Yi's respawn.
+        var firstSeen = new HashSet<uint>();
+        var wave = new List<Position2>();
+        Position2? yiFreed = null, yiBack = null, midway = null;
+        double yiDiedAt = double.NaN, yiBackAt = double.NaN;
+        var yiBackOrdered = false;
+        string? turretCharacter = null;
+        try
+        {
+            var report = Amberline.Tools.Diagnostics.HeadlessMatch.Run(new Amberline.Tools.Diagnostics.HeadlessMatchOptions(664, Path.Combine(root, "map3"), 25.0,
+                Amberline.Tools.Diagnostics.HeadlessMatch.TutorialRoster)
+            {
+                MapId = GameMaps.Tutorial,
+                PacketSink = (peer, packet) =>
+                {
+                    var bytes = packet.Plaintext.Span;
+                    if (peer != 0) return;
+                    if (bytes.Length >= 9 && bytes[0] == 0xC8)
+                        outlines.Add((BinaryPrimitives.ReadUInt32LittleEndian(bytes[1..]), BinaryPrimitives.ReadUInt32LittleEndian(bytes[5..])));
+                    var afterOhNo = level?.TutorialStepRan("EventOhNo") == true;
+                    if (bytes.Length >= 13 && bytes[0] == 0xB5)
+                        clientHealth.Add((BinaryPrimitives.ReadUInt32LittleEndian(bytes[1..]), BinaryPrimitives.ReadSingleLittleEndian(bytes[9..]), afterOhNo));
+                    Span<uint> masks = stackalloc uint[5];
+                    if (CombatPackets.TryReadReplicationBlock(bytes, out _, out var unit, masks) && (masks[1] & 0x100u) != 0)
+                    {
+                        // [u32 mask][one u32 per set bit] per registry from offset 15; CLIENT_ONLY (0) comes before LOCAL1 (1).
+                        var at = 15 + (masks[0] != 0 ? 4 + 4 * System.Numerics.BitOperations.PopCount(masks[0]) : 0);
+                        at += 4 + 4 * System.Numerics.BitOperations.PopCount(masks[1] & 0xFFu);
+                        clientHealth.Add((unit, BinaryPrimitives.ReadSingleLittleEndian(bytes[at..]), afterOhNo));
+                    }
+                },
+                OnStep = runtime =>
+                {
+                    level ??= runtime.Waves?.LevelScript;
+                    if (level is null || !level.TutorialStepRan("OnTutorialInit")) return;
+                    var world = runtime.World;
+                    clock = world.Clock.Now();
+                    ashe ??= world.Heroes().Single(hero => hero.ChampionName == "Ashe");
+                    yi ??= world.Heroes().Single(hero => hero.ChampionName == "MasterYi");
+                    turret ??= world.Entities.Values.Single(unit => unit.Name == "Turret_T2_L_01");
+                    backTower ??= world.Entities.Values.Single(unit => unit.Name == "Turret_T1_C_07");
+                    if (backTower.Alive) backLowest = Math.Min(backLowest, backTower.Health);
+                    foreach (var unit in world.Entities.Values.Where(unit => unit.AiScript is "Minion.lua" or "Aggro.lua")) minionIds.Add(unit.NetId);
+                    turretCharacter ??= turret.BoundCharacter;
+                    var hq = world.Entities.Values.Single(unit => unit.Kind == EntityKind.Nexus && unit.Team == Team.Chaos);
+                    midway ??= new Position2((turret.Position.X + hq.Position.X) / 2.0, (turret.Position.Z + hq.Position.Z) / 2.0);
+                    var turretDeathRan = level.TutorialStepRan("EventTurretDeath");
+                    foreach (var unit in world.Entities.Values.Where(unit => unit.AiScript == "Minion.lua" && unit.Team == Team.Chaos))
+                        if (firstSeen.Add(unit.NetId) && turretDeathRan && yiFreed is null) wave.Add(unit.Position);
+                    if (turretDeathRan && yiFreed is null) yiFreed = yi.Position;
+                    if (yiFreed is not null && !yi.Alive && double.IsNaN(yiDiedAt)) yiDiedAt = clock;
+                    if (!double.IsNaN(yiDiedAt) && yi.Alive && yiBack is null) (yiBack, yiBackAt) = (yi.Position, clock);
+                    if (yiBack is not null && (yi.AttackTarget == ashe.NetId || yi.HeroPursuit is not null)) yiBackOrdered = true;
+                    // The minion fight: from EventNormalBattle to the level-up lesson that follows its last kill.
+                    if (level.TutorialStepRan("EventNormalBattle") && !level.TutorialStepRan("EventLevelUp") && ashe.Alive && ashe.Health < lastAsheHealth)
+                        fightDamage += lastAsheHealth - ashe.Health;
+                    lastAsheHealth = ashe.Alive ? ashe.Health : double.NaN;
+                    if (double.IsNaN(yiOrderedAt) && (yi.AttackTarget == ashe.NetId || yi.HeroPursuit is not null))
+                    {
+                        // The steps' moments are the level script's clock, not the world's; the order is placed among the steps instead.
+                        yiOrderedAt = clock;
+                        yiOrderedAfter = level.TutorialSteps[^1].Step;
+                    }
+                    if (turret.Alive)
+                    {
+                        if (turret.Health > lastTurret + 0.5 * turret.MaxHealth) turretHeals++;
+                        if (!level.TutorialStepRan("EventOhNo")) TestAssert.Equal(turret.MaxHealth, turret.Health, "the guarded turret is untouched before EventOhNo");
+                        else turretLowest = Math.Min(turretLowest, turret.Health);
+                        lastTurret = turret.Health;
+                    }
+                },
+            });
+            Console.WriteLine(report.Summary());
+            var steps = level!.TutorialSteps;
+            var minionOutlines = outlines.Count(outline => outline.Target == ashe!.NetId && minionIds.Contains(outline.Unit));
+            Console.WriteLine(FormattableString.Invariant(
+                $"fight damage {fightDamage:0}, minion outlines on the player {minionOutlines}, Yi sent at {yiOrderedAt:0.0} after {yiOrderedAfter}, turret lowest {turretLowest:0} heals {turretHeals}"));
+            TestAssert.True(report is { Outcome: "natural", Winner: "Order", PacketViolations: 0, LifecycleViolations: 0 }, report.Summary());
+            TestAssert.True(fightDamage > 0.0, "the minion fight's Aggro.lua wizards wound the player");
+            TestAssert.True(minionOutlines > 0, "a scripted minion that attacks the player sends her the 0xC8 outline");
+            var turretDeath = steps.ToList().FindIndex(entry => entry.Step == "EventTurretDeath");
+            var ordered = steps.ToList().FindLastIndex(entry => entry.Step == yiOrderedAfter);
+            var lookOut = steps.ToList().FindIndex(entry => entry.Step == "EventLookOut");
+            TestAssert.True(turretDeath >= 0 && ordered >= turretDeath && ordered < lookOut,
+                $"Master Yi comes for the player from EventTurretDeath, before the camera finds him (sent after {yiOrderedAfter})");
+            TestAssert.True(turretLowest < turret!.MaxHealth && turretHeals == 0, "the Chaos turret keeps the damage it takes");
+            // Batch 671: what the player's client holds for that turret's health.
+            var held = clientHealth.Where(entry => entry.Unit == turret.NetId).ToList();
+            Console.WriteLine("turret mHP on the player's client: " + string.Join(", ", held.Take(12).Select(entry => entry.Health.ToString("G4", System.Globalization.CultureInfo.InvariantCulture))));
+            TestAssert.True(held.Count > 0 && held.Where(entry => !entry.AfterOhNo).All(entry => Math.Abs(entry.Health - turret.MaxHealth) < 0.5),
+                "until EventOhNo the player's client holds the guarded turret at full health (no empty bar)");
+            TestAssert.True(held.Zip(held.Skip(1)).All(pair => pair.Second.Health <= pair.First.Health + 0.5 * turret.MaxHealth),
+                "the player's client never sees the turret heal (no jump back to full on Nunu's hit)");
+            TestAssert.True(held.Any(entry => entry.AfterOhNo && entry.Health < turret.MaxHealth - 1.0), "the client sees the damage after EventOhNo");
+
+            // Batch 671, the owner's tutorial rules (NOT RETAIL, 3 November 2026).
+            static double Distance(Position2 a, Position2 b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Z - b.Z) * (a.Z - b.Z));
+            var mid = midway!.Value;
+            var waveCentre = wave.Count == 0 ? new Position2(double.NaN, double.NaN)
+                : new Position2(wave.Average(point => point.X), wave.Average(point => point.Z));
+            Console.WriteLine(FormattableString.Invariant(
+                $"midway ({mid.X:0},{mid.Z:0}); Yi freed at ({yiFreed?.X:0},{yiFreed?.Z:0}); wave of {wave.Count} centred ({waveCentre.X:0},{waveCentre.Z:0}); Yi died {yiDiedAt:0.0}, back {yiBackAt:0.0} at ({yiBack?.X:0},{yiBack?.Z:0}) ordered {yiBackOrdered}"));
+            // Rule 1: the turret runs the tutorial character whose CharOnPreDamage no longer spares it from minions
+            // (scripting.bb-unit-character-the-tutorial-turrets-fall-to-minions).
+            TestAssert.Equal("ChaosTurretTutorial", turretCharacter, "the Chaos turret is bound to its shipped tutorial character");
+            // Batch 675 (owner decision 3 November 2026, "protect it"): the Chaos waves bring the player's own last tower down to one health at
+            // most, as in retail (scripting.bb-unit-character-the-tutorial-order-back-tower-holds-at-one-health).
+            Console.WriteLine(FormattableString.Invariant($"Order back tower: alive {backTower!.Alive}, lowest {backLowest:0.0} of {backTower.MaxHealth:0}"));
+            TestAssert.True(backTower.Alive && backLowest >= 1.0 - 1e-6, "the Order back tower is never felled");
+            // Rule 3: Yi and EventTurretDeath's wave start midway between firstChaosTurret and the Chaos HQ, and Yi respawns there and fights on.
+            TestAssert.True(yiFreed is { } freed && Distance(freed, mid) < 150.0, "Master Yi is freed midway between the Chaos turret and HQ");
+            TestAssert.True(wave.Count == 6 && Distance(waveCentre, mid) < 400.0, "EventTurretDeath's six Chaos minions spawn around the midway point");
+            TestAssert.True(yiBack is { } back && Distance(back, mid) < 150.0 && yiBackOrdered, "Master Yi respawns midway and comes for the player again");
         }
         finally
         {

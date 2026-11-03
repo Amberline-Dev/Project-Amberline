@@ -169,12 +169,13 @@ public sealed class MatchRuntime : IDisposable
         IMovementDiagnosticSink? movementDiagnostics = null,
         bool botsControlAllSeats = false,
         Func<double>? scriptClock = null,
-        int mapId = GameMaps.Normal)
+        int mapId = GameMaps.Normal,
+        string? gameMode = null)
     {
         return ProductionMatchComposition.Build(navigation, gameData, orderChampion,
             chaosChampion, solo, originalRosterCounts, readySettleSeconds, random, cipher,
             visibilityBaseline, minionFidelity, sessionLog, roster, soloPlayerId,
-            movementDiagnostics, botsControlAllSeats, scriptClock, mapId);
+            movementDiagnostics, botsControlAllSeats, scriptClock, mapId, gameMode);
     }
 
     public MatchRuntimeDependencies Dependencies { get; }
@@ -387,7 +388,7 @@ public sealed class ProtocolProtectionSessionAdapter : ISessionCombatService
             // Batch 457: a point turret the clients hold as a minion gets no turret flags block (it falls to the return below).
             if (entity.IsSceneTurret)
             {
-                var targetable = entity.Alive && !TurretRules.IsFountainTurret(entity);
+                var targetable = entity.Alive && !TurretRules.IsShrineTurret(entity);
                 packet = CombatPackets.TurretProtectionFlags(
                     entity.NetId,
                     !targetable ? CombatPackets.SFlagNontargetableAll :

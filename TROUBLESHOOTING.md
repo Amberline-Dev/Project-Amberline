@@ -256,6 +256,24 @@ called UPnP. These can stop that:
 - **Windows did not start your game client.** (**Play**) Try again, or restart Amberline. **Your game client is already
   open**: look for it on the taskbar.
 
+### Update now (the Updates page)
+
+Each of these ends with **so nothing was installed**. The Amberline you have keeps running, and the download is deleted.
+
+- **There is no newer Amberline to install.** Your version is the newest, or newer than GitHub's latest release.
+- **GitHub names no download for this version that Amberline can check.** The release has no zip and `.sha256` file at its own
+  address on this repository. Use **Open the download page** and update by hand.
+- **Amberline could not download the update from GitHub.** Check the internet connection, then choose **Update now** again.
+- **The download was cut off or is not the size GitHub names.** Choose **Update now** again.
+- **The download does not match its SHA-256.** Choose **Update now** again. If it keeps saying so, do not install that release
+  by hand either, and report it.
+- **The download holds another Amberline version than the release names.** or **The download is not a whole Amberline
+  release.** The release itself is broken: report it, and keep the version you have.
+- **Amberline could not save or unpack the download (the disk may be full).** Free some disk space, then try again.
+- **Windows did not start the new Amberline's installer.** Try again, or update by hand from the download page.
+- **The window of the last update is still open: let it finish or close it, then try again.** It is the window an earlier
+  **Update now** opened (look on the taskbar).
+
 ## For players
 
 ### The sign-up page

@@ -145,6 +145,24 @@ public static class BbW27cChecks
         TestAssert.Equal(0x01000000u, BinaryPrimitives.ReadUInt32LittleEndian(flags[^4..]), "SPELL_NonTargetableEnemy");
         TestAssert.Equal(0x02000000u, BinaryPrimitives.ReadUInt32LittleEndian(
             CombatPackets.UnitTargetableToTeam(0x40000003, false, false, true).Plaintext.Span[^4..]), "neither team excluded is targetable to all");
+
+        // Batch 671: each class has its own IsTargetableToTeam field. A turret's LOCAL1 bit 8 is its mHP: the tutorial's SetTargetable false
+        // turret was sent 0x1800000 there, an empty health bar until the next health update (the owner's game log of 3 November 2026).
+        foreach (var (unit, isHero, mask, what) in new[]
+                 {
+                     (new Entity(0x40000042, EntityKind.Turret, UnitType.Turret, Team.Chaos, default), false, 0x4000u, "bit 14 of a turret"),
+                     (new Entity(0x40000043, EntityKind.Inhibitor, UnitType.Structure, Team.Chaos, default), false, 0x08u, "bit 3 of a building"),
+                     (new Entity(0x40000044, EntityKind.Turret, UnitType.Turret, Team.Chaos, default) { ReplicatedAsMinion = true }, false, 0x100u,
+                         "bit 8 of a point turret, a minion on the client"),
+                     (new Entity(0x40000045, EntityKind.Minion, UnitType.Minion, Team.Chaos, default), false, 0x100u, "bit 8 of a minion"),
+                     (new Entity(0x40000046, EntityKind.Hero, UnitType.Hero, Team.Chaos, default), true, 0x10u, "bit 4 of a hero"),
+                 })
+        {
+            unit.NotTargetableToAlly = unit.NotTargetableToEnemy = true;
+            var block = CombatPackets.UnitTargetableToTeam(unit, isHero, 2).Plaintext.Span;
+            TestAssert.Equal(mask, BinaryPrimitives.ReadUInt32LittleEndian(block[15..]), what);
+            TestAssert.Equal(0x01800000u, BinaryPrimitives.ReadUInt32LittleEndian(block[^4..]), what + ": not targetable");
+        }
     }
 
     [Check("scripting.bb-w7-not-targetable-to-team-reads-the-observers-side")]

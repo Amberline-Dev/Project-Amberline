@@ -485,16 +485,6 @@ public sealed partial class SpellSystem
     /// <summary>Batch 517: the same guardian, but only once the capture channel has charged (its 1.5 s wind-up is over), or null.</summary>
     public Entity? ChargedCaptureTarget(Entity hero) => SummonerScripts?.ChargedCaptureTarget(hero);
 
-    /// <summary>Batch 475b: moves the channels aimed at a replaced guardian to its replacement (the caster on <paramref name="exceptTeam"/> is left).</summary>
-    public int RetargetCaptureChannels(Entity from, Entity to, Team exceptTeam) => SummonerScripts?.RetargetCaptureChannels(from, to, exceptTeam) ?? 0;
-
-    /// <summary>Batch 493: a replaced capture guardian ends its owner team's channels and its buffs before it leaves (BbSummonerModule.EndReplacedGuardian).</summary>
-    public void EndReplacedGuardian(Entity guardian, Team owner) => SummonerScripts?.EndReplacedGuardian(guardian, owner);
-
-    /// <summary>Batch 479h: the suppression and team stacks a replaced capture guardian held go to its replacement (BbSummonerModule.CarryGuardianBuffs).</summary>
-    public void CarryGuardianBuffs(Entity replacement, IReadOnlyList<(string Name, uint CasterNetId, double ExpiresAt, int Stacks)> carried) =>
-        SummonerScripts?.CarryGuardianBuffs(replacement, carried);
-
     /// <summary>Batch 480b: the hero whose capture channel is aimed at <paramref name="guardian"/> on <paramref name="team"/>'s side, or null.</summary>
     public Entity? CapturerOf(Entity guardian, Team team) => SummonerScripts?.CapturerOf(guardian, team);
 

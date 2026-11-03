@@ -224,8 +224,10 @@ public static class HostOneFolderChecks
 
             // START-HERE's request after --home.
             var request = HostMode.ParseInstall(["--install-to", @"D:\Amberline", "--game", @"D:\LoL\game", "--air", @"D:\LoL", "--delete-originals"]);
-            TestAssert.True(request is (@"D:\Amberline", { Game: @"D:\LoL\game", Air: @"D:\LoL", DeleteOriginals: true }), $"{request}");
-            TestAssert.True(HostMode.ParseInstall([]) is (null, null), "no request");
+            TestAssert.True(request is (@"D:\Amberline", { Game: @"D:\LoL\game", Air: @"D:\LoL", DeleteOriginals: true }, false), $"{request}");
+            TestAssert.True(HostMode.ParseInstall([]) is (null, null, false), "no request");
+            // Batch 666: only Update now passes the page's confirmation.
+            TestAssert.True(HostMode.ParseInstall([HostInstall.ConfirmedOption]) is (null, null, true), "Update now's start");
             TestAssert.Equal(null, HostMode.ParseInstall(["--install-to"]), "a folder is missing");
             TestAssert.Equal(null, HostMode.ParseInstall(["--bogus"]), "an unknown option");
         }

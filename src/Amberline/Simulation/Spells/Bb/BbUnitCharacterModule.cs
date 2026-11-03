@@ -242,8 +242,8 @@ public sealed class BbUnitCharacterModule
     /// children carry no cast time of their own: <c>WrathoftheAncients</c> lists no <c>SpellData*CastTime</c>), 3 a line and 2 a chain
     /// stay unbound because no shipped unit character casts one. There is no cast packet for a non-hero: the client builds the
     /// cast from the unit's own spellbook, and the stock client draws a monster's cast from the missile and effect packets alone
-    /// (Reconstruction: the hand-written Worm AI sent a 0x0D for each of its casts; a unit's cast answer has no reader, so this
-    /// does not send one).
+    /// (Reconstruction: the hand-written Worm AI sent a 0x0D for each of its casts; a script's child cast sends no cast answer). Batch 665: the
+    /// AI's own slot cast (<see cref="CastSpellSlot"/>, the capture point guardian's shot) sends one, so the client plays its animation.
     /// </para>
     /// <para>
     /// <c>OverrideCoolDownCheck</c> false answers the slot's cooldown through <see cref="Entity.ScriptSlotReadyAt"/> like a hero's
@@ -252,7 +252,9 @@ public sealed class BbUnitCharacterModule
     /// for the child, as they do for a hero's extra-slot child.
     /// </para>
     /// </summary>
-    private void CastChild(BbChildCast child)
+    private void CastChild(BbChildCast child) => CastChild(child, announce: false);
+
+    private void CastChild(BbChildCast child, bool announce)
     {
         var host = _host ?? throw new InvalidOperationException("BbUnitCharacterModule.Bind was not called");
         var system = host.Spells;
@@ -314,6 +316,15 @@ public sealed class BbUnitCharacterModule
         var unitTarget = type is BbTargetType.TTYPE_Target or BbTargetType.TTYPE_TargetOrLocation && child.Target is { Alive: true } chosen
             ? chosen : null;
         var aimPoint = Ground(system, unitTarget?.Position ?? child.Position);
+        // Batch 665 (Reconstruction, owner finding 3 November 2026: "Dominion shrines no attack animation"): the unit's own slot cast (the capture
+        // point guardian's Spell1, OdinGuardianSpellAttackCast) is announced with the cast answer (0xBD, NpcCastSpellAns, the NPC packet
+        // every AI unit's cast takes), so the client's spellbook casts it: it plays the spell's AnimationName, Attack1, whose AnimEffects.list line
+        // is Capture_Point_Tower_Attack.troy on the crystal. Before, only the ExtraSpell1 shot's missile (0x41) went out and the crystal never
+        // moved. Which packet retail sent for it is not recovered, and the stock client's handling of it is not checked natively.
+        if (announce && system.Effects.IsReferenceReady(caster))
+            system.Effects.SendCast(caster, Info(0, aimPoint, aimPoint,
+                unitTarget is not null ? [new SpellCastTarget(unitTarget.NetId, aimPoint, 0)] : Array.Empty<SpellCastTarget>()),
+                system.World.Clock.SyncId());
         IReadOnlyList<Entity> Victims(SpellSystem sys) => type switch
         {
             BbTargetType.TTYPE_Self => [caster],
@@ -350,7 +361,7 @@ public sealed class BbUnitCharacterModule
     /// </summary>
     public void CastSpellSlot(Entity unit, int slot, Entity target) =>
         CastChild(new BbChildCast(unit, slot, target, target.Position, target.Position, new BbHookFrame("AI", "", unit),
-            SlotType: BbSlotType.SpellSlots, OverrideCooldownCheck: false));
+            SlotType: BbSlotType.SpellSlots, OverrideCooldownCheck: false), announce: true);
 
     /// <summary>The spell a unit's own slot casts (the character record's <c>Data*Spell{n+1}</c>; a check's pin and the
     /// name <see cref="CastChild"/> resolves). Null when the module is not bound or the slot holds no name.</summary>

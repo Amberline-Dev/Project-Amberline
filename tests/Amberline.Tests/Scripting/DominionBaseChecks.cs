@@ -209,6 +209,36 @@ public static class DominionBaseChecks
         });
     }
 
+    /// <summary>
+    /// Batch 668: the forcefield goes on the wire as the shipped script makes it. <c>OdinOpeningBarrierParticle.luaobj</c> binds
+    /// <c>Odin_Forcefield_green.troy</c> to the barrier (BindObjectVar Owner, SpecificTeamOnly the barrier's team). Batch 521 sent it unbound to keep
+    /// the blur after the camera looks away; the client drops a hidden system's one-shot layers either way (batch 668 record), so the bind is the script's.
+    /// </summary>
+    [Check("dominion.opening-barrier-forcefield-is-bound-to-the-barrier")]
+    public static void OpeningBarrierForcefieldIsBoundToTheBarrier()
+    {
+        WithMatch(runtime =>
+        {
+            var seat = runtime.Session.Participants.Single(participant => participant.Team == Team.Order);
+            var wire = new List<Amberline.Network.Protocol.PlaintextPacket>();
+            runtime.Delivery.AddObserver(new Amberline.Network.Replication.ReplicationObserver(seat.PlayerId, seat.Team, seat.Hero!.NetId,
+                new Capture(wire), ready: true, view: seat.View));
+            Advance(runtime, 2.0);
+            var barrier = Barriers(runtime).Single(unit => unit.Team == Team.Order);
+            var green = Amberline.Network.Protocol.SpellPackets.BuffNameHash("Odin_Forcefield_green");
+            var creates = wire.Select(packet => packet.Plaintext.ToArray())
+                .Where(bytes => bytes.Length == 73 && bytes[0] == 0x8C && BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(6)) == green).ToList();
+            TestAssert.Equal(1, creates.Count, "the Order client gets the Order barrier's green forcefield once");
+            TestAssert.Equal(barrier.NetId, BinaryPrimitives.ReadUInt32LittleEndian(creates[0].AsSpan(29)),
+                "the forcefield is bound to the barrier (the script's BindObjectVar Owner)");
+        });
+    }
+
+    private sealed class Capture(List<Amberline.Network.Protocol.PlaintextPacket> sink) : Amberline.Network.Replication.IReplicationTransport
+    {
+        public void Send(Amberline.Network.Protocol.PlaintextPacket packet) => sink.Add(packet);
+    }
+
     [Check("dominion.recall-lands-at-the-map-8-spawn-point")]
     public static void RecallLandsAtTheMapEightSpawnPoint()
     {

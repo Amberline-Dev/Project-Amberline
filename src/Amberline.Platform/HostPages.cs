@@ -303,7 +303,8 @@ public static class HostPages
     /// The host pages' one script (<see cref="ScriptPath"/>, on every shelled page). It fills the dashboard's status card from
     /// <c>/host/status.json</c> every 5 seconds without reloading, so nothing typed on a page is lost, as it fills Advanced's Online now
     /// table (<see cref="PlatformManagement.OnlineJsonPath"/>, while the table is <c>data-live</c>); it runs the Copy buttons
-    /// (<c>data-copy</c> names the element whose text is copied), and, batch 652, the wait feedback of <see cref="Wait"/>. It only
+    /// (<c>data-copy</c> names the element whose text is copied), batch 652, the wait feedback of <see cref="Wait"/>, and, batch 666,
+    /// Update now's progress (<see cref="HostUpdates.StatusPath"/>, every second while the page has its bar). It only
     /// ever sets text, never markup, and a text only when it changed (the headline is a live region). A Copy button says "Copied" on
     /// itself and in the <c>copy-status</c> live region beside it; when the browser cannot copy, it selects the text.
     /// </summary>
@@ -438,8 +439,25 @@ public static class HostPages
             for (const form of document.querySelectorAll('form[data-busy]')) delete form.dataset.busy;
             for (const region of regions.values()) region.textContent = '';
           });
+          // Batch 666, Update now: the download's progress every second, as the folder copy's page; when it ends the page says how.
+          async function update() {
+            try {
+              const answer = await fetch('/host/updates/install/status.json', { cache: 'no-store' });
+              if (!answer.ok) throw new Error(String(answer.status));
+              const status = await answer.json();
+              if (status.state !== 'downloading') { location.reload(); return; }
+              text('update-phase', status.phase);
+              text('update-detail', status.detail);
+              const bar = byId('update-bar');
+              if (bar.value !== status.percent) { bar.value = status.percent; bar.textContent = `${status.percent}%`; }
+            } catch {
+              text('update-phase', gone);
+            }
+            setTimeout(update, 1000);
+          }
           if (byId('status')) { refresh(); setInterval(refresh, 5000); }
           if (byId('online-table')?.hasAttribute('data-live')) setInterval(online, 5000);
+          if (byId('update-bar')) setTimeout(update, 1000);
         })();
         """;
 }

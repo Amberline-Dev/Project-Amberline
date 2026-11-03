@@ -53,7 +53,8 @@ public static class TurretRules
     /// their team's shrine spell (batch 443). The owner's video of a later patch shows them dealing 1000 true damage, as on Summoner's Rift, and
     /// the wiki's patch history from V1.0.0.126 on records no change to them. The owner also asked for the Summoner's Rift fountain's sight
     /// exemption on them. The fountain-only rules stay on <see cref="IsFountainTurret"/>, for example the perception-bubble reach cap: the Odin
-    /// shrines keep their shipped 1600 attack range and 2250 acquisition range.
+    /// shrines keep their shipped 1600 attack range and 2250 acquisition range. Batch 665: it is the wire's shrine too (VisibilityRules.IsShrine): untargetable
+    /// to both teams (the shipped CharScriptOdinOrderTurretShrine / CharScriptOdinChaosTurretShrine set SetTargetable false) and no 0xB5, so no health bar.
     /// </summary>
     public static bool IsShrineTurret(Entity unit) => unit.UnitType == UnitType.Turret &&
         MapDefinitions.TurretTiers.TryGetValue(unit.Name, out var tier) && (tier == TurretTier.Fountain || MapDefinitions.OnCrystalScar);

@@ -96,10 +96,10 @@ public static class DominionQuestChecks
     });
 
     /// <summary>
-    /// Batch 570: the quest target keeps its mark while its guardian is replaced. Order's target (Chaos's point E) is neutralised and then
-    /// captured through the shipped capture tree; each change of hands replaces the guardian (BehaviorTreeQuestHost.GuardianTakesOwner), and
-    /// CharScriptOdinQuestIndicator marks the guardian only once (CharOnActivate). The neutral replacement holds OdinQuestIndicator with its time
-    /// left, and each client gets its team's odin_point_active.troy on it (OnBuffActivate: one per team, SpecificTeamOnly). The capture ends the
+    /// Batch 570: the quest target keeps its mark while its point changes hands. Order's target (Chaos's point E) is neutralised and then
+    /// captured through the shipped capture tree; batch 673: each change of hands changes the guardian's team in place
+    /// (BehaviorTreeQuestHost.GuardianTakesOwner), and CharScriptOdinQuestIndicator marks the guardian only once (CharOnActivate). The neutral
+    /// guardian keeps OdinQuestIndicator and each client's odin_point_active.troy on it (OnBuffActivate: one per team, SpecificTeamOnly). The capture ends the
     /// quest: the markers die and OdinQuestParticleRemover clears the mark from the point's guardian, and every mark particle a client got is killed.
     /// The 0x8C carries the name hash at 6, the effect at 25 and the bound unit at 29; the 0x3D the effect at 5.
     /// </summary>
@@ -118,17 +118,16 @@ public static class DominionQuestChecks
         quests.Captures[order.Target - 1].SetVariable("CaptureProgress", 50.0);
         for (var tick = 0; tick < 3; tick++) runtime.Tick(Step);
         TestAssert.True(quests.CapturePointOwners[order.Target] == Team.Neutral, $"point {Letter(order.Target)} is neutralised");
+        // Batch 673 (restated): the guardian changes team in place, so the neutral point's guardian is the marked unit and keeps its mark and its
+        // mark particles (batch 570 carried both to a replacement).
         var neutral = Guardian(runtime, quests, order.Target);
-        TestAssert.True(!ReferenceEquals(neutral, marked), "the neutralisation re-creates the point's guardian");
+        TestAssert.True(ReferenceEquals(neutral, marked) && neutral.Team == Team.Neutral, "the neutralised point keeps its guardian, now neutral");
         var mark = neutral.Buffs.FirstOrDefault(buff => buff.Name == Indicator);
         TestAssert.True(mark is { ExpiresAt: > 24000.0 } && mark.Type == BuffType.Aura,
-            $"the neutral replacement keeps the mark (BUFF_Aura, 25000 s, {mark?.ExpiresAt:F1} s left, buffs {string.Join(",", neutral.Buffs.Select(b => b.Name))})");
+            $"the neutral guardian keeps the mark (BUFF_Aura, 25000 s, {mark?.ExpiresAt:F1} s left, buffs {string.Join(",", neutral.Buffs.Select(b => b.Name))})");
         foreach (var capture in captures)
-        {
-            TestAssert.True(capture.Marks.Any(created => created.Unit == neutral.NetId), "each client gets its team's mark particle on the replacement");
-            TestAssert.True(capture.Marks.Where(created => created.Unit == marked.NetId).All(created => capture.Killed.Contains(created.Effect)),
-                "the replaced guardian's mark particles are killed");
-        }
+            TestAssert.True(capture.Marks.Any(created => created.Unit == neutral.NetId && !capture.Killed.Contains(created.Effect)),
+                "each client keeps its team's mark particle on the guardian");
 
         // DIAGNOSTICS: test seam, the "Order Capture" branch (neutral past 99, :1261-1280). The capture completes Order's quest.
         quests.Captures[order.Target - 1].SetVariable("CaptureProgress", 100.0);
@@ -136,7 +135,7 @@ public static class DominionQuestChecks
         TestAssert.True(quests.CapturePointOwners[order.Target] == Team.Order, $"Order captured point {Letter(order.Target)}");
         Completed(captures[0], order, success: true, "Order");
         var captured = Guardian(runtime, quests, order.Target);
-        TestAssert.True(!ReferenceEquals(captured, neutral), "the capture re-creates the point's guardian");
+        TestAssert.True(ReferenceEquals(captured, neutral) && captured.Team == Team.Order, "the capture keeps the point's guardian, now Order's");
         TestAssert.True(!captured.Buffs.Any(buff => buff.Name == Indicator),
             "the quest's end clears the mark from the point's guardian (OdinQuestParticleRemover on the marker's death)");
         foreach (var capture in captures)

@@ -126,6 +126,67 @@ public static class BbUnitCharacterChecks
         TestAssert.True(module.Bound.All(pair => !ReferenceEquals(pair.Unit, turret)), "and the poll no longer owns it");
     }
 
+    /// <summary>
+    /// Batch 671 (NOT RETAIL, owner decision 3 November 2026: "Minions should be able to destroy friendly towers", both teams'): the tutorial
+    /// turrets' shipped CharOnPreDamage (CharScriptChaosTurretTutorial and CharScriptOrderTurretTutorial) keeps a lethal hit from a non-hero,
+    /// non-raw source at one health. On the tutorial a minion's lethal hit fells them, as on a normal map.
+    /// </summary>
+    [Check("scripting.bb-unit-character-the-tutorial-turrets-fall-to-minions")]
+    public static void TheTutorialTurretsFallToMinions()
+    {
+        using var match = new BbM3.Match("Ryze");
+        var module = match.Runtime.Spells.UnitScripts!;
+        foreach (var (character, team) in new[] { ("ChaosTurretTutorial", Team.Chaos), ("OrderTurretTutorial", Team.Order) })
+        {
+            var at = new Position2(match.Hero.Position.X, match.Hero.Position.Z + 400);
+            var turret = BbM3.Enemy(match, character, at, UnitType.Turret, team);
+            turret.Armor = turret.SpellBlock = 0.0;
+            turret.MaxHealth = turret.Health = 100.0;
+            TestAssert.True(module.BindUnit(turret, character), character + ": the shipped character script binds");
+            var minion = BbM3.Enemy(match, "Minion", new Position2(at.X + 150, at.Z), UnitType.Minion, team == Team.Chaos ? Team.Order : Team.Chaos);
+            match.Runtime.Combat.ApplyHit(minion.NetId, turret.NetId, 500.0, DamageType.Physical, DamageSourceKind.Basic);
+            TestAssert.False(turret.Alive, $"{character}: a minion's lethal hit fells it (health {turret.Health})");
+        }
+        NoFailures(module);
+    }
+
+    /// <summary>
+    /// Batch 675 (owner decision 3 November 2026, "protect it"): the player's own last tower, Order's BACK_TOWER (on Map3 TutorialScript's
+    /// secondOrderTurret, Turret_T1_C_07: CreateChildTurret tower 1, the Inhibitor tier), keeps CharScriptOrderTurretTutorial's CharOnPreDamage:
+    /// a Chaos minion's lethal hit leaves it at one health, as in retail; a champion's still fells it. The Chaos tower of the same tier falls
+    /// to an Order minion. This harness is Summoner's Rift, so each turret takes the name of its team's own Inhibitor-tier row there.
+    /// </summary>
+    [Check("scripting.bb-unit-character-the-tutorial-order-back-tower-holds-at-one-health")]
+    public static void TheTutorialOrderBackTowerHoldsAtOneHealth()
+    {
+        using var match = new BbM3.Match("Ryze");
+        var module = match.Runtime.Spells.UnitScripts!;
+        Entity Tower(string character, Team team)
+        {
+            var prefix = team == Team.Order ? "Turret_T1_" : "Turret_T2_";
+            var name = MapDefinitions.TurretTiers.First(row => row.Value == TurretTier.Inhibitor && row.Key.StartsWith(prefix, StringComparison.Ordinal)).Key;
+            var turret = BbM3.Enemy(match, name, new Position2(match.Hero.Position.X, match.Hero.Position.Z + 400), UnitType.Turret, team);
+            turret.Armor = turret.SpellBlock = 0.0;
+            turret.MaxHealth = turret.Health = 100.0;
+            TestAssert.True(module.BindUnit(turret, character), character + ": the shipped character script binds");
+            return turret;
+        }
+        Entity Minion(Entity turret) => BbM3.Enemy(match, "Minion", new Position2(turret.Position.X + 150, turret.Position.Z), UnitType.Minion,
+            turret.Team == Team.Chaos ? Team.Order : Team.Chaos);
+
+        var back = Tower("OrderTurretTutorial", Team.Order);
+        match.Runtime.Combat.ApplyHit(Minion(back).NetId, back.NetId, 500.0, DamageType.Physical, DamageSourceKind.Basic);
+        TestAssert.True(back.Alive && Math.Abs(back.Health - 1.0) < 1e-6, $"a Chaos minion's lethal hit leaves the Order back tower at one health ({back.Alive}, {back.Health})");
+        TestAssert.Equal(Team.Chaos, match.Foe.Team, "the harness's foe is a Chaos champion");
+        match.Runtime.Combat.ApplyHit(match.Foe.NetId, back.NetId, 500.0, DamageType.Physical, DamageSourceKind.Basic);
+        TestAssert.False(back.Alive, $"a champion's lethal hit fells it (health {back.Health})");
+
+        var chaos = Tower("ChaosTurretTutorial", Team.Chaos);
+        match.Runtime.Combat.ApplyHit(Minion(chaos).NetId, chaos.NetId, 500.0, DamageType.Physical, DamageSourceKind.Basic);
+        TestAssert.False(chaos.Alive, $"an Order minion's lethal hit fells the Chaos tower (health {chaos.Health})");
+        NoFailures(module);
+    }
+
     [Check("scripting.bb-unit-character-a-character-with-no-shipped-script-is-not-claimed")]
     public static void ACharacterWithoutAScriptIsNotClaimed()
     {

@@ -23,18 +23,6 @@ public sealed partial class ReplicationDelivery
         Enqueue(new PacketReplicationMessage(packet, global));
     }
 
-    /// <summary>
-    /// Batch 493 (Reconstruction): a unit that leaves the world alive, with no death (a capture guardian its point replaces,
-    /// BehaviorTreeQuestHost.GuardianTakesOwner). RefreshObserver builds a leave only for a unit still in the world, and a queued 0x54 or 0x3A
-    /// is dropped as refresh-rebuilt (<see cref="IsRefreshRebuilt"/>), so such a unit stayed on every client that saw it (owner game G1: no 0x54
-    /// for any replaced guardian). The next flush sends its leave to each observer that sees it, as for a unit that walks out of sight.
-    /// </summary>
-    public void Depart(Entity unit)
-    {
-        ArgumentNullException.ThrowIfNull(unit);
-        _departed[unit.NetId] = unit;
-    }
-
     /// <summary>Batch 405: a toggle carrier's add, sent behind the last rename of its slot in the same flush (see MoveToggleCarriersBehindTheirSlotRenames).</summary>
     public void EnqueueToggleCarrier(PlaintextPacket packet, uint unitNetId, int toggleSlot)
     {

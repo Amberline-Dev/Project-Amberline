@@ -14,6 +14,11 @@ public static class AirGameDtos
     public const int BlindPickConfigId = 1;
     /// <summary>Draft Mode: CreatePracticeGameController.GAME_TYPE_DRAFT_MODE is 2 in the stock client (GAME_TYPE_BLIND_PICK is 1).</summary>
     public const int DraftConfigId = 2;
+    /// <summary>
+    /// Batch 669: Battle Training's config, GameTypeConfig.ADVANCED_TUTORIAL_GAMETYPE_ID (GameTypeConfig.as:22); its guided champion select
+    /// (AdvancedTutorialController) runs on it. Not a custom-game config: practiceGameTypeConfigIdList stays 1 and 2.
+    /// </summary>
+    public const int BattleTrainingConfigId = 11;
     public const int NormalQueueId = 2;
     /// <summary>The champions the server plays: the playable ones of <see cref="ChampionCatalog"/>, in roster order.</summary>
     public static IReadOnlyDictionary<int, string> ChampionNames => PlayableNames.Value;
@@ -144,14 +149,15 @@ public static class AirGameDtos
     /// GameDTO, the EndOfGameStats and the recent games: the client's tutorial flow, its end-of-game branch and its profile history read it
     /// (MasterGameController.as:1215-1224, EndOfGameStatsController.as:644-665, SummonerProfileController.filterOutTutorialGames).
     /// </summary>
-    private static string GameTypeOf(int mapId, string other) => mapId == Amberline.Core.GameMaps.Tutorial ? "TUTORIAL_GAME" : other;
+    /// Batch 669: and Battle Training (map 1 in TUTORIAL): the type follows the mode.
+    private static string GameTypeOf(string mode, string other) => mode == Amberline.Core.GameMaps.TutorialMode ? "TUTORIAL_GAME" : other;
 
     public static AsObject Game(PlatformGames.Lobby g, string? state = null)
     {
         state ??= g.State;
         var queue = g.Queue;
         return Object(AirProtocolNames.GameDTO, ("id", (double)g.Id), ("name", g.Name),
-            ("gameState", state), ("gameStateString", state), ("gameType", GameTypeOf(g.MapId, queue?.GameType ?? "PRACTICE_GAME")), ("gameMode", Amberline.Core.GameMaps.ModeOf(g.MapId)),
+            ("gameState", state), ("gameStateString", state), ("gameType", GameTypeOf(g.GameMode, queue?.GameType ?? "PRACTICE_GAME")), ("gameMode", g.GameMode),
             ("queueTypeName", queue?.Type ?? "NONE"), ("mapId", g.MapId), ("gameTypeConfigId", g.ConfigId), ("maxNumPlayers", g.Capacity),
             ("optimisticLock", (double)g.Version), ("creationTime", g.Created.UtcDateTime),
             ("expiryTime", Math.Max(0, (g.Deadline - DateTimeOffset.UtcNow).TotalMilliseconds)), ("pickTurn", g.PickTurn), ("passwordSet", g.Password.Length > 0),
@@ -175,7 +181,7 @@ public static class AirGameDtos
     }
 
     public static AsObject Search(PlatformGames.Lobby g) => Object(AirProtocolNames.PracticeGameSearchResult,
-        ("id", g.Id), ("name", g.Name), ("gameMapId", g.MapId), ("gameMode", Amberline.Core.GameMaps.ModeOf(g.MapId)), ("maxNumPlayers", g.Capacity),
+        ("id", g.Id), ("name", g.Name), ("gameMapId", g.MapId), ("gameMode", g.GameMode), ("maxNumPlayers", g.Capacity),
         ("gameMap", AirDtos.MapFor(g.MapId)),
         ("team1Count", g.Members.Count(m => m.Team == Team.Order) + g.Bots.Count(b => b.Team == Team.Order)),
         ("team2Count", g.Members.Count(m => m.Team == Team.Chaos) + g.Bots.Count(b => b.Team == Team.Chaos)),
@@ -211,11 +217,11 @@ public static class AirGameDtos
         }
         var dto = Object(AirProtocolNames.EndOfGameStats, ("gameId", (double)game.Id),
             ("userId", (double)viewer.Account.SummonerId), ("gameLength", AirWhole(result.DurationSeconds)),
-            ("gameType", GameTypeOf(result.MapId, queue?.GameType ?? "PRACTICE_GAME")), ("gameMode", Amberline.Core.GameMaps.ModeOf(result.MapId)), ("queueType", queue?.Type ?? "NONE"), ("ranked", queue?.Ranked == true), ("invalid", false),
+            ("gameType", GameTypeOf(result.Mode, queue?.GameType ?? "PRACTICE_GAME")), ("gameMode", result.Mode), ("queueType", queue?.Type ?? "NONE"), ("ranked", queue?.Ranked == true), ("invalid", false),
             ("skinName", me.Champion), ("skinIndex", (double)me.SkinId),
             ("leveledUp", levelUp), ("newSpells", List([])),
             // Batch 592: a tutorial's results carry the game-type penalty the client renames to TUTORIAL (PlatformAccounts.TryAward).
-            ("pointsPenalties", List(result.MapId == Amberline.Core.GameMaps.Tutorial
+            ("pointsPenalties", List(result.Mode == Amberline.Core.GameMaps.TutorialMode
                 ? [Object(AirProtocolNames.PointsPenalty, ("type", "GAME_TYPE"), ("penalty", 1.0))] : [])),
             ("experienceEarned", WholeReward(reward?.XpEarned ?? 0, "experienceEarned")),
             ("experienceTotal", WholeReward(experienceTotal, "experienceTotal")), ("talentPointsGained", WholeReward(talentPoints, "talentPointsGained")),
@@ -295,7 +301,7 @@ public static class AirGameDtos
                     // PlayerGameStats.gameTypeString keys summonerProfile_recentGame_<gameType>; the bundle has MATCHED_GAME
                     // ('(normal game)') and PRACTICE_GAME, not NORMAL_GAME. GameDTO and EndOfGameStats keep NORMAL_GAME. A queueType of BOT
                     // reads '(Co-op vs. AI game)' whatever the gameType (PlayerGameStats.gameTypeString, QueueType.isCoopVsAI).
-                    ("gameMode", Amberline.Core.GameMaps.ModeOf(result.MapId)), ("gameType", GameTypeOf(result.MapId, queue is null ? "PRACTICE_GAME" : "MATCHED_GAME")), ("queueType", queue?.Type ?? "NONE"),
+                    ("gameMode", result.Mode), ("gameType", GameTypeOf(result.Mode, queue is null ? "PRACTICE_GAME" : "MATCHED_GAME")), ("queueType", queue?.Type ?? "NONE"),
                     // A ranked game reads "(ranked game)": PlayerGameStats.gameTypeString is RANKED_GAME when ranked (batch 586).
                     ("createDate", receipt.CompletedAt.UtcDateTime), ("ranked", queue?.Ranked == true), ("invalid", false), ("leaver", me.IsLeaver),
                     ("ipEarned", WholeReward(reward?.IpEarned ?? 0, "ipEarned")),

@@ -23,6 +23,8 @@ public sealed class GameManager : IAsyncDisposable
         public int Port = port;
         /// <summary>The server's <c>--map-id</c> (1, 2, 3, 4 or 8), from the request.</summary>
         public int MapId = 1;
+        /// <summary>The server's <c>--game-mode</c> when the request names one (batch 669: Battle Training, map 1 in TUTORIAL); null plays the map's own.</summary>
+        public string? Mode;
         public string Directory = directory;
         public string Key = RandomNumberGenerator.GetString("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 16);
         public string State = "Starting";
@@ -142,6 +144,7 @@ public sealed class GameManager : IAsyncDisposable
             if (_lastCreate.TryGetValue(guest.Id, out var last) && DateTimeOffset.UtcNow - last < TimeSpan.FromSeconds(3))
                 throw new RemoteFault(429, "Please wait a few seconds before creating another game.");
             if (!Amberline.Core.GameMaps.IsSupported(request.MapId)) throw new RemoteFault(400, $"Select map {Amberline.Core.GameMaps.SupportedText}.");
+            if (request.Mode is { } mode && !Amberline.Core.GameMaps.IsPlayedIn(request.MapId, mode)) throw new RemoteFault(400, $"Map {request.MapId} is not played in mode {mode}.");
             var players = MatchRoster.Validate(request.Players);
             var occupied = IPGlobalProperties.GetIPGlobalProperties().GetActiveUdpListeners().Select(p => p.Port).ToHashSet();
             occupied.UnionWith(_games.Values.Where(g => !g.Runner.IsCompleted).Select(g => g.Port));
@@ -150,7 +153,7 @@ public sealed class GameManager : IAsyncDisposable
             var id = Guid.NewGuid();
             var game = new Game(id, request.RequestId, guest, players, port, Path.Combine(_directory, id.ToString("N")))
             {
-                MapId = request.MapId,
+                MapId = request.MapId, Mode = request.Mode,
             };
             if (reservedOwners is not null)
                 foreach (var (seat, owner) in reservedOwners) game.Claims.Add(seat, owner);
@@ -277,6 +280,7 @@ public sealed class GameManager : IAsyncDisposable
             foreach (var arg in new[] { "--roster", Path.Combine(game.Directory, "roster.json"), "--data-root", _settings.DataRoot,
                          "--port", game.Port.ToString(), "--bind", _settings.BindAddress, "--speed", "1", "--log-dir",
                          Path.Combine(game.Directory, "logs"), "--launcher-control", "--managed-status", "--map-id", game.MapId.ToString() }) start.ArgumentList.Add(arg);
+            if (game.Mode is { } gameMode) { start.ArgumentList.Add("--game-mode"); start.ArgumentList.Add(gameMode); }
             start.Environment["AMBERLINE_MATCH_KEY"] = game.Key;
             start.Environment["AMBERLINE_SESSION_ID"] = game.Id.ToString();
             start.Environment["GAME_DATA_ROOT"] = _settings.DataRoot;
