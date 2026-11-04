@@ -312,7 +312,10 @@ public sealed class BbSummonerModule
         // The seat goes out with the channel, the way a cancel's stop does (BbScriptChannels.Stop).
         if (_host.Spells.Effects.IsReferenceReady(hero))
             _host.Spells.Effects.SendWaypoints(hero, stop, _host.Spells.World.Clock.SyncId());
-        _host.Channels.Begin(script, hero, CaptureChannelNoSlot, 1, 0.0, at, at, used);
+        // Batch 678 (owner, 4 November 2026: the relic's bar was not empty at the capture): the channel begins at the cast frame, the cast
+        // time after the cast answer, where the client's SpellCaster starts its channel and bar (BbScriptChannels.BeginAfter). It began at the
+        // use, so the server ran the shipped drain 0.25 s ahead of the bar the client draws.
+        _host.Channels.BeginAfter(_host.Spells.Data.Spell(script.Name).CastTime, script, hero, CaptureChannelNoSlot, at, used);
         AnnounceUseChannel(hero, script, used, at);
         return true;
     }
@@ -414,9 +417,11 @@ public sealed class BbSummonerModule
         _host is not null && _useSlotReadyAt.TryGetValue(hero, out var readyAt) && readyAt > _host.Spells.CurrentTime;
 
     /// <summary>Batch 494: whether the hero's running channel is the use spell <paramref name="spellName"/> aimed at <paramref name="used"/>.</summary>
+    // Batch 678: the use cast's windup counts (BbScriptChannels.WindsUp), so a second use during it restarts nothing.
     public bool ChannelsUseAt(Entity hero, Entity used, string spellName) =>
         _host?.Channels.Of(hero) is { } channel && ReferenceEquals(channel.Target, used) &&
-        string.Equals(channel.Script.Name, spellName, StringComparison.OrdinalIgnoreCase);
+        string.Equals(channel.Script.Name, spellName, StringComparison.OrdinalIgnoreCase) ||
+        _host?.Channels.WindsUp(hero, used, spellName) == true;
 
     public const string CaptureChannelSpellName = "OdinCaptureChannel";
 

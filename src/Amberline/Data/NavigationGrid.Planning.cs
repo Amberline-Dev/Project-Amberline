@@ -40,9 +40,13 @@ public sealed partial class NavigationGrid
         // Every hero chord is tested on the movement view (NotPassable and the 140-unit turret stamps), as the client's chord walk
         // does (its walk tests the NotPassable bit and the bodies only). Batch 223 item 1 retired the 65-unit dilation and
         // the 25-unit margin from chords; the A* still walks the dilated hero view.
+        // Batch 676: the chords that leave the hero's position (the A*'s first edge, the escape from a blocked start) do not test the hero's own
+        // cell, as the client's A* seeds its start cell untested. A hero whose route grazed a stamp's corner (tested from its exact position,
+        // walked from its 2-unit lattice anchor) stood one cell inside HQ_T1 on map 3, and every order planned nothing: a stop on its own spot.
+        // The direct chord and the terminal approach still test it (the client's straight walk samples the start cell first).
         var (_, smoothed) = FindPathWithRaw(start, goal, IsHeroPathingWalkable,
-            HasHeroMovementLineOfSight, HasHeroMovementLineOfSight,
-            HasHeroMovementLineOfSight, WireVertex);
+            HasHeroMovementLineOfSight, HasHeroMovementLineOfSightLeaving,
+            HasHeroMovementLineOfSightLeaving, WireVertex);
         return smoothed;
     }
 

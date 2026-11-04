@@ -28,6 +28,9 @@ the Platform derives them (HostPaths, batch 620; HostPlay). No
 address, certificate, Play.cmd or platform.json is made: the host's setup page writes those on the host's PC. A git checkout must
 have no local changes (batch 634: a folder without git builds, its source commit unknown) and the release folder must be new. The zip, its .sha256 and a release-notes stub are written to the release
 folder. The script never publishes: it prints the gh command for the owner to run.
+Batch 682 (one guide): the zip also carries the repository's START-HERE.cmd and tools/guide.ps1, unchanged, and BUILD.json names
+the game executable's SHA-256 (gameExecutableSha256) for the guide's search. Start Amberline.cmd started without options opens
+that guide; with options (the guide's install request, Update now's --update-confirmed) it runs the Platform as before.
 
 .PARAMETER PublicHost
 Required for -Layout Server, refused for -Layout Home. The DNS name or IPv4 address players reach this server on: no scheme, port,
@@ -362,7 +365,11 @@ $manifest = [ordered]@{
     sourceHasLocalChanges = $localChanges
     files = $files
 }
-if ($Layout -eq 'Home') { $manifest.Insert(0, 'version', $Version) }
+if ($Layout -eq 'Home') {
+    $manifest.Insert(0, 'version', $Version)
+    # Batch 682: the pin the zip's guide checks a found game against (the zip has no exehost.c).
+    $manifest.Insert(1, 'gameExecutableSha256', (Get-ExpectedExeSha256))
+}
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $app 'BUILD.json') -Encoding utf8
 
 # The natives and both executables must be where the deployment expects them.
@@ -378,20 +385,25 @@ function Write-HomeFile([string]$Name, [string]$Text) {
     [IO.File]::WriteAllText((Join-Path $stage $Name), $crlf, [Text.Encoding]::ASCII)
 }
 if ($Layout -eq 'Home') {
-    # The two files at the zip's root. Start Amberline.cmd runs the Platform with --home from its own folder (the Platform's
-    # derived server and bootstrap folders are beside that folder).
+    # The files at the zip's root. Start Amberline.cmd runs the Platform with --home from its own folder (the Platform's derived
+    # server and bootstrap folders are beside that folder). Batch 682: without options it opens the guide (START-HERE.cmd), unless
+    # the guide started it (AMBERLINE_GUIDE), so a double-click on it asks the guide's questions too.
     $homeStart = @'
 @echo off
 rem Installs Amberline in the folder you choose (C:\Amberline unless you choose another), or updates it, then starts it.
-rem Double-click this file. START-HERE passes the install folder, the game and the AIR client as arguments.
+rem START-HERE passes the install folder, the game and the AIR client as arguments; without any, this opens START-HERE.
 rem The installed Amberline goes on running in this window after the program here ends.
 title Amberline
 if not exist "%~dp0app\platform\{PLATFORM}" goto missing
+if "%~1"=="" if not defined AMBERLINE_GUIDE if exist "%~dp0START-HERE.cmd" goto guide
 cd /d "%~dp0app\platform"
 "{PLATFORM}" --home %*
 exit /b %errorlevel%
+:guide
+call "%~dp0START-HERE.cmd"
+exit /b %errorlevel%
 :missing
-echo Some Amberline files are missing. Unzip the whole zip again, then double-click Start Amberline.cmd.
+echo Some Amberline files are missing. Unzip the whole zip again, then double-click START-HERE.cmd.
 echo Press Enter to close.
 pause >nul
 exit /b 1
@@ -407,14 +419,17 @@ You need Windows 10 or 11, 64-bit, and nothing else.
 
 STARTING
 1. Unzip the whole zip into a folder.
-2. Double-click Start Amberline.cmd. If Windows warns you, see WINDOWS WARNINGS below.
-3. Type an install folder, or press Enter for C:\Amberline. Amberline keeps everything there
-   and puts an Amberline icon on your desktop. You can then delete the zip.
+2. Double-click START-HERE.cmd. If Windows warns you, see WINDOWS WARNINGS below.
+3. Answer its questions: where the server runs, your game and AIR client folders (it
+   searches for them), and the install folder (press Enter for C:\Amberline). Amberline
+   keeps everything there and puts an Amberline icon on your desktop. You can then
+   delete the zip.
 4. Follow the setup page that opens in your browser.
 5. Keep the Amberline window open while friends play.
 
 UPDATING
-Unzip the new zip, double-click its Start Amberline.cmd and press Enter when it asks.
+Choose Update now on Amberline's page. Or unzip the new zip, double-click its
+START-HERE.cmd and answer Y when it asks to update.
 Your settings and friends stay. If the new version does not start, the old one comes back.
 Amberline asks GitHub once a day whether a new version is out (untick it on the setup page
 to stop that). It never installs anything by itself.
@@ -436,6 +451,10 @@ in %LOCALAPPDATA%\Amberline and is updated there.
 '@
     Write-HomeFile 'Start Amberline.cmd' $homeStart.Replace('{PLATFORM}', $platformExecutable)
     Write-HomeFile 'READ ME FIRST.txt' $homeReadMe.Replace('{VERSION}', $Version)
+    # Batch 682: the one guide, as the repository has it.
+    Copy-Item -LiteralPath (Join-Path $repository 'START-HERE.cmd') -Destination $stage
+    New-Item -ItemType Directory -Path (Join-Path $stage 'tools') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repository 'tools/guide.ps1') -Destination (Join-Path $stage 'tools')
 }
 
 # The final scan: no Riot file type, and no file byte-identical to a file of the game or AIR folder.

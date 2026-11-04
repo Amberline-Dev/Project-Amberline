@@ -25,8 +25,17 @@ namespace Amberline.Network.Sessions;
 internal sealed class ProductionGameplayDispatcher
 {
     private readonly Dictionary<uint, (Position2 Position, double At)> _emoteHold = new();
-    // Batch 437: an emote whose hero's stop leaves in this step plays on the next simulation step (PlayDueEmotes).
-    private readonly Dictionary<uint, ChampionEmote> _dueEmotes = new();
+    // Batch 437: an emote whose hero's stop leaves now plays later (PlayDueEmotes); batch 679: at DueAt, simulation time.
+    private readonly Dictionary<uint, (ChampionEmote Emote, double DueAt)> _dueEmotes = new();
+
+    /// <summary>
+    /// Batch 679 (owner, 4 November 2026: "It should first stop the champ, wait a moment then start emoting"): how long a walking or
+    /// attacking hero's emote waits behind its stop. Reconstruction: the retail server's delay is not in the shipped files (no script
+    /// handles emotes; the client's 0x4C sender, the client, stops nothing locally and only sets its emote flag), so the value is the
+    /// owner's "moment": long enough that the stop reaches the client in an earlier datagram and its one-point seat has stopped the
+    /// hero before the 0x48 starts the clip (a stop that lands with or after the clip cancels it), short enough to read as one action.
+    /// </summary>
+    internal const double EmoteSettleSeconds = 0.25;
     // Reconstruction: an order received inside an uncancellable spell windup (SpellWindup), applied when the windup is over.
     private readonly Dictionary<uint, SessionGameplayContext> _windupQueued = new();
     private readonly MovementSystem _movement;
@@ -405,14 +414,15 @@ internal sealed class ProductionGameplayDispatcher
                 // is the 0x48 alone (as batch 270 had it), because a redundant stop interrupts the dance (overnight polish of 23 September
                 // 2026, item 6). Reconstruction: the retail server's choice of stop is inferred from the owner's observation.
                 // Batch 437 (owner, 28 October 2026: "Emoting when moving only stops the character, doesnt trigger an emote
-                // afterwards"): a walking or attacking hero's stop leaves in this flush and its 0x48 waits one simulation step, so
-                // the stop lands before the emote starts (Reconstruction: the retail order is inferred from that observation). The
-                // batch 420 order sent both in one burst, and the stop cancelled the emote.
+                // afterwards"): a walking or attacking hero's stop leaves first and its 0x48 waits (Reconstruction: the retail order
+                // is inferred from that observation). The batch 420 order sent both in one burst, and the stop cancelled the emote.
+                // Batch 679: one simulation step was still one burst in production, which receives this packet unflushed and flushes
+                // once after the step that ran PlayDueEmotes; the 0x48 now waits EmoteSettleSeconds of simulation time.
                 var stopping = context.Hero.Waypoints.Count > 0 || context.Hero.AttackTarget is not null;
                 StopHero(context.Hero, replicate: stopping);
                 if (stopping)
                 {
-                    _dueEmotes[context.Hero.NetId] = emote;
+                    _dueEmotes[context.Hero.NetId] = (emote, _spells.CurrentTime + EmoteSettleSeconds);
                     return true;
                 }
                 if (_effects.IsReferenceReady(context.Hero))
@@ -513,14 +523,15 @@ internal sealed class ProductionGameplayDispatcher
     }
 
     /// <summary>
-    /// Plays the emotes that waited one step behind their hero's stop (batch 437). A hero that has been given a new order
-    /// lost its emote in <see cref="ForgetEmote"/>; one that can no longer emote drops it here.
+    /// Plays the emotes that waited <see cref="EmoteSettleSeconds"/> behind their hero's stop (batches 437 and 679). A hero that has been
+    /// given a new order lost its emote in <see cref="ForgetEmote"/>; one that can no longer emote drops it here.
     /// </summary>
     public void PlayDueEmotes()
     {
         if (_dueEmotes.Count == 0) return;
-        foreach (var (netId, emote) in _dueEmotes.ToArray())
+        foreach (var (netId, (emote, dueAt)) in _dueEmotes.ToArray())
         {
+            if (_spells.CurrentTime < dueAt - 1e-9) continue;
             _dueEmotes.Remove(netId);
             var hero = _world.Get(netId);
             if (hero is null || !CanEmote(hero) || !_effects.IsReferenceReady(hero)) continue;

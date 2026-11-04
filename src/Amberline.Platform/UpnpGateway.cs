@@ -241,7 +241,8 @@ public sealed class UpnpGateway : IAsyncDisposable
     /// <summary>
     /// Maps each port to the same port on <see cref="LocalAddress"/> and checks it with GetSpecificPortMappingEntry; stops at the
     /// first problem. While mapped, every port is added again each <see cref="RenewEvery"/>, which also restores mappings a
-    /// rebooted router lost; a renewal's problem shows in <see cref="RenewalProblem"/>. Null when every port is mapped.
+    /// rebooted router lost; a renewal's problem shows in <see cref="RenewalProblem"/>. Null when every port is mapped. A port this
+    /// instance mapped before that <paramref name="ports"/> no longer holds is deleted first (batch 684: fewer games at the same time).
     /// </summary>
     public async Task<UpnpProblem?> MapAsync(IReadOnlyList<UpnpPort> ports, CancellationToken cancellationToken = default)
     {
@@ -249,6 +250,7 @@ public sealed class UpnpGateway : IAsyncDisposable
         try
         {
             _wanted = ports;
+            await DeleteAsync(_added.Except(ports).ToArray(), cancellationToken);
             var problem = await AddAllAsync(cancellationToken);
             if (_renewing is null && _lease > 0)
             {
@@ -277,22 +279,28 @@ public sealed class UpnpGateway : IAsyncDisposable
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            foreach (var port in _added)
-            {
-                try
-                {
-                    await SoapAsync("DeletePortMapping", Key(port), cancellationToken);
-                }
-                catch (UpnpFault)
-                {
-                }
-            }
-            _added.Clear();
+            await DeleteAsync(_added.ToArray(), cancellationToken);
             _wanted = [];
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>Deletes these mappings of this instance; a mapping the router already dropped is skipped.</summary>
+    private async Task DeleteAsync(IReadOnlyList<UpnpPort> ports, CancellationToken cancellationToken)
+    {
+        foreach (var port in ports)
+        {
+            try
+            {
+                await SoapAsync("DeletePortMapping", Key(port), cancellationToken);
+            }
+            catch (UpnpFault)
+            {
+            }
+            _added.Remove(port);
         }
     }
 

@@ -45,9 +45,27 @@ public sealed class GameManager : IAsyncDisposable
     private readonly Dictionary<Guid, Game> _games = [];
     private readonly List<RemoteGame> _history = [];
     private readonly Dictionary<string, DateTimeOffset> _lastCreate = [];
-    private readonly HostSettings _settings;
+    private HostSettings _settings;
     private readonly string _directory;
     private bool _closing;
+
+    /// <summary>
+    /// How many games may run at once (Settings' Games at the same time, batch 684). A change counts for the next game: a lower value
+    /// ends no running game, and a new game waits until fewer run than it allows.
+    /// </summary>
+    public int MaxGames
+    {
+        get { lock (_gate) return _settings.MaxGames; }
+        set
+        {
+            lock (_gate)
+            {
+                if (!HostSettings.GamePortsFit(_settings.FirstGamePort, value))
+                    throw new ArgumentOutOfRangeException(nameof(value), $"A host runs 1 to {HostSettings.MostGames} games, on ports up to 65535.");
+                _settings = _settings with { MaxGames = value };
+            }
+        }
+    }
 
     public GameManager(HostSettings settings, string directory)
     {
@@ -147,8 +165,11 @@ public sealed class GameManager : IAsyncDisposable
             if (request.Mode is { } mode && !Amberline.Core.GameMaps.IsPlayedIn(request.MapId, mode)) throw new RemoteFault(400, $"Map {request.MapId} is not played in mode {mode}.");
             var players = MatchRoster.Validate(request.Players);
             var occupied = IPGlobalProperties.GetIPGlobalProperties().GetActiveUdpListeners().Select(p => p.Port).ToHashSet();
-            occupied.UnionWith(_games.Values.Where(g => !g.Runner.IsCompleted).Select(g => g.Port));
-            var port = Enumerable.Range(_settings.FirstGamePort, _settings.MaxGames).FirstOrDefault(p => !occupied.Contains(p));
+            var running = _games.Values.Where(g => !g.Runner.IsCompleted).Select(g => g.Port).ToArray();
+            occupied.UnionWith(running);
+            // After a lowered MaxGames, the running games may hold ports above the range: they still count.
+            var port = running.Length >= _settings.MaxGames ? 0
+                : Enumerable.Range(_settings.FirstGamePort, _settings.MaxGames).FirstOrDefault(p => !occupied.Contains(p));
             if (port == 0) throw new RemoteFault(409, "All game ports are busy. Stop a game or wait for one to finish.");
             var id = Guid.NewGuid();
             var game = new Game(id, request.RequestId, guest, players, port, Path.Combine(_directory, id.ToString("N")))

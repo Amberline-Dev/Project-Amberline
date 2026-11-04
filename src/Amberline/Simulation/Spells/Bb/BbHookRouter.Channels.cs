@@ -38,6 +38,7 @@ internal sealed partial class BbHookRouter
     public void OnCancelChannel(Entity hero, string reason) =>
         Guard("sink", "OnCancelChannel", () =>
         {
+            if (_host.Channels.CancelWindup(hero)) return;
             if (_host.Channels.Of(hero) is null) return;
             if (reason is "order" or "spell request") _host.Channels.CancelByPlayer(hero, reason);
             else _host.Channels.Stop(hero, BbScriptChannels.ConditionOf(reason), BbScriptChannels.SourceOf(reason));

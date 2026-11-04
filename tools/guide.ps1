@@ -29,6 +29,16 @@ run ends with a summary.
 Batch 653 (the owner's three adjustments, 3 November 2026): fewer words, one set of console answers and a line before every wait.
 A yes or no is always "Type Y for yes or N for no.", a pause "Press Enter to continue.", the end "Press Enter to close."
 (START-HERE.cmd). Other questions say what to type ("Type a number"); the intro says once that Enter sends an answer.
+Batch 682 (owner, 4 November 2026: one guide for both): the release zip carries START-HERE.cmd and this file too (tools\guide.ps1
+beside its built app\ folder, whose BUILD.json names the version and the game executable's SHA-256). There the guide skips the
+tools and the build (steps 4 and 5, in one line) and its step 6 starts the zip's own Start Amberline.cmd; every other step,
+question and word is the repository's. A rented server from the zip is told to unzip it on that server, or to build its package
+from the source code. Batch 682b: on a PC with an install the update question also takes R, a rented server package instead (an install not
+older than this build is asked "Build a package for a rented server instead?"). From the repository R goes on with the
+rented path; from the zip it says that the package is built from the source code. Start Amberline.cmd started without options opens this guide, unless AMBERLINE_GUIDE is set (step 6 sets it).
+On a PC with an Amberline (both ways) the guide asks neither step 1 nor step 2: it offers the update at once, and the install keeps
+its own game and AIR client (the build reads them, or the folders the install's settings name). A release zip of the installed
+version starts that Amberline instead.
 
 .PARAMETER DryRun
 DIAGNOSTICS: prints the plan (what would be installed, built and started) and does none of it. No winget, no build, no start.
@@ -41,7 +51,7 @@ missing: the tools to treat as missing (dotnet, pwsh, zig); without it a dry run
 answer the numbered list of the search's finds.
 
 .PARAMETER StateFolder
-Where the answers and the logs are kept. Default: .artifacts\start-here in the repository (Git ignores it).
+Where the answers and the logs are kept. Default: .artifacts\start-here in the folder with START-HERE.cmd (Git ignores it).
 
 .PARAMETER SearchRoots
 DIAGNOSTICS: the folders the search walks in place of the usual places and every fixed drive (the checks give temporary trees);
@@ -140,6 +150,8 @@ function Test-Given([string]$Key) { $null -ne $given -and $null -ne $given.$Key 
 
 # The word list's console answers (batch 653): every yes or no, every pause and the window's end say exactly these.
 $yesNo = 'Type Y for yes or N for no.'
+# Batch 682b (owner-approved): the update question's third answer, a rented server's package instead.
+$updateOrRented = 'Type Y to update, N to keep it, or R to build a rented server package.'
 $goOn = 'Press Enter to continue.'
 # A prompt, then the line typed. A sentence of the word list ends with its full stop; any other prompt gets a colon.
 function Read-Line([string]$Prompt) {
@@ -210,9 +222,22 @@ $skipAttributes = [int]([IO.FileAttributes]'Hidden, System, ReparsePoint')
 $skipFolders = '^(Windows|Microsoft|\$)|^(Common Files|Reference Assemblies|Internet Explorer|System Volume Information|ProgramData|node_modules|\.artifacts|\.git)$'
 $searchFiles = 'League of Legends.exe', 'LolClient.swf', 'LolClient.exe'
 $stockSwfSize = 6944733   # the stock size build-server.ps1 checks
-# build-server.ps1's pin: the stock executable's SHA-256, from the ExeSha256 table in native/exehost/exehost.c.
-$pinTable = [regex]::Match((Get-Content -LiteralPath (Join-Path $repository 'native\exehost\exehost.c') -Raw), 'ExeSha256\[32\]\s*=\s*\{([^}]*)\}')
-$exePin = (-join @([regex]::Matches($pinTable.Groups[1].Value, '0x([0-9a-fA-F]{2})') | ForEach-Object { $_.Groups[1].Value })).ToUpperInvariant()
+# Batch 645: the version in an app folder's BUILD.json, x.y.z as HostVersion.Read takes it, or $null.
+function Get-AppVersion([string]$App) {
+    try { $text = [string](Get-Content -LiteralPath (Join-Path $App 'BUILD.json') -Raw | ConvertFrom-Json).version } catch { return $null }
+    $parsed = $null
+    if ($text -match '^\d+\.\d+\.\d+$' -and [version]::TryParse($text, [ref]$parsed)) { $parsed }
+}
+# Batch 682: the release zip's version, when this guide runs from an unzipped release (its built app\ beside START-HERE.cmd); else
+# $null, in the repository.
+$prebuilt = Get-AppVersion (Join-Path $repository 'app')
+# build-server.ps1's pin: the stock executable's SHA-256, from the ExeSha256 table in native/exehost/exehost.c; the release zip has
+# no source code, so its BUILD.json carries the same pin (build-server.ps1 writes it there).
+$exePin = if ($prebuilt) { ([string](Get-Content -LiteralPath (Join-Path $repository 'app\BUILD.json') -Raw | ConvertFrom-Json).gameExecutableSha256).ToUpperInvariant() }
+else {
+    $pinTable = [regex]::Match((Get-Content -LiteralPath (Join-Path $repository 'native\exehost\exehost.c') -Raw), 'ExeSha256\[32\]\s*=\s*\{([^}]*)\}')
+    (-join @([regex]::Matches($pinTable.Groups[1].Value, '0x([0-9a-fA-F]{2})') | ForEach-Object { $_.Groups[1].Value })).ToUpperInvariant()
+}
 
 function New-Search {
     [pscustomobject]@{ Folders = 0; Seen = (New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase))
@@ -362,7 +387,8 @@ function Find-Pwsh {
     if ([version]::TryParse(([string]$text -replace '-.*$', ''), [ref]$version) -and $version -ge [version]'7.5') { $path }
 }
 
-$sdk = (Get-Content -LiteralPath (Join-Path $repository 'global.json') -Raw | ConvertFrom-Json).sdk.version
+# The release zip builds nothing and has no global.json (batch 682), so its tools are never looked for.
+$sdk = if ($prebuilt) { '' } else { (Get-Content -LiteralPath (Join-Path $repository 'global.json') -Raw | ConvertFrom-Json).sdk.version }
 $sdkMajor = $sdk.Split('.')[0]
 # Each tool: what it is, why the build needs it, how it is found, its winget package and its download page.
 $tools = @(
@@ -487,12 +513,6 @@ function Get-Installed {
     } catch { }
     $null
 }
-# Batch 645: the version in an app folder's BUILD.json, x.y.z as HostVersion.Read takes it, or $null.
-function Get-AppVersion([string]$App) {
-    try { $text = [string](Get-Content -LiteralPath (Join-Path $App 'BUILD.json') -Raw | ConvertFrom-Json).version } catch { return $null }
-    $parsed = $null
-    if ($text -match '^\d+\.\d+\.\d+$' -and [version]::TryParse($text, [ref]$parsed)) { $parsed }
-}
 function Test-Inside([string]$Path, [string]$Folder) {
     $Folder -and ($Path.TrimEnd('\') + '\').StartsWith($Folder.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
 }
@@ -559,19 +579,46 @@ $airEntries = 'Adobe AIR', 'META-INF', 'assets', 'css', 'logs', 'LolClient.exe',
     'mod_ser.dat', 'version.txt', 'lol.properties', 'locale.properties', 'lol.properties.stock', 'locale.properties.stock'
 function Format-Gigabytes([long]$Bytes) { ($Bytes / 1e9).ToString('0.0', [Globalization.CultureInfo]::InvariantCulture) + ' GB' }
 $openIt = 'To open Amberline: double-click its desktop icon.'
+# Batch 682: starts a Start Amberline.cmd in a new window, after unpacking $Zip into $Folder when one is given; a dry run only
+# says so. Started without options that .cmd opens this guide, unless AMBERLINE_GUIDE is set, so this sets it.
+function Start-Amberline([string]$Folder, [string[]]$Options, [string]$Zip) {
+    $starter = Join-Path $Folder 'Start Amberline.cmd'
+    $line = (@($Options) | ForEach-Object { if ($_ -like '--*') { $_ } else { '"' + $_.TrimEnd('\') + '"' } }) -join ' '
+    $unpack = if ($Zip) { "unpack $Zip into $Folder and " }
+    if ($DryRun) { Say "DRY RUN: would ${unpack}start $starter $line in a new window." -Whole; return }
+    if ($Zip) {
+        Say 'Unpacking Amberline and starting it in a new window. This takes a few seconds.'
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [IO.Compression.ZipFile]::ExtractToDirectory($Zip, $Folder)
+    } else { Say 'Starting Amberline in a new window. This takes a few seconds.' }
+    Write-Log "Starting $starter $line"
+    $env:AMBERLINE_GUIDE = '1'
+    if ($line) { Start-Process -FilePath $starter -WorkingDirectory $Folder -ArgumentList $line }
+    else { Start-Process -FilePath $starter -WorkingDirectory $Folder }
+}
 
 try {
     Write-Log "Amberline setup guide, $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), Windows PowerShell $($PSVersionTable.PSVersion)$(if ($DryRun) { ', dry run' })"
     Say 'Amberline setup' 'Cyan'
     Say '6 steps. Type each answer, then press Enter. To stop, close this window.'
     if ($DryRun) { Say 'DRY RUN: this run only shows what it would do. Nothing is installed, built or started.' 'Yellow' }
-    # This download's build number (the version rule above), the same for the whole run.
-    $version = '0.0.{0}' -f [int][Math]::Floor(([DateTime]::UtcNow - [DateTime]::new(2026, 1, 1)).TotalMinutes)
+    # This download's build number (the version rule above), the same for the whole run; the release zip's own version.
+    $version = if ($prebuilt) { [string]$prebuilt } else { '0.0.{0}' -f [int][Math]::Floor(([DateTime]::UtcNow - [DateTime]::new(2026, 1, 1)).TotalMinutes) }
 
-    # The answers of the last run, offered again; declined, their folders are still searched first.
+    # Batch 645: the Amberline on this PC (the pointer's install, or one from before batch 637 in the user folder) and its version.
+    $installed = Get-Installed
+    $app = if ($installed) { Join-Path $installed 'app' } else { Join-Path $env:LOCALAPPDATA 'Amberline\app' }
+    $legacy = -not $installed -and (Test-Path -LiteralPath (Join-Path $app 'BUILD.json') -PathType Leaf)
+    $update = [bool]($installed -or $legacy)
+    $have = if ($update) { Get-AppVersion $app }
+    $later = @('From now on: start Amberline from its desktop icon. Keep its window open while friends play.',
+        $(if ($prebuilt) { 'To update: choose Update now on its page, or unzip the newest release and double-click its START-HERE.cmd.' }
+        else { 'To update: get the newest code and double-click START-HERE.cmd again.' }))
+
+    # The answers of the last run, offered again; declined, their folders are still searched first. An update needs none.
     $choice = $null
     $last = $null
-    if (Test-Path -LiteralPath $savedFile) {
+    if (-not $update -and (Test-Path -LiteralPath $savedFile)) {
         try { $last = Get-Content -LiteralPath $savedFile -Raw | ConvertFrom-Json } catch { $last = $null }
         if ($last -and $last.where -and $last.gameRoot -and $last.airRoot) {
             foreach ($name in 'installFolder', 'deleteOriginals', 'packageFolder') {
@@ -587,28 +634,112 @@ try {
     }
     $reused = [bool]$choice
     $remembered = @(if ($last) { $last.gameRoot; $last.airRoot })
-    # Batch 645: the Amberline on this PC (the pointer's install, or one from before batch 637 in the user folder) and its version.
-    $installed = Get-Installed
-    $app = if ($installed) { Join-Path $installed 'app' } else { Join-Path $env:LOCALAPPDATA 'Amberline\app' }
-    $legacy = -not $installed -and (Test-Path -LiteralPath (Join-Path $app 'BUILD.json') -PathType Leaf)
-    $have = if ($installed -or $legacy) { Get-AppVersion $app }
-    # HostInstall keeps an installed version that is equal or newer, so a build made here would change nothing: say so at once.
-    function Stop-IfNewer {
-        if ($have -and $have -ge [version]$version) {
-            Finish @("Nothing was changed. Your Amberline $have, in $(Split-Path -Parent $app), is not older than this download's build $version.",
-                'To update it, use the newest Amberline release zip.', $openIt)
+
+    # Step 2's questions, into $Target's gameRoot and airRoot.
+    function Read-Clients($Target, [string]$Where) {
+        Step 2 'Your game and AIR client folders'
+        if ($Where -eq 'rented') { Say 'Choose them on this PC. You copy them to your server later.' }
+        $search = Find-GameAndAir $remembered
+        Say
+        Say 'Game folder (patch 1.0.0.126, with DATA and LEVELS):'
+        $Target.gameRoot = Select-Found 'game' 'game folder' $search 'Choose the game folder (it holds DATA and LEVELS)'
+        Say 'Your game folder:'
+        SayPath $Target.gameRoot
+        Say
+        Say 'AIR client folder (with its assets folder):'
+        $Target.airRoot = Select-Found 'air' 'AIR client folder' $search 'Choose the AIR client folder (it holds its .swf file and assets)'
+        Say 'Your AIR client folder:'
+        SayPath $Target.airRoot
+        # Batch 635: the first friend unzipped Amberline inside the folder that held the AIR client and the game; that works now.
+        foreach ($pair in @(@('game', $Target.gameRoot), @('AIR client', $Target.airRoot))) {
+            if (Test-Inside $repository $pair[1]) {
+                Say "Amberline's own folder is inside your $($pair[0]) folder. That is fine."
+            }
         }
     }
 
-    if (-not $choice) {
+    # The folders the build reads (the choice's, except in an update below).
+    $buildFrom = $null
+    $where = $null
+    if ($update) {
+        # Batch 682 (the orchestrator's follow-up, 4 November 2026): an Amberline on this PC is updated in place, in both ways, so
+        # where the server runs and the folders are not asked. The update brings in no folder: the install keeps its own copies
+        # of the game and the AIR client, or the folders its settings name. Batch 682b: or, from the repository, a rented
+        # server's package is built instead (step 1 answered "rented").
+        # Batch 645: an update, which also repairs. HostInstall starts an equal version without copying it, and a build made here
+        # always has a new number, so "rebuild the same version" is this update. A second install elsewhere is not offered: the
+        # pointer, the desktop icon, the ports and the friends' Play files belong to one install.
+        $folder = Split-Path -Parent $app
+        Say
+        Say "Your Amberline $(if ($have) { $have } else { 'without a version number' }) is in:"
+        SayPath $folder
+        # HostInstall keeps an installed version that is equal or newer, so a build made here would change nothing: say so at
+        # once. The release zip of the installed version starts it, as a start of that zip without the guide did.
+        if ($have -and $have -ge [version]$version) {
+            if ($prebuilt -and $have -eq [version]$version) {
+                Say "Amberline $have is already installed. Starting it."
+                Start-Amberline $repository @(if ($installed) { '--install-to', $installed })
+                Finish (@('Now: a new window named Amberline starts it. Then its page opens in your web browser.') + $later) 'Install folder' $folder
+            }
+            $kept = @("Nothing was changed. Your Amberline $have, in $folder, is not older than this download's build $version.",
+                'To update it, use the newest Amberline release zip.', $openIt)
+            if ($prebuilt) { Finish $kept }
+            Say "It is not older than this download's build $version, so this build would not replace it."
+            if (-not (Read-YesNo 'rentedInstead' 'Build a package for a rented server instead?')) { Finish $kept }
+            $where = 'rented'
+        } else {
+            Say "This download $(if ($prebuilt) { 'is' } else { 'builds' }) $version. Updating also repairs it; your settings, logins and friends stay."
+            if ($installed) { Say 'To install elsewhere, uninstall this one first (Uninstall Amberline.cmd in its folder).' }
+            Say 'Update this Amberline now?'
+            # Read-YesNo's answers, and R.
+            $answer = Read-Valid 'updateInstall' $updateOrRented {
+                param($text)
+                switch -Regex ($text.Trim()) { '^(?i)y(es)?$' { 'Y' } '^(?i)no?$' { 'N' } '^(?i)r$' { 'R' } }
+            } $updateOrRented
+            if ($answer -eq 'N') { Finish @('Nothing was changed.', $openIt) }
+            if ($answer -eq 'R') {
+                if ($prebuilt) { Finish @("Nothing was changed. A rented server's package is built from the Amberline source code: download it from GitHub on this PC and double-click its START-HERE.cmd.") }
+                $where = 'rented'
+            }
+        }
+        # The rented path: steps 1 to 6 as without an install, with step 1 answered.
+        if ($where) { $update = $false }
+    }
+    if ($update) {
+        Say
+        Say 'Steps 1 and 2 of 6: not needed. This PC has Amberline already.' 'Cyan'
+        $choice = [pscustomobject]@{ where = 'home'; gameRoot = $null; airRoot = $null; host = $null; serverName = $null; system = $null
+            installFolder = $installed; deleteOriginals = 'N'; packageFolder = $null }
+        foreach ($name in @(Use-OwnCopies $choice)) { Say "Using the install folder's own copy of the $name." }
+        if (-not $prebuilt -and -not ($choice.gameRoot -and $choice.airRoot)) {
+            # The build reads both folders: the install's own copies, else the folders its settings name, else step 2 asks.
+            $buildFrom = [pscustomobject]@{ gameRoot = $choice.gameRoot; airRoot = $choice.airRoot }
+            try { $settings = Get-Content -LiteralPath (Join-Path $folder 'data\platform.json') -Raw | ConvertFrom-Json } catch { $settings = $null }
+            foreach ($pair in @(@('gameRoot', 'dataRoot'), @('airRoot', 'airRoot'))) {
+                $named = if ($settings) { [string]$settings.($pair[1]) }
+                if (-not $buildFrom.($pair[0]) -and $named -and [IO.Path]::IsPathRooted($named) -and (Test-Path -LiteralPath $named -PathType Container)) {
+                    $buildFrom.($pair[0]) = $named
+                }
+            }
+            if (-not ($buildFrom.gameRoot -and $buildFrom.airRoot)) { Read-Clients $buildFrom 'home' }
+        }
+    } elseif (-not $choice) {
         Step 1 'Where will your server run?'
-        Say '  1. On this PC'
-        Say '  2. On a rented server (from a hosting company)'
-        $where = Read-Valid 'where' 'Type 1 or 2' {
-            param($text)
-            switch -Regex ($text.Trim()) { '^(1|(?i)home)$' { 'home' } '^(2|(?i)rented)$' { 'rented' } }
-        } 'type 1 or 2.'
-        if ($where -eq 'home') { Stop-IfNewer }
+        if ($where) { Say 'On a rented server (from a hosting company), as you chose.' }
+        else {
+            Say '  1. On this PC'
+            Say '  2. On a rented server (from a hosting company)'
+            $where = Read-Valid 'where' 'Type 1 or 2' {
+                param($text)
+                switch -Regex ($text.Trim()) { '^(1|(?i)home)$' { 'home' } '^(2|(?i)rented)$' { 'rented' } }
+            } 'type 1 or 2.'
+        }
+        # Batch 682: the release zip installs Amberline on the PC it runs on, and a server package is built from the source code.
+        if ($where -eq 'rented' -and $prebuilt) {
+            Finish @('Nothing was changed. This download installs Amberline on the PC you start it on.',
+                'For a Windows server: copy this zip to the server, unzip it there, double-click START-HERE.cmd there and type 1.',
+                'For a Linux server: download the Amberline source code from GitHub on this PC and double-click its START-HERE.cmd. It builds the server package.')
+        }
         $choice = [pscustomobject]@{ where = $where; gameRoot = $null; airRoot = $null; host = $null; serverName = $null; system = $null
             installFolder = $null; deleteOriginals = $null; packageFolder = $null }
         if ($where -eq 'rented') {
@@ -638,55 +769,29 @@ try {
             } 'type 1 for Windows or 2 for Linux.'
         }
 
-        Step 2 'Your game and AIR client folders'
-        if ($where -eq 'rented') { Say 'Choose them on this PC. You copy them to your server later.' }
-        $search = Find-GameAndAir $remembered
-        Say
-        Say 'Game folder (patch 1.0.0.126, with DATA and LEVELS):'
-        $choice.gameRoot = Select-Found 'game' 'game folder' $search 'Choose the game folder (it holds DATA and LEVELS)'
-        Say 'Your game folder:'
-        SayPath $choice.gameRoot
-        Say
-        Say 'AIR client folder (with its assets folder):'
-        $choice.airRoot = Select-Found 'air' 'AIR client folder' $search 'Choose the AIR client folder (it holds its .swf file and assets)'
-        Say 'Your AIR client folder:'
-        SayPath $choice.airRoot
-        # Batch 635: the first friend unzipped Amberline inside the folder that held the AIR client and the game; that works now.
-        foreach ($pair in @(@('game', $choice.gameRoot), @('AIR client', $choice.airRoot))) {
-            if (Test-Inside $repository $pair[1]) {
-                Say "Amberline's own folder is inside your $($pair[0]) folder. That is fine."
-            }
-        }
+        Read-Clients $choice $where
         Save-Choice
     } else {
         Say
         Say 'Steps 1 and 2 of 6: your answers from last time.' 'Cyan'
-        if ($choice.where -eq 'home') { Stop-IfNewer }
     }
+    if (-not $buildFrom) { $buildFrom = $choice }
 
     # Step 3 (batch 637): where Amberline goes, and whether the originals go once Amberline has its own copy.
-    $update = $false
     if ($choice.where -eq 'home') {
         Step 3 'Where Amberline goes'
-        if ($installed -or $legacy) {
-            # Batch 645: an update, which also repairs. HostInstall starts an equal version without copying it, and a build made
-            # here always has a new number, so "rebuild the same version" is this update. A second install elsewhere is not
-            # offered: the pointer, the desktop icon, the ports and the friends' Play files belong to one install.
-            $update = $true
-            Say "Your Amberline $(if ($have) { $have } else { 'without a version number' }) is in:"
+        if ($update) {
+            Say 'Amberline is updated where it is:'
             SayPath (Split-Path -Parent $app)
-            Say "This download builds $version. Updating also repairs it; your settings, logins and friends stay."
-            if ($installed) { Say 'To install elsewhere, uninstall this one first (Uninstall Amberline.cmd in its folder).' }
-            if (-not (Read-YesNo 'updateInstall' 'Update this Amberline now?')) { Finish @('Nothing was changed.', $openIt) }
-            $choice.installFolder = $installed
         } elseif ($reused -and $choice.installFolder) {
             Say 'The install folder from last time:'
             SayPath $choice.installFolder
         } else {
             $choice.installFolder = Read-TargetFolder 'installFolder' 'Where should Amberline be installed? It keeps everything in that folder.' $defaultInstall
         }
-        if ($choice.installFolder -and -not ($reused -and -not $update)) {
-            if (-not $update) { Say 'Install folder:'; SayPath $choice.installFolder }
+        if (-not $update -and -not $reused) {
+            Say 'Install folder:'
+            SayPath $choice.installFolder
             foreach ($name in @(Use-OwnCopies $choice)) { Say "Using the install folder's own copy of the $name." }
             $choice.deleteOriginals = 'N'
             $outside = @(@($choice.gameRoot, $choice.airRoot) | Where-Object { -not (Test-Inside $_ $choice.installFolder) })
@@ -722,43 +827,41 @@ try {
     }
 
     $runtime = if ($choice.where -eq 'rented' -and $choice.system -eq 'Linux') { 'linux-x64' } else { 'win-x64' }
-    Step 4 'Build tools'
-    Say 'Looking for them. This takes a few seconds.'
-    $found = @{}
-    foreach ($tool in $tools) { $found[$tool.Id] = Confirm-Tool $tool }
-    Say 'Done: all the tools are here.' 'Green'
+    # Batch 682: the release zip is built already, so it needs neither the tools nor the build, and says so in one line.
+    if ($prebuilt) { Say; Say "Steps 4 and 5 of 6: not needed. This download is Amberline $version, built already." 'Cyan' }
+    else {
+        Step 4 'Build tools'
+        Say 'Looking for them. This takes a few seconds.'
+        $found = @{}
+        foreach ($tool in $tools) { $found[$tool.Id] = Confirm-Tool $tool }
+        Say 'Done: all the tools are here.' 'Green'
 
-    Step 5 'Building Amberline'
+        Step 5 'Building Amberline'
+    }
     if ($choice.where -eq 'home') {
-        $output = Join-Path $StateFolder ('home-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-        Say "Building Amberline $version into:"
-        SayPath $output
-        Invoke-Build ([ordered]@{ Layout = 'Home'; Version = $version; GameRoot = $choice.gameRoot; AirRoot = $choice.airRoot; Output = $output }) $found['pwsh']
+        # The Start Amberline.cmd that installs: the release zip's own, beside START-HERE.cmd, or that of the zip built here, once unpacked.
+        $unpacked = $repository
+        if (-not $prebuilt) {
+            $output = Join-Path $StateFolder ('home-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            Say "Building Amberline $version into:"
+            SayPath $output
+            Invoke-Build ([ordered]@{ Layout = 'Home'; Version = $version; GameRoot = $buildFrom.gameRoot; AirRoot = $buildFrom.airRoot; Output = $output }) $found['pwsh']
+            $zip = Join-Path $output "Amberline-$version-win-x64.zip"
+            $unpacked = Join-Path $output 'Amberline'
+        }
 
         Step 6 'Installing and starting Amberline'
-        $zip = Join-Path $output "Amberline-$version-win-x64.zip"
-        $unpacked = Join-Path $output 'Amberline'
-        $starter = Join-Path $unpacked 'Start Amberline.cmd'
         # The release's first start installs (HostInstall): the folder, the game and AIR client to bring in, and the delete answer.
         $arguments = @(if ($choice.installFolder) {
-            '--install-to', $choice.installFolder, '--game', $choice.gameRoot, '--air', $choice.airRoot
+            '--install-to', $choice.installFolder
+            if ($choice.gameRoot) { '--game', $choice.gameRoot }
+            if ($choice.airRoot) { '--air', $choice.airRoot }
             if ($choice.deleteOriginals -eq 'Y') { '--delete-originals' }
         })
-        $line = ($arguments | ForEach-Object { if ($_ -like '--*') { $_ } else { '"' + $_.TrimEnd('\') + '"' } }) -join ' '
-        if ($DryRun) { Say "DRY RUN: would unpack $zip into $unpacked and start $starter $line in a new window." -Whole }
-        else {
-            Say 'Unpacking Amberline and starting it in a new window. This takes a few seconds.'
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            [IO.Compression.ZipFile]::ExtractToDirectory($zip, $unpacked)
-            Write-Log "Unpacked $zip into $unpacked; starting $starter $line"
-            if ($line) { Start-Process -FilePath $starter -WorkingDirectory $unpacked -ArgumentList $line }
-            else { Start-Process -FilePath $starter -WorkingDirectory $unpacked }
-        }
-        $copies = @(@($choice.gameRoot, $choice.airRoot) | Where-Object { $choice.installFolder -and -not (Test-Inside $_ $choice.installFolder) }).Count
+        Start-Amberline $unpacked $arguments $zip
+        $copies = @(@($choice.gameRoot, $choice.airRoot) | Where-Object { $_ -and $choice.installFolder -and -not (Test-Inside $_ $choice.installFolder) }).Count
         $folder = if ($choice.installFolder) { $choice.installFolder } else { Split-Path -Parent $app }
         $deletes = if ($choice.deleteOriginals -eq 'Y') { ' Once the copies are checked, it deletes the originals.' } else { '' }
-        $later = @('From now on: start Amberline from its desktop icon. Keep its window open while friends play.',
-            'To update: get the newest code and double-click START-HERE.cmd again.')
         if ($update) {
             Finish (@(
                 "Now: a new window named Amberline asks you to press Enter, then updates to $version$(if ($copies) { ' and copies the game and the AIR client' }). This ends any game in progress.$deletes",

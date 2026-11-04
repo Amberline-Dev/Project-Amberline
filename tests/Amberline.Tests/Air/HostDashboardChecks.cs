@@ -446,6 +446,124 @@ public static class HostDashboardChecks
         Delete(home.Root);
     }
 
+    [Check("server.host-games-at-once", TimeoutSeconds = 180)]
+    public static void SettingsChoosesHowManyGamesRunAtOnce() => GamesAtOnceAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Batch 684 (owner, 4 November 2026: a Settings field "Games at the same time", 1 to 32, default 4): a saved number reaches the
+    /// dashboard's "Games N of M", the support log and the router's ports at once, without a restart. Save never asks Windows: a rule
+    /// with fewer game ports gets the card that it must be updated, whose button writes the new range; a rule wider than the ports still
+    /// lets every game in. A number outside 1 to 32 is refused beside its field and saves nothing.
+    /// </summary>
+    private static async Task GamesAtOnceAsync()
+    {
+        var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        await using var router = await HostUpnpChecks.FakeRouter.StartAsync();
+        // The two rules exist already, for the four games of a new install.
+        var firewall = new FakeFirewall { Added = true };
+        var home = Home.Create("league-host-games-at-once", network: new HostNetwork(
+            cancel => UpnpGateway.DiscoverAsync(router.SsdpEndPoint, TimeSpan.FromSeconds(3), cancel), firewall.ReadAsync, firewall.RunAsync,
+            () => (null, null)));
+        IReadOnlyList<FirewallRule> Rules(int games) =>
+            HostFirewall.Rules(Environment.ProcessPath!, home.Loop.Paths.ServerExecutable, home.RemotePort, 5219, games);
+        firewall.Allowed = Rules(4);
+        home.ChooseFolders();
+        var run = Task.Run(() => HostMode.RunAsync(home.Loop));
+        try
+        {
+            using var browser = Browser(home);
+            await WaitForHealthAsync(browser, "ready", run);
+            await home.SignInAsync(browser);
+            var status = await WaitForStatusAsync(browser, now => Check(now, "firewall").State != "checking" && Check(now, "router").State != "checking");
+            TestAssert.Equal(("ok", "Windows Firewall lets friends in"), Check(status, "firewall"));
+            TestAssert.Equal(4, status.GetProperty("gamesMax").GetInt32(), "four games by default");
+            TestAssert.Equal(5, router.Table().Count, "the sign-in port and four game ports");
+
+            var page = await PageAsync(browser, "/host/settings");
+            foreach (var part in new[] { "<h2 id=games-title>Games</h2>", "<form method=post action=/host/settings/games novalidate>",
+                         "<label for=games>Games at the same time", "1 to 32. Each game uses about one CPU core, some memory and its own game port: now UDP 5219 to 5222.",
+                         "type=number min=1 max=32 inputmode=numeric value=\"4\"" })
+                TestAssert.True(page.Contains(part, StringComparison.Ordinal), part + " in " + page);
+
+            // Six: saved, counted at once, the router's two new ports opened; the firewall rule must be updated, and Save asked nothing.
+            using (var six = await browser.PostAsync("/host/settings/games", Form(Token(page), ("games", "6"))))
+            {
+                TestAssert.Equal(HttpStatusCode.Redirect, six.StatusCode, await six.Content.ReadAsStringAsync());
+                TestAssert.Equal("/host/settings?saved=games", six.Headers.Location?.OriginalString);
+            }
+            TestAssert.Equal(6, MaxGames(home), "platform.json keeps the number");
+            page = await PageAsync(browser, "/host/settings?saved=games");
+            TestAssert.True(page.Contains("<p class=notice role=status>Saved. It counts for games that start from now on; a running game goes on. " +
+                "If the dashboard asks, choose Allow through Windows Firewall.</p>", StringComparison.Ordinal) &&
+                page.Contains("now UDP 5219 to 5224.", StringComparison.Ordinal) && page.Contains("value=\"6\"", StringComparison.Ordinal), page);
+            await HostUpnpChecks.Until(() => router.Table().Count == 7, "the router forwards six game ports");
+            TestAssert.Equal(new[] { $"TCP {home.RemotePort}", "UDP 5219", "UDP 5220", "UDP 5221", "UDP 5222", "UDP 5223", "UDP 5224" },
+                router.Table().Keys.Select(key => $"{key.Protocol} {key.Port}").Order(StringComparer.Ordinal).ToArray(), "the new range");
+            status = await WaitForStatusAsync(browser, now => Check(now, "firewall").State == "bad");
+            TestAssert.Equal(("bad", "Windows Firewall's rule must be updated for the new game ports."), Check(status, "firewall"));
+            TestAssert.Equal(new (string, string?)[] { ("A-NET-02", "firewall") }, Cards(status), "the firewall card, with its button");
+            TestAssert.Equal(6, status.GetProperty("gamesMax").GetInt32(), "Games 0 of 6");
+            TestAssert.Equal(0, firewall.Commands.Count, "Save never asks Windows");
+            TestAssert.True((await PageAsync(browser, HostSupport.FilePath)).Contains("Games running: 0 of 6.", StringComparison.Ordinal),
+                "the support log counts the new number");
+
+            // The card's button: one prompt, which writes the six-game range over both existing rules.
+            firewall.Next = Rules(6);
+            using (var allow = await browser.PostAsync("/host/firewall", Form(Token(page))))
+                TestAssert.Equal(HttpStatusCode.Redirect, allow.StatusCode);
+            if (HostFirewall.Refusal(Rules(6)) is null)
+            {
+                TestAssert.Equal(1, firewall.Commands.Count, "one Windows prompt");
+                TestAssert.Equal(HostFirewall.Command(Rules(6), [HostFirewall.SignInRule, HostFirewall.GamesRule], Environment.SystemDirectory),
+                    firewall.Commands[0], "the new range, over the old rules");
+                TestAssert.Equal(("ok", "Windows Firewall lets friends in"), Check(await StatusAsync(browser), "firewall"));
+            }
+
+            // Two: the router's ports above it go at once; the wider firewall rule still lets both games in, so nothing is asked.
+            using (var two = await browser.PostAsync("/host/settings/games", Form(Token(page), ("games", "2"))))
+                TestAssert.Equal(HttpStatusCode.Redirect, two.StatusCode, await two.Content.ReadAsStringAsync());
+            await HostUpnpChecks.Until(() => router.Table().Count == 3, "the router forwards two game ports");
+            TestAssert.Equal(4, router.Count("DeletePortMapping"), "the four ports above two are deleted");
+            status = await WaitForStatusAsync(browser, now => now.GetProperty("gamesMax").GetInt32() == 2 && Check(now, "firewall").State != "checking");
+            if (HostFirewall.Refusal(Rules(6)) is null)
+            {
+                TestAssert.Equal(("ok", "Windows Firewall lets friends in"), Check(status, "firewall"));
+                TestAssert.Equal(1, firewall.Commands.Count, "fewer games ask Windows nothing");
+            }
+
+            // Refused: outside 1 to 32, not a number, empty; each beside its field, the typed value kept, nothing saved.
+            foreach (var typed in new[] { "0", "33", "x", "", "-1", "4.5" })
+            {
+                using var refused = await browser.PostAsync("/host/settings/games", Form(Token(page), ("games", typed)));
+                var answer = await refused.Content.ReadAsStringAsync();
+                TestAssert.Equal(HttpStatusCode.BadRequest, refused.StatusCode, answer);
+                foreach (var part in new[] { "<li><a href=#games>Choose a number from 1 to 32.</a></li>",
+                             "<p class=field-error id=games-error><span class=vh>Error: </span>Choose a number from 1 to 32.</p>",
+                             $"value=\"{WebUtility.HtmlEncode(typed)}\" aria-describedby=\"games-hint games-error\" aria-invalid=true>" })
+                    TestAssert.True(answer.Contains(part, StringComparison.Ordinal), $"{typed}: {part} in {answer}");
+            }
+            using (var expired = await browser.PostAsync("/host/settings/games", Form(new("x", "y"), ("games", "8"))))
+                TestAssert.Equal(HttpStatusCode.BadRequest, expired.StatusCode, "a form without its token saves nothing");
+            TestAssert.Equal(2, MaxGames(home), "a refused number saves nothing");
+            TestAssert.Equal(2, (await StatusAsync(browser)).GetProperty("gamesMax").GetInt32());
+        }
+        finally
+        {
+            await home.StopAsync(run);
+            foreach (var pair in saved) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+        }
+        TestAssert.Equal(0, router.Table().Count, "Stop removes the router's ports");
+        foreach (var call in router.Snapshot(router.Calls))
+            TestAssert.True(call.StartsWith("127.0.0.1 ", StringComparison.Ordinal), "every router request went to the fake router: " + call);
+        Delete(home.Root);
+    }
+
+    private static int MaxGames(Home home)
+    {
+        using var settings = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings));
+        return settings.RootElement.GetProperty("maxGames").GetInt32();
+    }
+
     /// <summary>A page-only start: the gate and the dashboard on the home's page port, run by the home's loop until Stop or Restart.</summary>
     private static async Task<bool> RunPageAsync(Home home, PlatformSettings settings, Func<IReadOnlyList<DashboardGame>> games)
     {
@@ -520,11 +638,16 @@ public static class HostDashboardChecks
         ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
     })) { BaseAddress = new Uri($"http://127.0.0.1:{home.Port}"), Timeout = TimeSpan.FromSeconds(30) };
 
-    /// <summary>The firewall read-back as a list: no Amberline rule until the elevation ran, then both rules as netsh prints them.</summary>
+    /// <summary>
+    /// The firewall read-back as a list: no Amberline rule until the elevation ran (or <see cref="Added"/>), then <see cref="Allowed"/> as
+    /// netsh prints them; an elevation replaces them with <see cref="Next"/> when it is set.
+    /// </summary>
     private sealed class FakeFirewall
     {
         private volatile bool _added;
         public IReadOnlyList<FirewallRule> Allowed { get; set; } = [];
+        public IReadOnlyList<FirewallRule>? Next { get; set; }
+        public bool Added { init => _added = value; }
         public List<ElevatedCommand> Commands { get; } = [];
 
         public Task<IReadOnlyList<ShownRule>?> ReadAsync(CancellationToken cancel) => Task.FromResult<IReadOnlyList<ShownRule>?>(_added
@@ -538,6 +661,7 @@ public static class HostDashboardChecks
         public Task<int?> RunAsync(ElevatedCommand command, CancellationToken cancel)
         {
             lock (Commands) Commands.Add(command);
+            if (Next is { } next) Allowed = next;
             _added = true;
             return Task.FromResult<int?>(0);
         }

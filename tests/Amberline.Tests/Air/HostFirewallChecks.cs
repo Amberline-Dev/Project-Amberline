@@ -106,8 +106,19 @@ public static class HostFirewallChecks
         TestAssert.Equal(FirewallState.SomeNetworks, State(Shown(SignIn("Domain,Private"), Games())), "no Public profile: not every network type");
         TestAssert.Equal(FirewallState.SomeNetworks, State(Shown(SignIn("Private,Public"), Games())), "no Domain profile: not every network type");
         TestAssert.Equal(FirewallState.Missing, State(Shown(SignIn(enabled: "No"), Games())), "a switched-off allow rule does not allow");
-        TestAssert.Equal(FirewallState.Missing, State(Shown(SignIn(), Block(HostFirewall.GamesRule, "Yes", "In", "Allow", AllNetworks, "UDP", "5219", ServerExe))),
-            "a games rule on another port is not ours");
+        // Batch 684: a games rule on fewer ports is ours, but must be updated (Settings' Games at the same time grew); it was Missing before.
+        TestAssert.Equal(FirewallState.OtherPorts, State(Shown(SignIn(), Block(HostFirewall.GamesRule, "Yes", "In", "Allow", AllNetworks, "UDP", "5219", ServerExe))),
+            "a games rule on fewer ports must be updated");
+        TestAssert.Equal(FirewallState.OtherPorts, State(Shown(SignIn(), Block(HostFirewall.GamesRule, "Yes", "In", "Allow", AllNetworks, "UDP", "5220-5230", ServerExe))),
+            "a games rule that misses the first game port must be updated");
+        TestAssert.Equal(FirewallState.Allowed, State(Shown(SignIn(), Block(HostFirewall.GamesRule, "Yes", "In", "Allow", AllNetworks, "UDP", "5219-5250", ServerExe))),
+            "a games rule left from more games still lets every game in");
+        TestAssert.Equal(FirewallState.Allowed, State(Shown(SignIn(), Block(HostFirewall.GamesRule, "Yes", "In", "Allow", AllNetworks, "UDP", "Any", ServerExe))),
+            "a games rule on any port lets every game in");
+        TestAssert.Equal(FirewallState.Missing, State(Shown(SignIn(), Block(HostFirewall.GamesRule, "Yes", "In", "Allow", AllNetworks, "TCP", "5219-5222", ServerExe))),
+            "a games rule on another protocol is not ours");
+        TestAssert.Equal("Windows Firewall's rule must be updated for the new game ports.", HostFirewall.Problem(FirewallState.OtherPorts)?.Message ?? "",
+            "the card says the rule must be updated");
         TestAssert.Equal(FirewallState.Missing, State("No rules match the specified criteria.\r\n"), "no rule printed");
         TestAssert.Equal(FirewallState.Unreadable, State(null), "netsh could not be read");
 

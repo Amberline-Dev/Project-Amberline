@@ -902,7 +902,19 @@ internal sealed class BbBuffRuntime
         // (Kassadin's charge, a spell's hook, another unit's add).
         var ownPoll = _host.HasFrame && _host.Frame.Hook == "UpdateSelfBuffActions" && ReferenceEquals(_host.Frame.Caster, request.Target) &&
             ReferenceEquals(request.Caster, request.Target);
-        if (!request.Target.Alive && request.Target.UnitType == UnitType.Hero && !request.Target.IsZombie && !ownPoll &&
+        // Reconstruction (batch 683, the owner's game a26761c7 of 4 November 2026): neither is any other corpse given another unit's new
+        // non-persistent script buff. OdinCaptureChannelBomb's channel outlives the capture (batch 665) and its ChannelingUpdateStats adds
+        // OdinBombSuppression to its Target whenever the Target holds none; the capture kills the relic and the death clears it, so the next
+        // update put it on the corpse, whose 0.5 s drain re-ran the capture (OdinBombSuccessParticle's lightning, the Storm Shield's renewal)
+        // until the corpse was reaped: 16 lightnings from one pickup. A unit's adds to its own corpse (a placemarker's own scripts) are kept.
+        // Batch 685 narrows it to the per-tick update hooks (the channel's update above): an event-driven add (a hit, a cast, a missile) to a
+        // non-hero corpse lands as the script asks. VeigarBalefulStrike's TargetExecute guards its add to the target with CO_IS_NOT_DEAD (its
+        // OnBuffDeactivate grants AP when that unit is dead), a guard that matters only if retail's add to a corpse succeeds; TwoShivPoison
+        // adds its slow after the damage that may kill, unguarded (batch 348 recorded that slow on the corpse).
+        var periodicAdd = _host.HasFrame && _host.Frame.Hook is "BuffOnUpdateActions" or "BuffOnUpdateStats" or "ChannelingUpdateActions"
+            or "ChannelingUpdateStats" or "UpdateSelfBuffActions" or "UpdateSelfBuffStats";
+        if (!request.Target.Alive && !request.Target.IsZombie && !ownPoll &&
+            (request.Target.UnitType == UnitType.Hero || periodicAdd && !ReferenceEquals(request.Caster, request.Target)) &&
             (script is null || !PersistsThroughDeath(script)))
             return null;
         // BuffOnAllowAdd of the target's script buffs (a spell shield refuses what a hit spell adds after it popped) is asked by BuffLifecycle for

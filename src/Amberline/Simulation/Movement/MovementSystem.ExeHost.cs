@@ -603,9 +603,34 @@ public sealed partial class MovementSystem
             else if (!allowed || IsStatic(entity) || idle)
                 entity.FrameVelocity = new Position2(entity.FrameVelocity.X * StoppedVelocityDecay, entity.FrameVelocity.Z * StoppedVelocityDecay);
             else FallbackStep(entity, dt);
+            // Batch 676: a unit that stands still is put on floor, as the client's update tail and stop arrival put it (FallbackFloor).
+            if (allowed && !IsStatic(entity) && !entity.SpawnIgnoreCollision && entity.Waypoints.Count == 0 && entity.Target is null)
+                entity.Position = FallbackFloor(entity.Position);
             ConfineHeldHero(entity, start);
             if (entity.Waypoints.Count > 0 || entity.Target is not null) _following.Add(entity.NetId);
         }
+    }
+
+    /// <summary>
+    /// The client's rule for a unit that stands still on a blocked cell, in the fallback (NOT RETAIL as a whole, see
+    /// <see cref="FallbackActorFrame"/>): the client's tail and the stop's arrival (<c>AssembleWaypointList</c>) put it on floor
+    /// with the client: the point steps toward the centre of the nearest floor cell, 30 units at a time for at most 24 samples, and the
+    /// first sample on floor is the answer, else the centre. On floor nothing changes. Without it a hero lodged in a building stamp (all
+    /// eight neighbours blocked, where the planner finds nothing) was stopped on its own spot by every order (batch 676).
+    /// Reconstruction: the client's step is 30 + U(-0.5, 1) from the engine's generator and its square spiral orders a ring its own way; here
+    /// the step is 30 and the movement view is searched ring by ring (<see cref="NavigationGrid.NearestMovementFloor"/>) within 50 cells.
+    /// </summary>
+    private Position2 FallbackFloor(Position2 point)
+    {
+        if (_navigation.IsMovementWalkable(point) || _navigation.NearestMovementFloor(point, maxCells: 50) is not { } centre) return point;
+        var distance = Math.Sqrt(DistanceSquared(point, centre));
+        for (var sample = 1; sample < 24; sample++)
+        {
+            var t = sample * 30.0 / distance;
+            var probe = new Position2(point.X + (centre.X - point.X) * t, point.Z + (centre.Z - point.Z) * t);
+            if (_navigation.IsMovementWalkable(probe)) return probe;
+        }
+        return centre;
     }
 
     /// <summary>NOT RETAIL (see <see cref="FallbackActorFrame"/>): one frame along the route at the unit's speed, no contact.</summary>

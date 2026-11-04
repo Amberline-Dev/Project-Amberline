@@ -129,6 +129,12 @@ public static class HostInvite
             else accounts.SetPassword(friend.Id, password);
             remoteAccess.Revoke(friend.Id);
             sessions.EndAccount(friend.Id);
+            // Owner, 4 November 2026: Remove access also clears the friend's Cheat commands tick. It runs after every way in has ended,
+            // so a settings file that cannot be read (the page then says so) never leaves a session open; Give access again clears a
+            // tick such a failure left, so a returning friend never has cheats the host did not tick again.
+            if (remove || friend.AccessRemovedAt is not null)
+                HostMode.Change(loop.Paths.Settings, saved => saved.CheatLogins().Contains(friend.Id)
+                    ? saved with { CheatAccounts = [.. saved.CheatLogins().Where(id => id != friend.Id)], AllowCheats = false } : saved);
             return password is null
                 ? HostMode.Page(FriendsPage(Program.RegistrationToken(context, antiforgery),
                     $"{friend.Username} can no longer log in, and was logged out. Their games stay.", done: true))

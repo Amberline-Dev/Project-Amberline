@@ -35,6 +35,11 @@ public enum FirewallState
     SomeNetworks,
     /// <summary>A rule of the same name names another program file (a moved or updated folder).</summary>
     OtherFolder,
+    /// <summary>
+    /// Our rule allows its program but not all of its ports: Settings' Games at the same time grew past the rule's game ports (batch 684).
+    /// A rule wider than the ports still allows them, so fewer games need no new rule.
+    /// </summary>
+    OtherPorts,
     /// <summary>No enabled allow rule of the name for its program, protocol and ports.</summary>
     Missing,
     /// <summary>An enabled block rule names one of the programs; a block beats any allow rule.</summary>
@@ -91,7 +96,9 @@ public static class HostFirewall
         return new FirewallProblem("A-NET-02",
             "Amberline cannot ask Windows Firewall to allow it from this folder: its path has a character Windows cannot pass safely.",
             "Move Amberline to a folder whose path has only plain letters, digits, spaces, dots and dashes, then try again. " +
-            "Or allow its two programs by hand in Windows Defender Firewall (TCP 8391 for sign-in, UDP 5219-5222 for games, every network type).");
+            "Or allow its two programs by hand in Windows Defender Firewall (" +
+            string.Concat(rules.Select(rule => $"{rule.Protocol} {rule.LocalPort} for {(rule.Name == SignInRule ? "sign-in" : "games")}, ")) +
+            "every network type).");
     }
 
     /// <summary>
@@ -186,6 +193,7 @@ public static class HostFirewall
             var state = named.Any(block => Fits(block, ours) && EveryNetwork(block)) ? FirewallState.Allowed
                 : named.Any(block => Fits(block, ours)) ? FirewallState.SomeNetworks
                 : named.Any(block => !Same(block.Field("Program"), ours.Program)) ? FirewallState.OtherFolder
+                : named.Any(block => Fits(block, ours with { LocalPort = block.Field("LocalPort") })) ? FirewallState.OtherPorts
                 : FirewallState.Missing;
             if (state > worst) worst = state;
         }
@@ -200,6 +208,8 @@ public static class HostFirewall
             "Choose Allow through Windows Firewall again: friends need every network type."),
         FirewallState.OtherFolder => new("A-NET-02", "Windows Firewall has Amberline's rule for another folder.",
             "Choose Allow through Windows Firewall again to point the rule at this folder."),
+        FirewallState.OtherPorts => new("A-NET-02", "Windows Firewall's rule must be updated for the new game ports.",
+            "Choose Allow through Windows Firewall to let the new game ports in."),
         FirewallState.Blocked => new("A-NET-02", "Windows Firewall blocks Amberline.",
             "Remove the block rule in Windows Defender Firewall (Advanced settings), then try again."),
         // Reconstruction: the design names no card for an unreadable firewall; it says only what could not be seen.
@@ -314,10 +324,26 @@ public static class HostFirewall
     /// </summary>
     private static bool Unsafe(string text) => text.Any(c => c is < ' ' or > '~' or '%' or '!' or '^' or '"');
 
-    /// <summary>A block of our name counts when it is an enabled inbound allow for our program, protocol and port.</summary>
+    /// <summary>
+    /// A block of our name counts when it is an enabled inbound allow for our program and protocol on at least our ports (batch 684: a
+    /// range left from more games at the same time still lets every game in).
+    /// </summary>
     private static bool Fits(ShownRule block, FirewallRule ours) =>
         IsOn(block) && Same(block.Field("Direction"), "In") && Same(block.Field("Action"), "Allow") &&
-        Same(block.Field("Program"), ours.Program) && Same(block.Field("Protocol"), ours.Protocol) && Same(block.Field("LocalPort"), ours.LocalPort);
+        Same(block.Field("Program"), ours.Program) && Same(block.Field("Protocol"), ours.Protocol) && Covers(block.Field("LocalPort"), ours.LocalPort);
+
+    /// <summary>The printed port or range <paramref name="shown"/> (or Any) holds every port of <paramref name="ours"/>; anything else must match exactly.</summary>
+    private static bool Covers(string shown, string ours) =>
+        Same(shown, ours) || Same(shown, "Any") || Ends(shown) is { } wide && Ends(ours) is { } wanted && wide.First <= wanted.First && wanted.Last <= wide.Last;
+
+    /// <summary>A port or a range "first-last" (<see cref="PortsValid"/>) as its two ends; null for anything else ("Any", a list).</summary>
+    private static (int First, int Last)? Ends(string text)
+    {
+        text = text.Trim();
+        if (!PortsValid(text)) return null;
+        var ends = text.Split('-').Select(end => int.Parse(end, CultureInfo.InvariantCulture)).ToArray();
+        return (ends[0], ends[^1]);
+    }
 
     private static bool EveryNetwork(ShownRule block)
     {

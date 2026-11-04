@@ -60,9 +60,14 @@ public static class HostUpnpChecks
 
             await Until(() => router.Count("AddPortMapping") >= 15, "two renewals");
             TestAssert.Equal<UpnpProblem?>(null, gateway.RenewalProblem);
+            // Batch 684: fewer games at the same time; a shorter list deletes the ports it leaves out, and renewals add only the rest.
+            TestAssert.Equal<UpnpProblem?>(null, await gateway.MapAsync(UpnpGateway.HostPorts(8391, 5219, 2)));
+            TestAssert.Equal(new[] { "TCP 8391", "UDP 5219", "UDP 5220" },
+                router.Table().Keys.Select(key => $"{key.Protocol} {key.Port}").Order(StringComparer.Ordinal).ToArray(), "the ports above two games are deleted");
+            TestAssert.Equal(2, router.Count("DeletePortMapping"));
             await gateway.StopAsync();
             TestAssert.Equal(0, router.Table().Count, "Stop deletes every mapping");
-            TestAssert.Equal(5, router.Count("DeletePortMapping"));
+            TestAssert.Equal(5, router.Count("DeletePortMapping"), "Stop deletes the three left");
             var added = router.Count("AddPortMapping");
             await Task.Delay(800);
             TestAssert.Equal(added, router.Count("AddPortMapping"), "no renewal after Stop");

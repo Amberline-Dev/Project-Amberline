@@ -163,6 +163,11 @@ internal static class PlayerInstallWindow
         return exception switch
         {
             InstallRefusedException refused => new(title, "Setup stopped before it finished.", refused.Message, details, profile.InstallLog),
+            // Batch 681: the download from the server.
+            InvalidDataException => new(title, "A downloaded file did not pass its check.", exception.Message, details, profile.InstallLog),
+            HttpRequestException => new(title, "The download from the server stopped.",
+                "Check your internet connection, then choose Download again: it continues where it stopped. If it stops again, choose Copy and send the text to the host.",
+                details, profile.InstallLog),
             UnauthorizedAccessException => new(title, "Windows did not let Amberline change a folder.",
                 where + "Choose an install folder in your user folder (as Setup suggests), then choose Install again.", details, profile.InstallLog),
             IOException => new(title, "Setup stopped: a file could not be copied or moved.",
@@ -229,8 +234,10 @@ internal static class PlayerInstallWindow
         private readonly string tool;
         private readonly ClientPins pins;
         private readonly Font bold;
-        private readonly Label airText, gameText, installText, spaceText, status, progressText, percent, cancelNote, doneHeading, doneText;
-        private readonly Button airButton, gameButton, installButton, start, cancel, open, close;
+        private readonly Label airText, gameText, downloadText, installText, spaceText, status, progressText, percent, cancelNote, doneHeading, doneText;
+        private readonly Button airButton, gameButton, downloadButton, installButton, start, cancel, open, close;
+        private PlayerDownload.Offer? offer;
+        private bool downloading;
         private readonly ProgressBar progress;
         private readonly FlowLayoutPanel bar;
         private readonly TableLayoutPanel setup, done;
@@ -284,6 +291,7 @@ internal static class PlayerInstallWindow
             intro.AccessibleDescription = intro.Text;
             airText = Line("AIR client folder", "", width);
             gameText = Line("Game client folder", "", width);
+            downloadText = Line("Download from the server", "", width);
             installText = Line("Install folder", "", width);
             spaceText = Line("Free space", "", width);
             status = Line("Notes", "What setup found, or why it cannot start yet.", width);
@@ -298,14 +306,17 @@ internal static class PlayerInstallWindow
             bar.Controls.Add(percent);
             airButton = Action("Change…", "Change the AIR client folder", "Choose the folder that holds the assets folder.");
             gameButton = Action("Change…", "Change the game client folder", "Choose the folder that holds DATA and LEVELS.");
+            downloadButton = Action($"&Download the game from {name}", $"Download the game from {name}",
+                $"Downloads the game and the AIR client from {name} into the install folder and adds {name} to your desktop.");
             installButton = Action("Change…", "Change the install folder", "Choose where setup puts the game.");
             start = Action("&Install", "Install", $"Moves the clients into the install folder and adds {name} to your desktop.");
             cancel = Action("Cancel", "Cancel", "Closes setup, or stops the copy while that is still possible.");
             open = Action($"&Open {name} now", $"Open {name} now", $"Starts {name} from its new desktop shortcut.");
             close = Action("Close", "Close", "Closes setup.");
-            foreach (var label in new[] { progressText, cancelNote }) label.Visible = false;
+            foreach (var control in new Control[] { progressText, cancelNote, downloadText, downloadButton }) control.Visible = false;
 
-            setup = Rows((heading, null), (intro, null), (airText, airButton), (gameText, gameButton), (installText, installButton), (spaceText, null),
+            setup = Rows((heading, null), (intro, null), (airText, airButton), (gameText, gameButton), (downloadText, downloadButton),
+                (installText, installButton), (spaceText, null),
                 (status, null), (bar, null), (progressText, null), (cancelNote, null), (Buttons(cancel, start), null));
             Named(setup, "Setup", AccessibleDescription);
             doneHeading = Line("Done", "", width);
@@ -333,12 +344,89 @@ internal static class PlayerInstallWindow
             installButton.Click += (_, _) => Pick("Choose where to install (a new or empty folder is best)", install, _ => null,
                 folder => install = InstallFolder(folder), allowNew: true);
             start.Click += async (_, _) => await InstallAsync();
+            downloadButton.Click += async (_, _) => await DownloadAsync();
             cancel.Click += (_, _) => CancelClicked();
             open.Click += (_, _) => Open();
             close.Click += (_, _) => Close();
             UpdateText();
             ResumeLayout(false);
             PerformLayout();
+        }
+
+        /// <summary>Batch 681: a player without a copy of their own asks the server whether it shares the game.</summary>
+        protected override async void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            if (installKept || (air is not null && game is not null)) return;
+            try
+            {
+                using var client = PlayerDownload.Client(connection, out var origin);
+                if (await PlayerDownload.OfferAsync(client, origin, pins, CancellationToken.None) is { } offered && !IsDisposed) ShowOffer(offered);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            { PlayerInstall.Log(profile, "download: the server offers no game files: " + exception.Message); }
+        }
+
+        /// <summary>The server shares the game: its size, and the button that downloads it into the install folder.</summary>
+        internal void ShowOffer(PlayerDownload.Offer offered)
+        {
+            offer = offered;
+            downloadText.Text = $"No copy of your own? {name} can send you the game and the AIR client ({FolderMove.Gigabytes(offered.Bytes)} GB).";
+            downloadText.AccessibleDescription = downloadText.Text;
+            downloadText.Visible = downloadButton.Visible = true;
+            UpdateText();
+        }
+
+        /// <summary>
+        /// The download, then the found copy's install (<see cref="PlayerInstall.Install"/>). Cancel keeps what came, and Download again
+        /// continues from there.
+        /// </summary>
+        private async Task DownloadAsync()
+        {
+            if (offer is not { } offered) return;
+            PlayerInstall.Plan chosen;
+            try { chosen = PlayerDownload.Plan(install, offered); }
+            catch (InstallRefusedException refused)
+            {
+                status.Font = bold;
+                status.Text = status.AccessibleDescription = refused.Message;
+                return;
+            }
+            using var source = new CancellationTokenSource();
+            canceling = source;
+            downloading = true;
+            SetBusy(true);
+            ShowStep(new($"Downloading the game from {name}…", 0, CanCancel: true));
+            var report = new Progress<InstallProgress>(ShowStep);
+            PlayerInstall.Result finished;
+            try
+            {
+                PlayerInstall.Log(profile, $"download: {FolderMove.Gigabytes(offered.Bytes)} GB from {name} into {chosen.Install}");
+                finished = await Task.Run(async () =>
+                {
+                    using var client = PlayerDownload.Client(connection, out var origin);
+                    await PlayerDownload.DownloadAsync(client, origin, offered, chosen, pins, name, report, source.Token);
+                    return PlayerInstall.Install(profile, chosen, connection, name, tool, report);
+                });
+            }
+            catch (OperationCanceledException) when (source.IsCancellationRequested)
+            {
+                PlayerInstall.Log(profile, "download: canceled; what came stays for the next try");
+                Stopped();
+                status.Text = status.AccessibleDescription = "The download stopped. Choose Download again to continue where it stopped.";
+                return;
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                PlayerInstall.Log(profile, "download: stopped: " + exception);
+                Stopped();
+                Problem(this, InstallProblem(profile, Text, exception), tryAgain: false);
+                return;
+            }
+            finally { downloading = false; }
+            canceling = null;
+            SetBusy(false);
+            ShowFinished(finished);
         }
 
         /// <summary>A move must not stop halfway: while it runs, closing the window is a cancel (when that is still possible) or nothing.</summary>
@@ -394,6 +482,8 @@ internal static class PlayerInstallWindow
             spaceText.AccessibleDescription = spaceText.Text;
             status.AccessibleDescription = status.Text;
             start.Enabled = plan is not null;
+            // Enter installs a found copy; without one, it downloads the server's (batch 681).
+            AcceptButton = plan is null && offer is not null ? downloadButton : start;
         }
 
         private void Pick(string description, string? current, Func<string, PlayerProblem?> problem, Action<string> accept, bool allowNew = false)
@@ -438,7 +528,7 @@ internal static class PlayerInstallWindow
         private void SetBusy(bool on)
         {
             busy = on;
-            foreach (var control in new Control[] { airButton, gameButton, start }) control.Enabled = !on;
+            foreach (var control in new Control[] { airButton, gameButton, downloadButton, start }) control.Enabled = !on;
             installButton.Enabled = !on && !installKept;
             cancel.Enabled = true;
             foreach (var control in new Control[] { bar, progressText, cancelNote }) control.Visible = on;
@@ -454,7 +544,8 @@ internal static class PlayerInstallWindow
             if (!canCancel || canceling is not { } source) return;
             source.Cancel();
             cancel.Enabled = false;
-            progressText.Text = "Canceling: removing the copy. Your folders stay as they are.";
+            progressText.Text = downloading ? "Canceling the download. What came stays, so Download again continues from there."
+                : "Canceling: removing the copy. Your folders stay as they are.";
         }
 
         private async Task InstallAsync()

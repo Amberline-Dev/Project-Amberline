@@ -462,11 +462,17 @@ public static class AirPlayerInstallChecks
             TestAssert.True(window.Font.SizeInPoints >= 10F, "the font is smaller than 10 pt: " + window.Font.SizeInPoints);
             AssertAccessible(window);
             var setup = Find(window, "Setup");
-            TestAssert.Equal(new[] { "Change the AIR client folder", "Change the game client folder", "Change the install folder", "Install", "Cancel" },
+            // Batch 681: the server's download (hidden until the server offers one) sits under the two client folders.
+            TestAssert.Equal(new[] { "Change the AIR client folder", "Change the game client folder", "Download the game from Alpha", "Change the install folder", "Install", "Cancel" },
                 TabOrder(setup).ToArray());
             TestAssert.Equal("Install", ((System.Windows.Forms.Control)window.AcceptButton!).AccessibleName);
             TestAssert.Equal("Cancel", ((System.Windows.Forms.Control)window.CancelButton!).AccessibleName);
             TestAssert.True(Find(window, "Install").Enabled, "the found clients do not make a plan: " + Find(window, "Notes").Text);
+            // An offer: its size beside the button; with clients found, Enter still installs them.
+            window.ShowOffer(new([new("air/LolClient.exe", 1, new string('0', 64))], 2_600_000_000));
+            TestAssert.Equal("No copy of your own? Alpha can send you the game and the AIR client (2.6 GB).", Find(window, "Download from the server").Text);
+            TestAssert.Equal("Install", ((System.Windows.Forms.Control)window.AcceptButton!).AccessibleName);
+            AssertAccessible(window);
 
             // The bar: a share with its percentage and Cancel while copying; moving, no Cancel and the reason during a rename.
             var bar = (System.Windows.Forms.ProgressBar)Find(window, "Setup progress");
@@ -824,7 +830,7 @@ public static class AirPlayerInstallChecks
     }
 
     /// <summary>Synthetic stock folders as a player downloads them: AIR, and the game release with its language project beside it.</summary>
-    private sealed record Fixture(PlayerProfile Profile, string Air, string Game, string Language, string Install, string Tool, ClientPins Pins)
+    internal sealed record Fixture(PlayerProfile Profile, string Air, string Game, string Language, string Install, string Tool, ClientPins Pins)
     {
         public string GameExecutable => Path.Combine(Game, "League of Legends.exe");
 
@@ -896,7 +902,7 @@ public static class AirPlayerInstallChecks
     }
 
     /// <summary>A stand-in player tool: a minimal console PE header (never started) and its version.</summary>
-    private static void WriteTool(string folder, string version)
+    internal static void WriteTool(string folder, string version)
     {
         var executable = new byte[0x200];
         executable[0] = (byte)'M';

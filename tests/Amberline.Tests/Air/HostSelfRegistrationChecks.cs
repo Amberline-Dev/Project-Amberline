@@ -279,7 +279,7 @@ public static class HostSelfRegistrationChecks
     /// A stranger's browser on the friends' port from <paramref name="from"/> (every 127.x address is this PC's loopback), which has
     /// clicked through the certificate warning: it takes Amberline's own certificate, the one the Play file pins.
     /// </summary>
-    private static HttpClient Person(Home home, IPAddress from)
+    internal static HttpClient Person(Home home, IPAddress from)
     {
         var pin = Pin(home);
         return new HttpClient(new SocketsHttpHandler

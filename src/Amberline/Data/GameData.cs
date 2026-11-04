@@ -67,6 +67,13 @@ public sealed record ChampionData(
     /// NeverRender. The client gives a ServerOnly minion no replication manager when it is created.
     /// </summary>
     public bool ServerOnly { get; init; }
+
+    /// <summary>
+    /// The character's <c>[Data] NeverRender</c> (bit 0x10 of the client's CharacterData flag byte). Batch 677: the client's character-change
+    /// routine the client sets NoRender (bit 13 of the unit's action word, +0xA1C) on every unit of such a
+    /// character, so the unit's particles are not drawn unless ForceRenderParticles (bit 14) reaches it too.
+    /// </summary>
+    public bool NeverRender { get; init; }
     // CharacterData death rewards. Missing keys take the native loader
     // defaults: Exp 48, Gold 25,
     // global gold/XP 0.
@@ -598,6 +605,7 @@ public sealed partial class GameData
             DefaultCollisionRadius = DefaultChampionCollisionRadius,
             NamesParType = data.TryGetValue(InibinReader.KeyHash("Data*PARType"), out _),
             ServerOnly = C("Data*ServerOnly", C("Data*NeverRender")) != 0.0,
+            NeverRender = C("Data*NeverRender") != 0.0,
         };
         _champions.Add(name, champion);
         return champion;

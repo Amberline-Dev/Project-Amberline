@@ -5,14 +5,15 @@ friends.
 
 **You need your own copy of the game.** Amberline includes no game or AIR client files. You and each friend need the game on
 patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its folder holds `assets`), on Windows 10 or 11
-(64-bit).
+(64-bit). A host who may share their own copy can let their players download it from their server
+([Game files](HOSTING.md#game-files)).
 
 ## Host a server
 
 1. **Download** `Amberline-<version>-win-x64.zip` from the
    [latest release](https://github.com/Amberline-Dev/Project-Amberline/releases/latest) and unzip it.
-2. **Double-click `Start Amberline.cmd`.** Press Enter to install in `C:\Amberline`. If Windows warns you, choose
-   **More info**, then **Run anyway**.
+2. **Double-click `START-HERE.cmd`.** It finds your game and AIR client folders and asks where to install (press Enter for
+   `C:\Amberline`). If Windows warns you, choose **More info**, then **Run anyway**.
 3. **Follow the page in your browser.** Name your server, check your game folders, make your login, then choose **Allow
    through Windows Firewall**.
 4. **Invite friends.** Choose **Invite a friend** and send them the Play file and the message it shows.
@@ -39,14 +40,14 @@ From then on, start Amberline from its desktop icon, and keep its window open wh
 
 An open-source server for the 1.0.0.126 build (October 2011) of the game and its Adobe AIR client: the match server, the AIR
 platform (sign-in, chat, lobbies, matchmaking, store and profiles), a setup page in your browser and a small player tool for your
-friends. Your PC can be the server, or a server you rent. Amberline reads your own copy of the game on your PC and never shares
-it.
+friends. Your PC can be the server, or a server you rent. Amberline reads your own copy of the game on your PC, and shares it with
+your players only if you turn that on in Settings.
 
 ### Build it yourself instead
 
-Download this repository (**Code**, then **Download ZIP**), unzip it and double-click **`START-HERE.cmd`**. It asks where the
-server runs (this PC or a rented server), finds your game folders, installs any missing build tool after a yes, builds Amberline
-(several minutes) and installs it. [HOSTING.md](HOSTING.md#startherecmd-step-by-step) walks through each step.
+Download this repository (**Code**, then **Download ZIP**), unzip it and double-click **`START-HERE.cmd`**. It is the release
+zip's guide, with two more steps: it asks where the server runs (this PC or a rented server), finds your game folders, installs
+any missing build tool after a yes, builds Amberline (several minutes) and installs it. [HOSTING.md](HOSTING.md#startherecmd-step-by-step) walks through each step.
 
 ### For developers
 
@@ -62,7 +63,7 @@ server runs (this PC or a rented server), finds your game folders, installs any 
 | `native/enet` | ENet (modified) and the bridge the server loads |
 | `native/exehost` | the x86 helper that runs unit movement from the player's own game executable |
 | `tests/Amberline.Tests` | the checks |
-| `START-HERE.cmd`, `tools/guide.ps1` | the setup guide: where Amberline goes, tools, build and install, step by step |
+| `START-HERE.cmd`, `tools/guide.ps1` | the setup guide, in the release zip too: where Amberline goes, tools, build and install, step by step |
 | `tools/` | `check.ps1` (build and checks), `build-server.ps1` (the deployable server and the release zip), `package-remote.ps1` (its server stage) and `player-file.ps1` with `play-bootstrap.cmd` (the players' `Play.cmd`) |
 
 **Requirements:** the .NET SDK named in `global.json`, PowerShell 7.5 or later and Zig (it builds the two native parts for Windows

@@ -268,27 +268,36 @@ public static class AirBotLobbyChecks
     }
 
     /// <summary>
-    /// Batch 666 (owner, 3 November 2026: "Disable cheats"): a home host's games give no seat the cheat commands, the host's own
-    /// included, until Settings allows them; then only the host's own login. The operator's start keeps every human seat.
+    /// Batch 680 (owner, 4 November 2026: "selected person will have cheats in all matches - only toggleable by the host"; it restates
+    /// batch 666's "Disable cheats" switch): a home host's games give the cheat commands to the logins Settings' list ticks, the host's
+    /// own as any other, and to nobody else. Before the list's first Save, batch 666's switch on ticks the host's own login (the
+    /// migration); once the list is saved, the old switch is ignored. The operator's start keeps every human seat; bots never cheat.
     /// </summary>
     [Check("server.host-cheats-off-by-default")]
-    public static void HomeGamesGiveCheatsOnlyToTheHostAndOnlyWhenSettingsAllowsThem() => HomeCheatsAsync().GetAwaiter().GetResult();
+    public static void HomeGamesGiveCheatsOnlyToTheLoginsSettingsTicks() => HomeCheatsAsync().GetAwaiter().GetResult();
 
     private static async Task HomeCheatsAsync()
     {
         TestAssert.Equal((true, true), await CheatSeatsAsync(null), "the operator's start: every human seat");
-        TestAssert.Equal((false, false), await CheatSeatsAsync(host => new { hostAccount = host }), "a platform.json from before the switch: nobody");
-        TestAssert.Equal((false, false), await CheatSeatsAsync(host => new { hostAccount = host, allowCheats = false }), "the switch off: nobody");
-        TestAssert.Equal((true, false), await CheatSeatsAsync(host => new { hostAccount = host, allowCheats = true }), "the switch on: the host's seat only");
-        TestAssert.Equal((false, false), await CheatSeatsAsync(host => new { allowCheats = true }), "the switch on without a host login: nobody");
-        TestAssert.Equal((false, false), await CheatSeatsAsync(_ => "{ damaged"), "a platform.json that cannot be read: nobody");
+        TestAssert.Equal((false, false), await CheatSeatsAsync((host, _) => new { hostAccount = host }), "a platform.json from before the switch: nobody");
+        TestAssert.Equal((false, false), await CheatSeatsAsync((host, _) => new { hostAccount = host, allowCheats = false }), "the old switch off: nobody");
+        TestAssert.Equal((true, false), await CheatSeatsAsync((host, _) => new { hostAccount = host, allowCheats = true }),
+            "the old switch on, no list yet: the migration ticks the host's own login");
+        TestAssert.Equal((false, false), await CheatSeatsAsync((_, _) => new { allowCheats = true }), "the old switch on without a host login: nobody");
+        TestAssert.Equal((false, true), await CheatSeatsAsync((host, friend) => new { hostAccount = host, allowCheats = true, cheatAccounts = new[] { friend } }),
+            "a saved list: its friend only, the old switch ignored");
+        TestAssert.Equal((true, true), await CheatSeatsAsync((host, friend) => new { hostAccount = host, cheatAccounts = new[] { friend, host } }),
+            "both ticked: both");
+        TestAssert.Equal((false, false), await CheatSeatsAsync((host, _) => new { hostAccount = host, allowCheats = true, cheatAccounts = Array.Empty<long>() }),
+            "a saved empty list: nobody, the old switch ignored");
+        TestAssert.Equal((false, false), await CheatSeatsAsync((_, _) => "{ damaged"), "a platform.json that cannot be read: nobody");
     }
 
     /// <summary>
     /// The cheat rights of the owner's (the host's) and a friend's seat in one launched custom game; <paramref name="settings"/> null is the
-    /// operator's start, else home mode with the platform.json it makes from the owner's account id.
+    /// operator's start, else home mode with the platform.json it makes from the owner's and the friend's account ids.
     /// </summary>
-    private static async Task<(bool Host, bool Friend)> CheatSeatsAsync(Func<long, object>? settings)
+    private static async Task<(bool Host, bool Friend)> CheatSeatsAsync(Func<long, long, object>? settings)
     {
         var root = TemporaryDirectory("league-host-cheats");
         try
@@ -302,7 +311,7 @@ public static class AirBotLobbyChecks
             if (settings is not null)
             {
                 var file = Path.Combine(root, "platform.json");
-                File.WriteAllText(file, settings(owner.Id) is string text ? text : JsonSerializer.Serialize(settings(owner.Id)));
+                File.WriteAllText(file, settings(owner.Id, friend.Id) is string text ? text : JsonSerializer.Serialize(settings(owner.Id, friend.Id)));
                 games.MayCheat = HostSettingsPage.CheatRule(file);
             }
             var lobby = Id(games.Create(owner, "Cheats", "", 1, 10, AirGameDtos.BlindPickConfigId, "CLASSIC", "NONE"));

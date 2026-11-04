@@ -178,10 +178,11 @@ public static class DominionRelicPickupChecks
         }
         TestAssert.True(begun is not null && death is not null && ended is not null,
             $"the champion channels, the relic dies and the channel ends (begun {begun}, relic dead {death}, ended {ended})");
-        TestAssert.True(death!.Value > 4.0 && death.Value < 5.0, $"the drain kills the relic about 4.5 s into the channel ({death:F3})");
-        // The server's channel starts with the use (no windup) and runs ChannelDuration from there.
-        TestAssert.True(Math.Abs(ended!.Value - begun!.Value - 5.25) <= 2 * Step,
-            $"the channel runs its whole ChannelDuration, 5.25 s, past the relic's death (from {begun:F3} to {ended:F3}, relic dead at {death:F3})");
+        TestAssert.True(death!.Value > 4.0 && death.Value < 5.25, $"the drain kills the relic about 4.5 s into the channel, after the 0.25 s windup ({death:F3})");
+        // Batch 678: the use winds up for the spell's cast time (0.25) and the channel runs ChannelDuration from that cast frame, as the client's
+        // bar does (dominion.greater-relic-channel-runs-with-the-client-channel-bar). It began at the use.
+        TestAssert.True(Math.Abs(ended!.Value - begun!.Value - 0.25 - 5.25) <= 2 * Step,
+            $"the use winds up 0.25 s and the channel runs its whole ChannelDuration, 5.25 s, past the relic's death (from {begun:F3} to {ended:F3}, relic dead at {death:F3})");
         TestAssert.True(forcedStops.Count == 0,
             $"no forced stop cuts the client's channel bar before it ends by itself (0x39 at {string.Join(", ", forcedStops.Select(at => at.ToString("F3")))})");
         TestAssert.True(!match.Runtime.Spells.UseSlotCoolingDown(hero),
@@ -191,6 +192,177 @@ public static class DominionRelicPickupChecks
             var count = hero.Buffs.Count(buff => buff.Name == name);
             TestAssert.True(count == 1, $"the champion holds one {name} after the pickup ({count})");
         }
+        TestAssert.True(match.Failures.Records.Count == 0, "no relic script raised: " + string.Join("; ", match.Failures.Records));
+    }
+
+    /// <summary>
+    /// Batch 678 (owner, 4 November 2026: "middle shards re-appear on timer even if they were never picked up"): a relic nobody takes stands
+    /// as the one unit it spawned as. Its place's respawn timer runs only from a pickup, so no second unit comes at the place while the first
+    /// still stands, and neither team's client is sent its OdinBombBuff particles (odin_relic_buf_*: the lightning, Odin_Prism_*) a second
+    /// time. Order takes the west crystal at 3:01; the east crystal and every health relic stay untaken past the west one's respawn.
+    /// </summary>
+    [Check("dominion.untaken-relics-are-never-spawned-again", TimeoutSeconds = 900)]
+    public static void UntakenRelicsAreNeverSpawnedAgain()
+    {
+        using var match = StartMatch();
+        var views = new Dictionary<Team, AnimationCapture>();
+        foreach (var seat in match.Runtime.Session.Participants.Select(participant => participant.Hero!))
+        {
+            views[seat.Team] = new AnimationCapture();
+            match.Runtime.Delivery.AddObserver(new ReplicationObserver(90UL + (ulong)views.Count, seat.Team, seat.NetId, views[seat.Team], ready: true));
+        }
+        var seen = new Dictionary<uint, string>();
+        // Per team: how often each effect bound to a relic was created (0x8C: the effect's net id at [25..28], the bound unit's at [29..32]).
+        var creates = views.Keys.ToDictionary(team => team, _ => new Dictionary<(uint Unit, uint Effect), int>());
+        void Step1()
+        {
+            match.Runtime.Tick(Step);
+            foreach (var unit in match.Runtime.World.Entities.Values)
+                if (unit.ChampionName is "OdinCenterRelic" or "OdinShieldRelic") seen.TryAdd(unit.NetId, unit.ChampionName);
+            foreach (var (team, view) in views)
+            {
+                foreach (var packet in view.Packets)
+                {
+                    var span = packet.Plaintext.Span;
+                    if (span.Length < 33 || span[0] != FxPackets.CreateGroupOpcode) continue;
+                    var key = (BinaryPrimitives.ReadUInt32LittleEndian(span[29..]), BinaryPrimitives.ReadUInt32LittleEndian(span[25..]));
+                    if (seen.ContainsKey(key.Item1)) creates[team][key] = creates[team].GetValueOrDefault(key) + 1;
+                }
+                view.Packets.Clear();
+            }
+        }
+        while (match.Runtime.Combat.CurrentTime < 182.5) Step1();
+        var first = seen.ToDictionary(entry => entry.Key, entry => entry.Value);
+        TestAssert.True(first.Count(entry => entry.Value == "OdinCenterRelic") == 2 && first.Count(entry => entry.Value == "OdinShieldRelic") == 10,
+            $"two greater and ten health relics stand at 3:01 ({string.Join(", ", first.GroupBy(entry => entry.Value).Select(group => $"{group.Key} {group.Count()}"))})");
+        var taken = Standing(match, "OdinCenterRelic", "LargeRelic1") ?? throw new InvalidOperationException("no greater relic stands at LargeRelic1 at 3:01");
+        var hero = match.Order;
+        hero.Position = new Position2(taken.Position.X + 200.0, taken.Position.Z);
+        match.Runtime.Session.Participant(OrderConnection)!.View.Visible.Add(taken.NetId); // DIAGNOSTICS: test seam, as above
+        TestAssert.True(Use(match, hero, taken), "the server takes the champion's use of the west crystal");
+        for (var tick = 0; tick < 9 * 30 && taken.Alive; tick++) Step1();
+        TestAssert.True(!taken.Alive, "Order takes the west crystal");
+        hero.Position = new Position2(taken.Position.X + 3000.0, taken.Position.Z);
+        // The taken crystal's respawn time is 180 s from its pickup (BehaviorTreeQuestHost.RelicPlacements): run 5 s past it.
+        var death = taken.DeathTime ?? throw new InvalidOperationException("the relic died with no death time");
+        while (match.Runtime.Combat.CurrentTime < death + 185.0) Step1();
+        TestAssert.True(Standing(match, "OdinCenterRelic", "LargeRelic1") is { } back && back.NetId != taken.NetId, "the taken crystal stands again after 180 s");
+        var untaken = first.Keys.Where(id => id != taken.NetId).ToList();
+        var again = seen.Keys.Except(first.Keys).Where(id => match.Runtime.World.Get(id) is not { } unit
+            || unit.Position.X != taken.Position.X || unit.Position.Z != taken.Position.Z).Select(id => $"{seen[id]} {id}").ToList();
+        TestAssert.True(again.Count == 0, $"no untaken relic's place spawns a second unit ({string.Join(", ", again)})");
+        foreach (var id in untaken)
+            TestAssert.True(match.Runtime.World.Entities.TryGetValue(id, out var unit) && unit.Alive, $"the untaken {first[id]} {id} still stands");
+        foreach (var (team, counts) in creates)
+        {
+            var centre = first.Single(entry => entry.Value == "OdinCenterRelic" && entry.Key != taken.NetId).Key;
+            TestAssert.True(counts.Keys.Count(key => key.Unit == centre) >= 1, $"{team}'s client is sent the untaken crystal's particles");
+            var twice = counts.Where(entry => untaken.Contains(entry.Key.Unit) && entry.Value > 1)
+                .Select(entry => $"{first[entry.Key.Unit]} {entry.Key.Unit} effect {entry.Key.Effect} x{entry.Value}").ToList();
+            TestAssert.True(twice.Count == 0, $"{team}'s client is sent each particle of an untaken relic once ({string.Join(", ", twice)})");
+        }
+        TestAssert.True(match.Failures.Records.Count == 0, "no relic script raised: " + string.Join("; ", match.Failures.Records));
+    }
+
+    /// <summary>
+    /// Batch 683 (the owner's game a26761c7 of 4 November 2026: "middle shards re-appear on timer even if they were never picked up causing the
+    /// lightning vfx to be visible again"): one capture plays the capture's lightning once. The use channel outlives the capture (batch 665), and
+    /// its ChannelingUpdateStats adds OdinBombSuppression to its Target whenever the Target holds none. The capture kills the relic and its death
+    /// clears that buff, so the next update added it again to the corpse; its 0.5 s drain found the corpse's mana at 5% and ran the capture branch
+    /// again until the corpse was reaped (CombatService.CorpseReapSeconds): in the owner's log 16 OdinBombSuccessParticle lightnings on the
+    /// champion from 450.1 to 457.9 s and the Storm Shield renewed to 57.8 s, from a single pickup.
+    /// </summary>
+    [Check("dominion.greater-relic-capture-lightning-plays-once", TimeoutSeconds = 600)]
+    public static void GreaterRelicCaptureLightningPlaysOnce()
+    {
+        using var match = StartMatch();
+        RunTo(match.Runtime, 182.5); // batch 476e: the crystals first spawn at game 181.96 (HUD 3:01)
+        var relic = Standing(match, "OdinCenterRelic", "LargeRelic1") ?? throw new InvalidOperationException("no greater relic stands at LargeRelic1 at 3:01");
+        var hero = match.Order;
+        hero.Position = new Position2(relic.Position.X + 200.0, relic.Position.Z);
+        match.Runtime.Session.Participant(OrderConnection)!.View.Visible.Add(relic.NetId); // DIAGNOSTICS: test seam, as above
+        var capture = new AnimationCapture();
+        match.Runtime.Delivery.AddObserver(new ReplicationObserver(99, hero.Team, hero.NetId, capture, ready: true));
+        match.Runtime.Delivery.Flush();
+        capture.Packets.Clear();
+        TestAssert.True(Use(match, hero, relic), "the server takes the champion's use of the greater relic (UseObject)");
+        var lightning = SpellPackets.BuffNameHash("OdinBombSuccessParticle");
+        var creates = new List<double>();
+        var corpseBuffs = new HashSet<string>();
+        for (var tick = 0; tick < 20 * 30; tick++)
+        {
+            match.Runtime.Tick(Step);
+            match.Runtime.Delivery.Flush();
+            foreach (var packet in capture.Packets)
+            {
+                var span = packet.Plaintext.Span;
+                if (span.Length >= 33 && span[0] == FxPackets.CreateGroupOpcode && BinaryPrimitives.ReadUInt32LittleEndian(span[6..]) == lightning)
+                    creates.Add(match.Runtime.Combat.CurrentTime);
+            }
+            capture.Packets.Clear();
+            // The character script's own holder (BbHookRouter.SpawnedCharacterBuff) stays with the unit through its death.
+            if (!relic.Alive) foreach (var buff in relic.Buffs.Where(buff => buff.Name != "BBCharacterScript")) corpseBuffs.Add(buff.Name);
+        }
+        TestAssert.True(!relic.Alive, "the champion takes the greater relic");
+        TestAssert.True(creates.Count == 1,
+            $"the capture's lightning (OdinBombSuccessParticle) is sent once, not again on the drain's timer ({creates.Count}: {string.Join(", ", creates.Select(at => at.ToString("F2")))})");
+        TestAssert.True(corpseBuffs.Count == 0, $"no buff is added to the relic's corpse ({string.Join(", ", corpseBuffs)})");
+        TestAssert.True(match.Failures.Records.Count == 0, "no relic script raised: " + string.Join("; ", match.Failures.Records));
+    }
+
+    /// <summary>
+    /// Batch 678 (owner, 4 November 2026: "channelling bar is not empty when the shard gets captured"): the greater relic's channel, measured
+    /// against the bar the user's client draws. The client is sent the use channel's cast answer (0xBD, BbSummonerModule.AnnounceUseChannel);
+    /// its SpellCaster starts the channel at the cast frame, the spell's cast time (0.25) after the answer, and runs the spell data's channel
+    /// time (ChannelDuration 5.25, GameData.SpellChannelDuration) from there. The server's channel (ChannelingStart adds the champion's
+    /// OdinCaptureChannelBomb buff) must start and end with that bar; it started at the answer, 0.25 s ahead. The capture (the relic's death and
+    /// OdinCenterRelicBuff, both in OdinBombSuppression's last drain) lands where the shipped scripts put it inside the channel: the charge at
+    /// AccumTime above 1.5 (ChannelingUpdateStats, on the 0.25 s grid), then seven drains of 7000 of 50000 mana 0.5 s apart, the first at once
+    /// (ExecutePeriodically, ExecuteImmediately), down to 5%: 4.5 to 4.75 s into the bar's 5.25. Script = retail: the shipped channel outlives
+    /// the capture (ChannelingSuccessStop's dead-Target branch; OdinBombSuccessParticle, 1 s from the capture, covers the rest of it).
+    /// </summary>
+    [Check("dominion.greater-relic-channel-runs-with-the-client-channel-bar", TimeoutSeconds = 600)]
+    public static void GreaterRelicChannelRunsWithTheClientChannelBar()
+    {
+        using var match = StartMatch();
+        RunTo(match.Runtime, 182.5); // batch 476e: the crystals first spawn at game 181.96 (HUD 3:01)
+        var relic = Standing(match, "OdinCenterRelic", "LargeRelic1") ?? throw new InvalidOperationException("no greater relic stands at LargeRelic1 at 3:01");
+        var hero = match.Order;
+        hero.Position = new Position2(relic.Position.X + 200.0, relic.Position.Z);
+        // DIAGNOSTICS: test seam, as in dominion.greater-relic-use-gives-the-storm-shield-and-respawns.
+        match.Runtime.Session.Participant(OrderConnection)!.View.Visible.Add(relic.NetId);
+        var capture = new AnimationCapture();
+        match.Runtime.Delivery.AddObserver(new ReplicationObserver(99, hero.Team, hero.NetId, capture, ready: true));
+        match.Runtime.Delivery.Flush();
+        capture.Packets.Clear();
+        var start = match.Runtime.Combat.CurrentTime;
+        TestAssert.True(Use(match, hero, relic), "the server takes the champion's use of the greater relic (UseObject)");
+        double? answer = null, begun = null, death = null, buff = null, ended = null;
+        for (var tick = 0; tick < 9 * 30 && ended is null; tick++)
+        {
+            // The use is answered in the step it is taken (the dispatcher runs before the step's delivery), so the first flush carries it.
+            match.Runtime.Delivery.Flush();
+            var now = match.Runtime.Combat.CurrentTime - start;
+            if (capture.Packets.Any(packet => packet.Plaintext.Span.Length >= 5 && packet.Plaintext.Span[0] == SpellPackets.CastSpellAnswerOpcode &&
+                    BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[1..]) == hero.NetId)) answer ??= now;
+            capture.Packets.Clear();
+            if (Channels(hero)) begun ??= now;
+            if (!relic.Alive) death ??= now;
+            if (hero.Buffs.Any(held => held.Name == "OdinCenterRelicBuff")) buff ??= now;
+            if (begun is not null && !UseChannel(match, hero, relic)) ended ??= now;
+            match.Runtime.Tick(Step);
+        }
+        TestAssert.True(answer is not null && begun is not null && death is not null && buff is not null && ended is not null,
+            $"the client is sent the cast answer, the channel runs and the relic is captured (answer {answer}, begun {begun}, relic dead {death}, buff {buff}, ended {ended})");
+        var data = match.Runtime.Spells.Data;
+        var barStart = answer!.Value + data.Spell("OdinCaptureChannelBomb").CastTime;
+        var barEnd = barStart + data.SpellChannelDuration("OdinCaptureChannelBomb");
+        var timeline = $"answer {answer:F3}, client bar {barStart:F3} to {barEnd:F3}, server channel {begun:F3} to {ended:F3}, relic dead {death:F3}, buff {buff:F3}";
+        TestAssert.True(Math.Abs(begun!.Value - barStart) <= Step, "the server's channel starts with the client's bar, at the cast frame: " + timeline);
+        TestAssert.True(Math.Abs(ended!.Value - barEnd) <= Step, "the server's channel ends with the client's bar: " + timeline);
+        TestAssert.True(Math.Abs(death!.Value - buff!.Value) <= Step, "the relic dies in the drain that gives the champion the Storm Shield: " + timeline);
+        TestAssert.True(death.Value - barStart >= 4.5 - Step && death.Value - barStart <= 4.75 + Step,
+            "the capture lands at the shipped drain's time, 4.5 to 4.75 s into the bar: " + timeline);
         TestAssert.True(match.Failures.Records.Count == 0, "no relic script raised: " + string.Join("; ", match.Failures.Records));
     }
 
@@ -295,9 +467,9 @@ public static class DominionRelicPickupChecks
     [Check("diagnostics.odin-relic-bubble-gate-withholds-only-its-0x26", TimeoutSeconds = 900)]
     public static void OdinRelicBubbleGateWithholdsOnlyItsPacket()
     {
-        // On by default since 29 October: "0" sends the packet, unset withholds it.
-        var unset = CenterRelicRun("0");
-        var set = CenterRelicRun(null);
+        // Off by default since 4 November (the owner ended the experiment): unset sends the packet, "1" withholds it.
+        var unset = CenterRelicRun(null);
+        var set = CenterRelicRun("1");
         TestAssert.True(unset.OwnBubbles >= 1, $"unset: the crystal's own 0x26 is sent ({unset.OwnBubbles})");
         TestAssert.True(set.OwnBubbles == 0, $"set: no 0x26 names the crystal ({set.OwnBubbles})");
         TestAssert.True(unset.ServerBubbles >= 1 && set.ServerBubbles == unset.ServerBubbles,
@@ -366,6 +538,10 @@ public static class DominionRelicPickupChecks
         hero.Position = new Position2(guardian.Position.X + 400.0, guardian.Position.Z);
         match.Runtime.Session.Participant(OrderConnection)!.View.Visible.Add(guardian.NetId); // DIAGNOSTICS: test seam, as above
         TestAssert.True(Use(match, hero, guardian), "the server takes the champion's use of a neutral guardian (UseObject)");
+        // Batch 678: the channel begins at the cast frame, the spell's cast time after the use (BbScriptChannels.BeginAfter).
+        TestAssert.True(UseChannel(match, hero, guardian, "OdinCaptureChannel") && match.Runtime.Spells.CaptureChannelTarget(hero) is null,
+            "the use winds up first: no channel before the cast frame");
+        for (var tick = 0; tick < 30 && match.Runtime.Spells.CaptureChannelTarget(hero) is null; tick++) match.Runtime.Tick(Step);
         TestAssert.True(ReferenceEquals(match.Runtime.Spells.CaptureChannelTarget(hero), guardian),
             "the use starts OdinCaptureChannel at the guardian (its Useable*HeroUseSpell)");
         TestAssert.True(match.Failures.Records.Count == 0, "no capture script raised: " + string.Join("; ", match.Failures.Records));
@@ -376,8 +552,8 @@ public static class DominionRelicPickupChecks
 
     // The use channel itself (BbScriptChannels), aimed at the relic. The channel's own buff outlives it: OdinCaptureChannelBomb's
     // ChannelingSuccessStop does not remove it (its ChannelingCancelStop does).
-    private static bool UseChannel(Match match, Entity hero, Entity relic) =>
-        match.Runtime.Spells.ChannelsUseAt(hero, relic, "OdinCaptureChannelBomb");
+    private static bool UseChannel(Match match, Entity hero, Entity relic, string spell = "OdinCaptureChannelBomb") =>
+        match.Runtime.Spells.ChannelsUseAt(hero, relic, spell);
 
     // UseObject as the stock client writes it: 0x3F, the sender's net ID, the used unit's net ID.
     private static bool Use(Match match, Entity hero, Entity used)

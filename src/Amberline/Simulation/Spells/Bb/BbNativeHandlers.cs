@@ -908,8 +908,14 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     // scripts spawn (BrandFissure's BBSpawnMinion passes Placemarker false: the spawn trace of the A/B runs). The cube is NoRender, so an effect bound
     // to it never enters the client's view (see SpellEffectCreate). Only a NoRender one: a placemarker that draws its own model (Orianna's ball) keeps
     // its bound effects, which stand on the model (oriana_ball_glow, yomu_ring).
+    // Batch 677 (GitHub issue #2): or a cube the client hides on its own. A NeverRender character is NoRender on the client from its creation
+    // (sets bit 13 of +0xA1C), and a ServerOnly one gets no replication manager (batch 464), so no server
+    // word lifts it or adds ForceRenderParticles: its bound particles are never drawn, whenever the script sets NoRender.
+    // Nasus's Spirit Fire binds its three effects to a SpellBook1 cube before the server holds the cube's NoRender (SpiritFire.OnBuffActivate
+    // creates the warning before its SetNoRender, and the statuses of an activation reach the unit when the hook ends), so they went out bound.
     private bool IsPlacemarkerCube(Entity unit) => (unit.Placemarker || unit.Name is "TestCube" or "SpellBook1" || IsTestCubeCharacter(unit)) &&
-        (Amberline.Simulation.Buffs.CharacterState.ActionWord(unit) & Amberline.Simulation.Buffs.CharacterState.NoRenderBit) != 0;
+        ((Amberline.Simulation.Buffs.CharacterState.ActionWord(unit) & Amberline.Simulation.Buffs.CharacterState.NoRenderBit) != 0 ||
+         unit.ChampionName is { } character && Spells.Data.OptionalChampion(character) is { NeverRender: true, ServerOnly: true });
 
     // Batch 668: Dominion's opening barrier keeps the script's bind (OdinOpeningBarrierParticle.luaobj, BindObjectVar Owner). Batch 521 sent it
     // unbound to keep the blur after the camera looks away, but the client drops the particles of any system that leaves the view unless the troy

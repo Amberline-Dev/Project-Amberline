@@ -1361,11 +1361,17 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// not in the client. Seen on the throwaway client by W23 (19 October 2026): Sivir's chain missiles are built (obj_SpellChainMissile
     /// constructed for every swing, the sync handler filled the hop list, UpdateProjectile walked all four hops) and Kayle's swings request
     /// their own sound events; native acceptance by the owner is still pending (the revert is this change alone). Misses and dodges keep their 0x0D (its slot byte picks the character's own miss and dodge attacks).
+    /// <para>
+    /// Batch 677 (GitHub issue #1): every override spell with spell data leaves as a cast, a scriptless one too. Final Hour's plain attack is
+    /// <c>VayneUltAttack</c> (VayneInquisition.OnBuffActivate, ExtraSlots 4), which ships only its inibin and .fx: its missile and hit particles are
+    /// the spell data's, which the client draws only from a cast of it. The script gate sent it as a 0x0D, so the client drew her own attack, while
+    /// the scripted <c>VayneTumbleUltAttack</c> of a Tumble under Final Hour went out as a cast and showed its particles.
+    /// </para>
     /// </summary>
     private bool RunAttackCast(Entity attacker, Entity target, uint missileNetId)
     {
         if (missileNetId == 0 || attacker.ScriptAttackOverride is not { } attack || !Owns(attacker) ||
-            _scripts.Find(attack.SpellName) is not { } script ||
+            !_host.Spells.Data.HasSpell(attack.SpellName) ||
             !_host.Spells.Effects.IsReferenceReady(attacker)) return false;
         var navigation = _host.Spells.Movement.Navigation;
         var at = new Position3(target.Position.X, navigation.HeightAt(target.Position), target.Position.Z);

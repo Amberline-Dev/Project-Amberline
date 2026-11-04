@@ -84,7 +84,7 @@ internal static class PlayerInstall
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     // The desktop file name rule; tools/player-file.ps1 and tools/build-server.ps1 check the same.
     private static readonly Regex NamePattern = new(@"^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,38}[A-Za-z0-9])?\z", RegexOptions.CultureInvariant);
-    private static readonly Regex ReservedName = new(@"^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    internal static readonly Regex ReservedName = new(@"^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     internal sealed record Record(string Install, string Air, string Game);
 
@@ -509,7 +509,7 @@ internal static class PlayerInstall
         return next;
     }
 
-    private static async Task<byte[]> GetAsync(HttpClient client, Uri uri, long limit, CancellationToken cancel)
+    internal static async Task<byte[]> GetAsync(HttpClient client, Uri uri, long limit, CancellationToken cancel)
     {
         using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancel);
         if (response.StatusCode != HttpStatusCode.OK) throw new HttpRequestException($"The server answered HTTP {(int)response.StatusCode}.", null, response.StatusCode);

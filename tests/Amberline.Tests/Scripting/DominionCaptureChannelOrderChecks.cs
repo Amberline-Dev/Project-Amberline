@@ -67,6 +67,8 @@ public static class DominionCaptureChannelOrderChecks
     public static void TheChannelEndsWhenThePointIsTaken()
     {
         var (runtime, hero, guardian, quests) = WalkIntoRangeAndOrder();
+        // Batch 678: the channel begins at the cast frame, the spell's cast time after the start (BbScriptChannels.BeginAfter).
+        TestAssert.True(Until(runtime, () => runtime.Spells.CaptureChannelTarget(hero) is not null, 0.5), "the channel begins after its windup");
         TestAssert.True(Until(runtime, () => runtime.Spells.CaptureChannelTarget(hero) is null ||
                 quests.CapturePointOwners.GetValueOrDefault(1) == Team.Order, 15.0) &&
             quests.CapturePointOwners.GetValueOrDefault(1) == Team.Order,

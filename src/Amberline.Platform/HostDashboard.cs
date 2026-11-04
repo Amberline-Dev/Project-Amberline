@@ -146,8 +146,10 @@ public sealed record NetworkResult(FirewallState? Firewall, FirewallProblem? Fir
 /// PC and reads the router's own internet address. The router keeps the ports only while Amberline runs: <see cref="DisposeAsync"/>
 /// removes them. A panel without a <see cref="HostNetwork"/> tests nothing. While <paramref name="homeOnly"/> says the host chose the
 /// home network only, a test reads the firewall rules but never asks the router, and removes the ports an earlier test opened.
+/// <paramref name="rules"/> and <paramref name="ports"/> are asked at each test and each Allow (batch 684: Settings' Games at the same time
+/// changes them while Amberline runs).
 /// </summary>
-public sealed class HostNetworkPanel(HostNetwork? network, IReadOnlyList<FirewallRule> rules, IReadOnlyList<UpnpPort> ports,
+public sealed class HostNetworkPanel(HostNetwork? network, Func<IReadOnlyList<FirewallRule>> rules, Func<IReadOnlyList<UpnpPort>> ports,
     Func<bool>? homeOnly = null) : IAsyncDisposable
 {
     /// <summary>The card after the host declined the Windows prompt (design 2.2, step 3).</summary>
@@ -158,7 +160,7 @@ public sealed class HostNetworkPanel(HostNetwork? network, IReadOnlyList<Firewal
     private UpnpGateway? _router;
 
     public bool Off => network is null;
-    public IReadOnlyList<FirewallRule> Rules => rules;
+    public IReadOnlyList<FirewallRule> Rules => rules();
     public NetworkResult Last { get; private set; } = NetworkResult.Pending;
 
     /// <summary>One whole test; the page shows each part as it finishes. A router that stopped answering is searched for again.</summary>
@@ -172,7 +174,7 @@ public sealed class HostNetworkPanel(HostNetwork? network, IReadOnlyList<Firewal
             IReadOnlyList<ShownRule>? shown = null;
             try { shown = await network.ReadFirewall(cancel); }
             catch (InvalidOperationException) { } // netsh did not start: the rules are unreadable
-            Last = Last with { Firewall = HostFirewall.Evaluate(rules, shown) };
+            Last = Last with { Firewall = HostFirewall.Evaluate(rules(), shown) };
             if (homeOnly?.Invoke() == true)
             {
                 // Friends on the home network reach this PC directly: the router keeps no port for Amberline.
@@ -193,7 +195,7 @@ public sealed class HostNetworkPanel(HostNetwork? network, IReadOnlyList<Firewal
                 }
                 if (_router is not null)
                 {
-                    problem = await _router.MapAsync(ports, cancel);
+                    problem = await _router.MapAsync(ports(), cancel);
                     external = await _router.ExternalAddressAsync(cancel);
                     if (problem == UpnpGateway.NotFound)
                     {
@@ -225,7 +227,7 @@ public sealed class HostNetworkPanel(HostNetwork? network, IReadOnlyList<Firewal
         await _busy.WaitAsync(cancel);
         try
         {
-            var attempt = await HostFirewall.AllowAsync(rules, cancel, network.ReadFirewall, network.RunElevated);
+            var attempt = await HostFirewall.AllowAsync(rules(), cancel, network.ReadFirewall, network.RunElevated);
             Last = Last with { Firewall = attempt.State ?? Last.Firewall, FirewallCard = attempt.Refusal ?? (attempt.Declined ? Declined : null) };
         }
         finally { _busy.Release(); }
@@ -243,8 +245,8 @@ public sealed class HostNetworkPanel(HostNetwork? network, IReadOnlyList<Firewal
     }
 }
 
-/// <summary>One running match as the dashboard counts it: its human players, its bots and the match server's state.</summary>
-public sealed record DashboardGame(int Players, int Bots, string State);
+/// <summary>One running match as the dashboard counts it: its human players, its bots, the match server's state and its game port.</summary>
+public sealed record DashboardGame(int Players, int Bots, string State, int Port = 0);
 
 /// <summary>One line of the network panel: <see cref="State"/> is ok, bad, unknown, waiting or checking.</summary>
 public sealed record DashboardCheck(string Id, string State, string Text);
@@ -277,24 +279,48 @@ public sealed class HostDashboard : IAsyncDisposable
     private readonly PlatformSettings _settings;
     private readonly Func<PlatformManagement.OnlineRow[]> _online;
     private readonly Func<IReadOnlyList<DashboardGame>> _games;
+    private readonly Func<int> _maxGames;
     private readonly DateTimeOffset _since = DateTimeOffset.Now;
     private readonly CancellationTokenSource _stop = new();
     private Task _testing = Task.CompletedTask;
     private HostSteps? _steps;
 
     /// <param name="platformProgram">The program the sign-in rule names; the running one by default.</param>
+    /// <param name="maxGames">How many games may run at once now (<see cref="GameManager.MaxGames"/>); the settings' value by default.</param>
     public HostDashboard(HostLoop loop, PlatformSettings settings, Func<PlatformManagement.OnlineRow[]> online,
-        Func<IReadOnlyList<DashboardGame>> games, string? platformProgram = null)
+        Func<IReadOnlyList<DashboardGame>> games, string? platformProgram = null, Func<int>? maxGames = null)
     {
         _loop = loop;
         _settings = settings;
         _online = online;
         _games = games;
+        _maxGames = maxGames ?? (() => settings.MaxGames);
+        var program = platformProgram ?? Environment.ProcessPath!;
         Network = new HostNetworkPanel(loop.Network,
-            HostFirewall.Rules(platformProgram ?? Environment.ProcessPath!, settings.ServerExecutable, settings.RemotePort, settings.FirstGamePort, settings.MaxGames),
-            UpnpGateway.HostPorts(settings.RemotePort, settings.FirstGamePort, settings.MaxGames), () => HomeOnly);
+            () => HostFirewall.Rules(program, settings.ServerExecutable, settings.RemotePort, settings.FirstGamePort, _maxGames()), RouterPorts, () => HomeOnly);
         Attention = new HostAttention(loop, games, Network.TestAsync);
     }
+
+    /// <summary>The game ports in the page's words: "UDP 5219" for one game, else "UDP 5219 to 5222".</summary>
+    public static string GamePortsText(int firstGamePort, int games) =>
+        games == 1 ? $"UDP {firstGamePort}" : $"UDP {firstGamePort} to {firstGamePort + games - 1}";
+
+    /// <summary>The game ports for the games that may run at once now.</summary>
+    public string GamePorts => GamePortsText(_settings.FirstGamePort, _maxGames());
+
+    /// <summary>
+    /// What the router forwards: the sign-in port, the game ports, and the port of a game still running above a lowered range, which a
+    /// lower Games at the same time never ends (batch 684).
+    /// ponytail: that port stays forwarded until the next test after the game ends (Test again, a Settings save, a restart).
+    /// </summary>
+    private IReadOnlyList<UpnpPort> RouterPorts()
+    {
+        var ports = UpnpGateway.HostPorts(_settings.RemotePort, _settings.FirstGamePort, _maxGames());
+        return [.. ports, .. _games().Select(game => new UpnpPort("UDP", game.Port)).Where(port => port.Port > 0 && !ports.Contains(port)).Distinct()];
+    }
+
+    /// <summary>A test now, in the background: the home-network choice changed, or Settings saved another Games at the same time (batch 684).</summary>
+    public void TestAgain() => _testing = Task.WhenAll(_testing, TestInBackgroundAsync());
 
     public HostNetworkPanel Network { get; }
 
@@ -307,7 +333,7 @@ public sealed class HostDashboard : IAsyncDisposable
     /// <summary>The matches still to end: starting, waiting for players or being played.</summary>
     public static IReadOnlyList<DashboardGame> RunningGames(GameManager manager) =>
         manager.List(new HostGuest("", "", "", Admin: true)).Where(game => RunningStates.Contains(game.State))
-            .Select(game => new DashboardGame(game.Seats.Count(seat => !seat.Player.IsBot), game.Seats.Count(seat => seat.Player.IsBot), game.State))
+            .Select(game => new DashboardGame(game.Seats.Count(seat => !seat.Player.IsBot), game.Seats.Count(seat => seat.Player.IsBot), game.State, game.Port))
             .ToArray();
 
     /// <summary>
@@ -318,7 +344,7 @@ public sealed class HostDashboard : IAsyncDisposable
     {
         _steps = steps;
         // Turning the home-network choice on removes the router's ports, turning it off asks the router again.
-        if (steps is not null) steps.HomeNetworkChanged = () => _testing = Task.WhenAll(_testing, TestInBackgroundAsync());
+        if (steps is not null) steps.HomeNetworkChanged = TestAgain;
         Attention.Map(app, steps, certificate);
         Support?.Map(app, this, steps);
         app.Use((context, next) =>
@@ -447,7 +473,7 @@ public sealed class HostDashboard : IAsyncDisposable
         var games = _games();
         return new DashboardStatus("running", _since, headline, address, network, friend, [.. checks],
             [.. _online().Select(row => new DashboardPerson(row.Username, row.Summoner, row.Doing, row.Since))],
-            games.Count, _settings.MaxGames,
+            games.Count, _maxGames(),
             [.. games.Select((game, index) => $"Game {index + 1} · {Count(game.Players, "player")}" +
                 (game.Bots > 0 ? $" and {Count(game.Bots, "bot")}" : "") + " · " + StateWords(game.State))],
             [.. cards], guide);
@@ -474,8 +500,7 @@ public sealed class HostDashboard : IAsyncDisposable
     /// <summary>The router guide of design section 5.5, with the values Amberline knows.</summary>
     private string[] Guide(NetworkResult net)
     {
-        var lastGame = _settings.FirstGamePort + _settings.MaxGames - 1;
-        var games = lastGame == _settings.FirstGamePort ? $"UDP {_settings.FirstGamePort}" : $"UDP {_settings.FirstGamePort} to {lastGame}";
+        var games = GamePorts;
         var model = Model(net.Router?.ModelName, "{0}");
         return
         [

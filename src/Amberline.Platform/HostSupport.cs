@@ -207,8 +207,8 @@ public sealed class HostSupport : IAsyncDisposable
             _ => $"{usernames[0]}, {usernames[1]} and {usernames.Count - 2} more friends",
         };
         var one = usernames.Count == 1;
-        var last = _settings.FirstGamePort + _settings.MaxGames - 1;
-        var ports = last == _settings.FirstGamePort ? $"UDP {_settings.FirstGamePort}" : $"UDP {_settings.FirstGamePort} to {last}";
+        // The dashboard's are the ports of the games that may run now (batch 684: Settings changes them while Amberline runs).
+        var ports = _dashboard?.GamePorts ?? HostDashboard.GamePortsText(_settings.FirstGamePort, _settings.MaxGames);
         var check = homeOnly
             ? $"Check Windows Firewall (the Network list above) and that {(one ? "their PC is" : "their PCs are")} on your home network."
             : $"Check that your router forwards {ports} to this PC and that Windows Firewall lets Amberline in. A VPN on their side can also block games.";

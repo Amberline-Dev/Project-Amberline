@@ -34,22 +34,24 @@ short code such as `(A-NET-02)`: look it up in [TROUBLESHOOTING.md](TROUBLESHOOT
 - For friends outside your home: a router that lets them in. Amberline asks your router for this itself (with UPnP, a router
   feature). If your router does not allow it, the dashboard shows you how to do it by hand.
 
-Each friend needs their own copy of the same game and AIR client.
+Each friend needs their own copy of the same game and AIR client, unless you share yours with them ([Game files](#game-files)).
 
 ## Two ways to install
 
-- **`START-HERE.cmd`** (in the code download): it builds Amberline on your PC. It finds the tools a build needs and installs a
-  missing one after you say yes. Use this when there is no release zip, or to try the newest code.
+Both start with the same guide: double-click **`START-HERE.cmd`**. It asks the same questions in the same order.
+
 - **The release zip** (`Amberline-<version>-win-x64.zip`, on this repository's Releases page when one is published): nothing is
-  built. Amberline brings everything it needs, so you install nothing else.
+  built. Amberline brings everything it needs, so you install nothing else. The guide skips its steps 4 and 5.
+- **The code download** (**Code**, then **Download ZIP**): the guide builds Amberline on your PC. It finds the tools a build
+  needs and installs a missing one after you say yes. Use this when there is no release zip, or to try the newest code.
 
 Both install the same Amberline in the same way. A release always counts as newer than a build made with `START-HERE.cmd`, so it
 replaces that build when you start it.
 
 ## START-HERE.cmd, step by step
 
-Download the code (**Code**, then **Download ZIP**), unzip it and double-click `START-HERE.cmd`. A window named **Amberline
-setup** asks one question at a time: type each answer, then press Enter. A yes or no always says **Type Y for yes or N for no.**
+Unzip the release zip or the code download (**Code**, then **Download ZIP**) and double-click `START-HERE.cmd`. In the release
+zip, a double-click on `Start Amberline.cmd` opens it too. A window named **Amberline setup** asks one question at a time: type each answer, then press Enter. A yes or no always says **Type Y for yes or N for no.**
 To stop, close the window.
 
 If you ran it before, it shows **Last time you chose:** and asks **Use these answers again?** Even after `N`, the folders you
@@ -58,7 +60,9 @@ chose last time are searched first.
 ### Step 1 of 6: Where will your server run?
 
 Type `1` for **On this PC** (see also [LAN party](#only-your-home-network-lan-party)) or `2` for **On a rented server** (see
-[A rented server](#a-rented-server)).
+[A rented server](#a-rented-server)). The release zip installs Amberline only on the PC it runs on, so there `2` changes
+nothing: the guide says to unzip the zip on a Windows server and type `1` there, or to build a Linux server's package from the
+code download.
 
 ### Step 2 of 6: Your game and AIR client folders
 
@@ -76,17 +80,22 @@ also works (**Looking inside that folder**). It asks for the game folder first, 
 - **Where should Amberline be installed?**: type a full path, or press Enter for `C:\Amberline`. With a **Problem:** line it
   refuses a whole drive, Program Files, a OneDrive folder, a folder inside the download or inside your game or AIR client folder,
   and a folder that holds other files.
-- If Amberline is installed already, the guide names your version and this download's and asks **Update this Amberline now?**
-  Updating also repairs it; settings, logins and friends stay. `N` changes nothing. To install elsewhere, uninstall first
-  (`Uninstall Amberline.cmd` in its folder). If yours is a release (or newer), the guide ends after step 1 with **Nothing was
-  changed**: update it with the newest release zip. A game or AIR client the install already holds is used from there.
+- If Amberline is installed already, the guide skips steps 1 and 2 (**Steps 1 and 2 of 6: not needed.**), names your version
+  and this download's and asks **Update this Amberline now?** Updating also repairs it; settings, logins, friends and the
+  install's game and AIR client stay. `N` changes nothing. `R` builds a package for a rented server instead (step 1 answered
+  **On a rented server**; the release zip says that this package is built from the code download). To install elsewhere,
+  uninstall first (`Uninstall Amberline.cmd` in its folder). If yours is a release (or newer), the guide asks **Build a package
+  for a rented server instead?** (the release zip ends at once with **Nothing was changed**): update it with the newest release
+  zip. A release zip of the version you have starts it (**Amberline ... is already installed. Starting it.**).
 - It lists what it copies, their size and the drive's free space. From an AIR client folder only the AIR client's own files go.
 - **Delete the originals?**: with `Y` your original game and AIR client folders go once the copies are checked (on the same
   drive they are moved). Only the clients' own files are deleted. With `N` you keep two copies.
 
 ### Step 4 of 6: Build tools
 
-The guide looks for the .NET SDK, PowerShell 7 and Zig. For a missing one it says **Missing: <tool> (...)** and asks **Install
+The release zip is built already: the guide says **Steps 4 and 5 of 6: not needed.** and goes on with step 6.
+
+From the code download, the guide looks for the .NET SDK, PowerShell 7 and Zig. For a missing one it says **Missing: <tool> (...)** and asks **Install
 <tool> now? This accepts its license.**
 
 - `Y` installs it with `winget`. If Windows asks, choose **Yes**.
@@ -107,18 +116,20 @@ continue.**; the update ends any game in progress. Then follow [the setup page](
 
 The guide ends with a **Summary**: the install folder, what happens now, the setup page, how to update and its log (in
 `.artifacts\start-here` in the download; your PC's and Windows account's names are written as `<hidden>`). The window then says
-**Press Enter to close.** To update later, download the newest code and double-click `START-HERE.cmd` again.
+**Press Enter to close.** To update later: choose **Update now** on Amberline's page (see [Updates](#updates)), or unzip
+the newest release and double-click its `START-HERE.cmd`. With the code: download the newest code and double-click
+`START-HERE.cmd` again.
 
 ## The release zip
 
 1. Download `Amberline-<version>-win-x64.zip` from this repository's Releases page. Check that its SHA-256 matches the one
    listed there. To see it, open PowerShell in the zip's folder and type `Get-FileHash .\Amberline-<version>-win-x64.zip`.
 2. Unzip the whole zip into a folder. Keep the folders inside it together.
-3. Double-click `Start Amberline.cmd`. If Windows warns you, see [Windows warnings](TROUBLESHOOTING.md#windows-warnings).
-4. A window named **Amberline** asks **Where should Amberline be installed?**: **Type a folder, or press Enter for
-   C:\Amberline**. It refuses the same folders as `START-HERE.cmd` (see step 3 above).
-5. Amberline copies itself into that folder, puts an **Amberline** icon on your desktop and opens its setup page in your web
-   browser. The setup page's folder step offers to copy your game and AIR client into the install folder.
+3. Double-click `START-HERE.cmd` (`Start Amberline.cmd` opens it too). If Windows warns you, see
+   [Windows warnings](TROUBLESHOOTING.md#windows-warnings).
+4. Answer its questions, as in [START-HERE.cmd, step by step](#start-herecmd-step-by-step). It skips steps 4 and 5.
+5. A window named **Amberline** copies the program, the game and the AIR client into the install folder, puts an
+   **Amberline** icon on your desktop and opens its setup page in your web browser.
 
 You can delete the zip and the unzipped folder afterwards. The zip's `READ ME FIRST.txt` says the same.
 
@@ -259,7 +270,8 @@ needs one:
 ### Your router
 
 While Amberline runs, it asks your router (with UPnP) to send the sign-in port, TCP 8391, and the game ports, UDP 5219 to 5222,
-to this PC. When Amberline stops, it removes them again. If your router does not do this, the dashboard shows **Open the ports
+to this PC (one game port per game: with more [games at the same time](#settings-and-uninstall), more ports, for example UDP
+5219 to 5226 for eight). When Amberline stops, it removes them again. If your router does not do this, the dashboard shows **Open the ports
 on your router by hand**:
 
 1. Open your router's page. Its address and password are often on a sticker on the router.
@@ -269,7 +281,7 @@ on your router by hand**:
    pointing at it.
 5. Press **Test again**. Or switch on UPnP in the router ("Allow programs to open ports"), then press **Test again**.
 
-The dashboard fills in your router's address, this PC's address and your router's model where it knows them.
+The dashboard fills in your router's address, this PC's address, your router's model and the game ports where it knows them.
 
 ## Invite a friend
 
@@ -332,13 +344,20 @@ leaves it without saving; after **Save** Settings says **Saved.**
 - **Your game folders**: **Change the folders** works like the folder step. Amberline restarts to use new folders, so it refuses
   while a game is running. In an installed Amberline it offers to copy folders from elsewhere into the install folder. The page is
   headed **Change the folders**; after **Save** Amberline restarts and comes back here, where **Saved.** says so.
+- **Games**: **Games at the same time**, 1 to 32 (4 at first). Each game uses about one CPU core, some memory and its own game
+  port; the page shows the ports, for example UDP 5219 to 5222. After **Save** it counts for the next game that starts: a running
+  game goes on, and with a lower number a new game waits until fewer run. The router gets the new ports at once. Windows Firewall
+  asks you first: with more games the dashboard says **Windows Firewall's rule must be updated for the new game ports.** Choose
+  **Allow through Windows Firewall** there and press **Yes**. Fewer games need nothing. Play files stay as they are.
 - **Updates**: whether the daily check is on; **Change the update check** opens the [Updates](#updates) page.
 - **Play file**: **Download the Play file**, and **Make new Play files**, which makes a new certificate and restarts: every
   friend's Play file stops working, so send them all the new one. It asks first; **Cancel** comes back to Settings.
 - **Sign-ups**: see below.
-- **Cheat commands**: **Allow cheat commands in my games** is off at first, for everyone, you included. Tick it and choose
-  **Save** to let your own login use the testing commands in games that start from then on. Your friends never can. Untick it
-  and **Save** to turn them off again.
+- **Game files**: see below.
+- **Cheat commands**: every login on your server, yours included (marked **(you)**), with a box each. A ticked login can use the
+  testing commands in every game it plays here, from the next game that starts; nobody is ticked at first, and bots never can.
+  Tick or untick the boxes and choose **Save**. Only you can change the list, on this page; your friends cannot. If you had
+  turned on the old **Allow cheat commands in my games**, your own login starts ticked.
 - **Uninstall Amberline**: see below.
 
 ### Sign-ups
@@ -356,6 +375,27 @@ like; Invite shows it too.
   in an hour.**
 - New logins appear in [Friends](#friends), where **Remove access** stops one. Untick the box and **Save** to close the page at
   once; nothing else of Amberline is ever on that port.
+
+### Game files
+
+**Share the game files with players** is off at first. Beside it Settings says: you share your own copy of the game, so make sure
+you may share it; Amberline itself never ships these files. Tick it and choose **Save**: a player whose PC has no game or AIR client
+of their own can then download yours with the Play file. Anyone with your Play file can download it.
+
+- Amberline first checks every file once, which takes a few minutes; Settings says so until it is done, then shows what it shares:
+  the game folder and the AIR client folder, each with its size. The download uses your internet upload.
+- It shares exactly the game folder you chose (with its language files beside it) and the AIR client's own files. It never shares
+  what the game and the AIR client write as they run (their logs, crash files and the last match's command line), anything else in
+  those folders, or anything of Amberline's own (logins, settings, certificate).
+- A copy whose game or AIR client executable is not the 1.0.0.126 one, or a folder that holds a link, is not shared: Settings says
+  **Your copy cannot be shared** and why. Fix the folder, then choose **Save** again.
+- Each player downloads at most four files at a time, and all players together sixteen, so a game that is running keeps its share of
+  your connection. A player whose download stops continues where it stopped.
+- Untick the box and **Save** to stop sharing at once.
+
+On the player's side, the setup window then offers **Download the game from** your server's name, with the size. It checks every
+file against the list your server sends and both executables against the 1.0.0.126 ones, and puts the game in the same folder a
+player's own copy would go. A player who has their own copy uses it as before.
 
 ### Uninstall Amberline
 
@@ -397,8 +437,9 @@ The download goes into the `data\updates` folder of your install. The next updat
 You can still update by hand. Under **Or update by hand**, the page has **Open the download page** and the steps:
 
 1. Download the new zip from this repository's Releases page and unzip it.
-2. Double-click its `Start Amberline.cmd`. The window names your version and the zip's, says that updating ends any game in
-   progress and that closing the window keeps the one you have, then **Press Enter to continue.** Your settings and friends stay.
+2. Double-click its `START-HERE.cmd` (`Start Amberline.cmd` opens it too) and answer `Y` to **Update this Amberline now?**.
+   The new window names your version and the zip's, says that updating ends any game in progress and that closing the window
+   keeps the one you have, then **Press Enter to continue.** Your settings and friends stay.
 3. If the new version does not start, the version you had comes back by itself.
 
 A zip with an older version than yours changes nothing. If you installed with `START-HERE.cmd`, you can also download the
@@ -457,7 +498,8 @@ depend on your PC or your router.
 
 ### With START-HERE.cmd
 
-Run `START-HERE.cmd` on your own PC and type `2` at step 1. It asks:
+Run the code download's `START-HERE.cmd` on your own PC and type `2` at step 1 (the release zip builds no server package).
+It asks:
 
 - **Type the address**: a name or a number address with dots, as your hosting company shows it, without `https://` and without
   a port.

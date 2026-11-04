@@ -834,6 +834,17 @@ public sealed partial class NavigationGrid
     internal bool HasHeroMovementLineOfSight(Position2 source, Position2 target) =>
         HasExactLineOfSight(source, target, IsMovementWalkable);
 
+    /// <summary>
+    /// <see cref="HasHeroMovementLineOfSight"/> for a chord that leaves the hero's own position: the cell it starts in is not tested, as the
+    /// client's A* seeds its start cell untested (see <c>ClientPathPlanner</c>), so a hero
+    /// standing on a blocked cell beside floor plans out of it (batch 676).
+    /// </summary>
+    internal bool HasHeroMovementLineOfSightLeaving(Position2 source, Position2 target)
+    {
+        var own = WorldToCell(source);
+        return HasExactLineOfSight(source, target, cell => cell == own || IsMovementWalkable(cell));
+    }
+
     /// <summary>Checks a hero segment against the client-sized turret pathing grid.</summary>
     internal bool HasHeroPathingLineOfSight(Position2 source, Position2 target) =>
         HasExactLineOfSight(source, target, IsHeroPathingWalkable);

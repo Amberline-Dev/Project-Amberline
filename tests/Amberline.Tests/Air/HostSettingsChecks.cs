@@ -26,6 +26,95 @@ public static class HostSettingsChecks
     [Check("server.host-settings-change", TimeoutSeconds = 240)]
     public static void SettingsChangeWhatTheFirstRunAskedWithItsOwnPages() => SettingsAsync().GetAwaiter().GetResult();
 
+    /// <summary>
+    /// Batch 680 (owner, 4 November 2026: "selected person will have cheats in all matches - only toggleable by the host"): Settings'
+    /// Cheat commands lists every login, the host's own included, with a box each and one Save. An install whose batch-666 switch was
+    /// on shows the host's own login ticked; the first Save writes the list and drops the old switch. A friend's session (its tunnel
+    /// token on the friends' port, or a browser on this PC without the host's session) can neither see nor change it.
+    /// </summary>
+    [Check("server.host-cheat-list-only-the-host", TimeoutSeconds = 180)]
+    public static void OnlyTheHostTicksWhoMayUseTheCheatCommands() => CheatListAsync().GetAwaiter().GetResult();
+
+    private static async Task CheatListAsync()
+    {
+        var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        var champions = ChampionCatalog.All.Count;
+        var home = Home.Create("league-host-cheat-list");
+        long hostId, friendId;
+        using (var accounts = new PlatformAccounts(home.Loop.Paths.Data))
+        {
+            hostId = accounts.RegisterPublic("cheat_host", "Synthetic-host-Pw-41", "Cheat Host").Id;
+            friendId = accounts.RegisterPublic("cheat_friend", "Synthetic-friend-Pw-41", "<b>Friend</b>").Id;
+        }
+        // A friend's session: the tunnel token its Play file's companion holds.
+        var tunnel = new AirRemoteAccess(Path.Combine(home.Loop.Paths.Data, "remote")).Issue(friendId).Token;
+        // Batch 666's switch on, no list yet.
+        HostInviteChecks.WriteSettings(home, new { serverName = "Cheat League", publicHost = "127.0.0.1", addressSource = HostAddress.Typed, hostAccount = hostId, allowCheats = true });
+        var rule = HostSettingsPage.CheatRule(home.Loop.Paths.Settings);
+        var run = Task.Run(() => HostMode.RunAsync(home.Loop));
+        try
+        {
+            using var browser = HostSessionChecks.Browser(home);
+            await WaitForHealthAsync(browser, "ready", run);
+            await home.SignInAsync(browser);
+            string Box(long id, bool ticked) => $"<input type=checkbox name=cheat value={id}{(ticked ? " checked" : "")}>";
+            var page = await GetAsync(browser, HostSettingsPage.PagePath);
+            Has(page, "<h2 id=cheats-title>Cheat commands</h2>", $"action={HostSettingsPage.CheatsPath}",
+                Box(hostId, true) + "<span><b>cheat_host</b> · Cheat Host (you)</span></label>",
+                Box(friendId, false) + "<span><b>cheat_friend</b> · &lt;b&gt;Friend&lt;/b&gt;</span></label>");
+            TestAssert.False(page.Contains("Allow cheat commands in my games", StringComparison.Ordinal), "batch 666's switch is gone: " + page);
+            TestAssert.True(rule(hostId) && !rule(friendId), "the migration: the old switch on ticks the host's own login, nobody else's");
+
+            // A friend's session can neither see nor change the list.
+            var before = File.ReadAllText(home.Loop.Paths.Settings);
+            HttpRequestMessage Friend(HttpMethod method, string url)
+            {
+                var request = new HttpRequestMessage(method, url)
+                    { Content = method == HttpMethod.Get ? null : new FormUrlEncodedContent([new("cheat", friendId.ToString())]) };
+                request.Headers.Authorization = new("Bearer", tunnel);
+                return request;
+            }
+            var friends = $"https://127.0.0.1:{home.RemotePort}";
+            using (var ladder = await browser.SendAsync(Friend(HttpMethod.Get, friends + "/ladder")))
+                TestAssert.Equal(HttpStatusCode.OK, ladder.StatusCode, "the friend's token is a live session on the friends' port");
+            foreach (var (method, path) in new[] { (HttpMethod.Get, HostSettingsPage.PagePath), (HttpMethod.Post, HostSettingsPage.CheatsPath) })
+            {
+                using (var remote = await browser.SendAsync(Friend(method, friends + path)))
+                    TestAssert.Equal(HttpStatusCode.NotFound, remote.StatusCode, $"{method} {path} on the friends' port");
+                using var stranger = home.Client();
+                using (var local = await stranger.SendAsync(Friend(method, path)))
+                    TestAssert.Equal(HttpStatusCode.Forbidden, local.StatusCode, $"{method} {path} on this PC without the host's session");
+            }
+            using (var expired = await browser.PostAsync(HostSettingsPage.CheatsPath, new FormUrlEncodedContent([new("cheat", friendId.ToString())])))
+                TestAssert.Equal(HttpStatusCode.BadRequest, expired.StatusCode, "the host's browser without the page's token");
+            TestAssert.Equal(before, File.ReadAllText(home.Loop.Paths.Settings), "nothing a friend sent changed platform.json");
+
+            // The host's Save: the friend ticked, the host's own box not; ids that are no login are dropped. The old switch goes.
+            await SavedAsync(browser, HostSettingsPage.CheatsPath, "cheats", HostSettingsPage.PagePath,
+                ("cheat", friendId.ToString()), ("cheat", "999999"), ("cheat", "-1"), ("cheat", "x"));
+            Has(await GetAsync(browser, HostSettingsPage.PagePath + "?saved=cheats"), "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
+                Box(hostId, false) + "<span><b>cheat_host</b>", Box(friendId, true) + "<span><b>cheat_friend</b>");
+            TestAssert.Equal(friendId.ToString(), string.Join(",", CheatList(home) ?? []), "platform.json ticks the friend only");
+            TestAssert.True(!rule(hostId) && rule(friendId), "games give the cheat commands to the ticked login only");
+            TestAssert.False(File.ReadAllText(home.Loop.Paths.Settings).Contains("allowCheats", StringComparison.Ordinal), "the old switch is dropped");
+            TestAssert.Equal("Cheat League", Setting(home, "serverName"), "the list keeps the other settings");
+
+            // Both ticked, then none: a saved empty list ticks nobody (the old switch never comes back).
+            await SavedAsync(browser, HostSettingsPage.CheatsPath, "cheats", HostSettingsPage.PagePath, ("cheat", hostId.ToString()), ("cheat", friendId.ToString()));
+            TestAssert.True(rule(hostId) && rule(friendId), "both ticked: both");
+            await SavedAsync(browser, HostSettingsPage.CheatsPath, "cheats", HostSettingsPage.PagePath);
+            TestAssert.Equal("", string.Join(",", CheatList(home) ?? [-1]), "an empty list is saved");
+            TestAssert.True(!rule(hostId) && !rule(friendId), "none ticked: nobody");
+        }
+        finally
+        {
+            await home.StopAsync(run);
+            foreach (var pair in saved) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+        }
+        TestAssert.Equal(champions, ChampionCatalog.All.Count, "the champion list stays as it was");
+        Delete(home.Root);
+    }
+
     [Check("server.host-uninstall", TimeoutSeconds = 300)]
     public static void UninstallRemovesOnlyAmberlinesOwnPartsOnceItHasEnded() => UninstallAsync().GetAwaiter().GetResult();
 
@@ -93,17 +182,12 @@ public static class HostSettingsChecks
             TestAssert.Equal(HostAddress.Lan, Setting(home, "addressSource"), "and where it came from");
             TestAssert.Equal(updatesBefore, File.Exists(updates) ? File.ReadAllText(updates) : null, "Settings' address leaves the update choice alone");
 
-            // Batch 666: cheat commands, off until the host ticks the switch and saves; Save with it unticked turns them off again.
-            const string cheatBox = "<input type=checkbox name=on value=on aria-describedby=cheats-hint";
-            Has(page, $"action={HostSettingsPage.CheatsPath}", cheatBox + ">Allow cheat commands in my games</label>", "Only your own login can use them.");
-            TestAssert.False(Cheats(home), "platform.json allows no cheats at first");
-            await SavedAsync(browser, HostSettingsPage.CheatsPath, "cheats", HostSettingsPage.PagePath, ("on", "on"));
-            Has(await GetAsync(browser, HostSettingsPage.PagePath + "?saved=cheats"), "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
-                cheatBox + " checked>Allow cheat commands in my games");
-            TestAssert.True(Cheats(home), "platform.json allows the cheats");
-            TestAssert.Equal("192.168.1.20", Setting(home, "publicHost"), "the switch keeps the other settings");
-            await SavedAsync(browser, HostSettingsPage.CheatsPath, "cheats", HostSettingsPage.PagePath);
-            TestAssert.False(Cheats(home), "unticked and saved: no cheats");
+            // Batch 680: Cheat commands lists every login (batch 666's one switch is gone); before the first login it says so. The list,
+            // its Save and its migration: server.host-cheat-list-only-the-host.
+            Has(page, "<h2 id=cheats-title>Cheat commands</h2>", "Nobody has a login yet.");
+            TestAssert.False(page.Contains("Allow cheat commands in my games", StringComparison.Ordinal) || page.Contains($"action={HostSettingsPage.CheatsPath}", StringComparison.Ordinal),
+                "no switch and no empty form: " + page);
+            TestAssert.True(CheatList(home) is null, "platform.json ticks nobody");
 
             // The folders: the first run's rows and checks; a saved choice restarts Amberline (in this process: the check's loop has no next one).
             var folders = await FolderPageAsync(browser, HostSettingsPage.FoldersPath);
@@ -474,10 +558,12 @@ public static class HostSettingsChecks
 
     private static string Entries(string folder) => string.Join(", ", Directory.EnumerateFileSystemEntries(folder).Select(Path.GetFileName).Order(StringComparer.Ordinal));
 
-    private static bool Cheats(Home home)
+    /// <summary>platform.json's <c>cheatAccounts</c> (batch 680), or null while it has none.</summary>
+    private static long[]? CheatList(Home home)
     {
         using var json = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings));
-        return json.RootElement.TryGetProperty("allowCheats", out var value) && value.GetBoolean();
+        return json.RootElement.TryGetProperty("cheatAccounts", out var value) && value.ValueKind == JsonValueKind.Array
+            ? value.EnumerateArray().Select(id => id.GetInt64()).ToArray() : null;
     }
 
     private static string? Setting(Home home, string name)
@@ -525,9 +611,8 @@ public static class HostSettingsChecks
     private static async Task<HttpResponseMessage> PostAsync(HttpClient client, string path, string tokenPage, params (string Name, string Value)[] fields)
     {
         var token = Token(tokenPage.StartsWith('/') ? await client.GetStringAsync(tokenPage) : tokenPage);
-        var form = new Dictionary<string, string> { [token.Key] = token.Value };
-        foreach (var (name, value) in fields) form[name] = value;
-        return await client.PostAsync(path, new FormUrlEncodedContent(form));
+        // A list, not a dictionary: batch 680's Cheat commands sends one field per ticked box.
+        return await client.PostAsync(path, new FormUrlEncodedContent([token, .. fields.Select(field => KeyValuePair.Create(field.Name, field.Value))]));
     }
 
     /// <summary>A folder page once its first look is done (a slow disk shows a page that comes back by itself first).</summary>

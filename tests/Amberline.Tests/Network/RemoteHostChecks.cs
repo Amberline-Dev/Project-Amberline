@@ -183,6 +183,62 @@ public static class RemoteHostChecks
             "hiding games preserves their host records");
     }
 
+    /// <summary>
+    /// Batch 684: Settings' Games at the same time reaches the running manager. A lower number ends no running game, and a new game
+    /// waits until fewer run than it allows, even while a running game holds a port above the lowered range; a higher one counts at once.
+    /// </summary>
+    [Check("server.host-games-capacity", TimeoutSeconds = 240)]
+    public static void LowerGameCountEndsNoGameAndNewGamesWait() => CapacityAsync().GetAwaiter().GetResult();
+
+    private static async Task CapacityAsync()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "league-games-capacity-check-" + Guid.NewGuid().ToString("N"));
+        var occupied = IPGlobalProperties.GetIPGlobalProperties().GetActiveUdpListeners().Select(p => p.Port).ToHashSet();
+        var port = Enumerable.Range(56190, 500).First(p => !occupied.Contains(p) && !occupied.Contains(p + 1));
+        // The system's cmd.exe stands in for the match server: it waits on its input, so each game stays Starting (a running game)
+        // until it is stopped (its "stop" line, then the closed input, ends it). It binds no port and needs no ENet bridge.
+        await using var manager = new GameManager(new HostSettings(GameData.Default.Paths.Root, Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+            FirstGamePort: port, MaxGames: 2, BindAddress: "127.0.0.1"), root);
+        var admin = new HostGuest("admin", "Admin", "", true);
+        MatchPlayer[] roster = [new("Alice", "Annie", Team.Order)];
+        // A guest of its own per game: one guest may create only every few seconds.
+        RemoteGame Create(string guest) => manager.Create(new HostGuest(guest, guest, ""), new CreateGameRequest(Guid.NewGuid(), roster), local: false);
+        void Busy(string guest, string what)
+        {
+            try { Create(guest); throw new Exception(what + ": a game started"); }
+            catch (RemoteFault fault) { TestAssert.Equal(409, fault.Status, what); }
+        }
+        try
+        {
+            var first = Create("first");
+            var second = Create("second");
+            TestAssert.Equal((port, port + 1), (first.Port, second.Port), "two games, two ports");
+            TestAssert.True(manager.List(admin).All(g => g.State == "Starting"), "both run");
+
+            manager.MaxGames = 1;
+            TestAssert.Equal(1, manager.MaxGames);
+            TestAssert.True(manager.List(admin).All(g => g.State == "Starting"), "a lower number ends no running game");
+            Busy("third", "two running of one");
+            await manager.StopAsync(admin, first.Id);
+            Busy("third", "the second game still runs, above the lowered range");
+            await manager.StopAsync(admin, second.Id);
+            var third = Create("third");
+            TestAssert.Equal(port, third.Port, "a freed slot takes the lowered range's port");
+            TestAssert.Equal("Stopped", manager.List(admin).Single(g => g.Id == second.Id).State, "stopped by the host, not by the lower number");
+
+            manager.MaxGames = 2;
+            TestAssert.Equal(port + 1, Create("fourth").Port, "a higher number counts at once");
+            Busy("fifth", "two running of two");
+            foreach (var refused in new[] { 0, 33 })
+                TestAssert.Throws<ArgumentOutOfRangeException>(() => manager.MaxGames = refused, $"{refused} games are refused");
+            TestAssert.Equal(2, manager.MaxGames, "a refused number changes nothing");
+        }
+        finally
+        {
+            foreach (var game in manager.List(admin).Where(g => g.CanStop)) await manager.StopAsync(admin, game.Id);
+        }
+    }
+
     private static async Task WaitUntil(Func<bool> predicate)
     {
         var until = DateTime.UtcNow.AddSeconds(60);

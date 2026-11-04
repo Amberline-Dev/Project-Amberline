@@ -10,7 +10,7 @@ internal static class CheckScopes
         var scopes = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["core"] = ["core-*", "clock"],
-            ["data"] = ["data.*", "skins.*", "map4.*", "map3.*"],
+            ["data"] = ["data.*", "skins.*", "map4.*", "map3.*", "map1.*"],
             ["scripting"] = ["scripting.*", "data.inibin*", "data.luaobj*", "tools.audit.*"],
             ["combat"] = ["combat*", "death-recap.*", "stats*", "buffs.*", "runtime.progression-*", "runtime-p1-*", "progression.*"],
             ["buffs"] = ["buffs.*", "stats*", "runtime.gameplay-hooks"],

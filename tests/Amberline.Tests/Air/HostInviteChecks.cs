@@ -293,7 +293,7 @@ public static class HostInviteChecks
             var host = accounts.RegisterPublic("host_one", HostPassword, "Host One");
             var friend = accounts.RegisterPublic("friend1", oldPassword, "Friend One");
             var other = accounts.RegisterPublic("friend2", oldPassword, "Friend Two");
-            File.WriteAllText(paths.Settings, JsonSerializer.Serialize(new { hostAccount = host.Id }));
+            File.WriteAllText(paths.Settings, JsonSerializer.Serialize(new { hostAccount = host.Id, cheatAccounts = new[] { host.Id, friend.Id, other.Id } }));
             var sessions = new PlatformSessions(accounts);
             var access = new AirRemoteAccess(Path.Combine(paths.Data, "remote"));
             var loop = new HostLoop(paths, _ => { }, TextWriter.Null);
@@ -366,6 +366,8 @@ public static class HostInviteChecks
             TestAssert.True(sessions.AccountForConnection("rtmp-" + friend.Id) is null, "friend1's live session ended");
             TestAssert.Throws<ArgumentException>(() => sessions.Login("rtmp-late", friend.Username, friendHeld.Ticket, version), "friend1's unused ticket");
             TestAssert.True(accounts.Find(friend.Id) is not null, "no account is deleted");
+            TestAssert.Equal(string.Join(",", host.Id, other.Id), string.Join(",", JsonDocument.Parse(File.ReadAllText(paths.Settings)).RootElement.GetProperty("cheatAccounts").EnumerateArray().Select(id => id.GetInt64())),
+                "Remove access clears only friend1's Cheat commands tick");
             StillIn(other, otherHeld, "friend2");
             StillIn(host, hostHeld, "the host");
             TestAssert.True(accounts.Authenticate("host_one", HostPassword) is not null && accounts.Authenticate("friend2", oldPassword) is not null,

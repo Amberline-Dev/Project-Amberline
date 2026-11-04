@@ -13,12 +13,21 @@ public sealed record HostSettings(string DataRoot, string ServerExecutable, int 
     int FirstGamePort = 5119, int MaxGames = 4, int FinishedGraceSeconds = 30,
     int WaitingTimeoutMinutes = 30, int MaxGameHours = 6, string BindAddress = "0.0.0.0")
 {
+    /// <summary>The most games a host runs at once (Settings' Games at the same time, batch 684: 1 to 32).</summary>
+    public const int MostGames = 32;
+
+    /// <summary>
+    /// <paramref name="games"/> match servers fit from <paramref name="firstGamePort"/>: 1 to <see cref="MostGames"/> of them, every port
+    /// within 1 to 65535. The one rule of the start, Settings and <see cref="GameManager.MaxGames"/>.
+    /// </summary>
+    public static bool GamePortsFit(int firstGamePort, int games) =>
+        firstGamePort is >= 1 and <= 65535 && games is >= 1 and <= MostGames && firstGamePort + games - 1 <= 65535;
+
     public void Validate()
     {
         if (!IPAddress.TryParse(BindAddress, out var address) || address.AddressFamily != AddressFamily.InterNetwork)
             throw new ArgumentException("Host bind address must be an IPv4 address.");
-        if (ControlPort is < 1 or > 65535 || FirstGamePort is < 1 or > 65535 || MaxGames is < 1 or > 32 ||
-            FirstGamePort + MaxGames - 1 > 65535 || FinishedGraceSeconds is < 1 or > 300 ||
+        if (ControlPort is < 1 or > 65535 || !GamePortsFit(FirstGamePort, MaxGames) || FinishedGraceSeconds is < 1 or > 300 ||
             WaitingTimeoutMinutes is < 1 or > 1440 || MaxGameHours is < 1 or > 48)
             throw new ArgumentException("Invalid host ports, capacity or timeouts.");
         if (!Directory.Exists(CaseInsensitivePaths.Resolve(DataRoot)) || !File.Exists(ServerExecutable))

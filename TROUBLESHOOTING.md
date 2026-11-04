@@ -53,13 +53,15 @@ Windows Firewall does not let your friends in yet. The dashboard says which case
   network type, public ones too.
 - **Windows Firewall has Amberline's rule for another folder.** You moved or updated Amberline. Choose **Allow through Windows
   Firewall** again to point the rule at this folder.
+- **Windows Firewall's rule must be updated for the new game ports.** You chose more **Games at the same time** in Settings, and
+  the rule covers fewer game ports. Choose **Allow through Windows Firewall** and press **Yes**.
 - **Windows Firewall blocks Amberline** (a block rule): remove the block rule in Windows Defender Firewall (**Advanced
   settings**), then try again.
 - **Amberline could not read the Windows Firewall rules on this PC.** Check that Windows Firewall is running, then try again.
 - **Amberline cannot ask Windows Firewall to allow it from this folder**: the folder's path has a character Windows cannot pass
   safely. Move Amberline to a folder whose path has only plain letters, digits, spaces, dots and dashes. Or add two inbound
   rules by hand in Windows Defender Firewall, **Advanced settings**: one for the Amberline Platform program (TCP 8391) and one
-  for the Amberline server program (UDP 5219-5222), on Domain, Private and Public.
+  for the Amberline server program (UDP 5219-5222, or the range Settings shows under **Games**), on Domain, Private and Public.
 
 #### A-NET-03
 
@@ -110,8 +112,8 @@ holds the new address. Then choose **Hide**. See
 
 #### A-NET-10
 
-**friend1 logged in, but their game could not connect to Amberline.** Games use the game ports (UDP 5219 to 5222), not the
-sign-in port, so the login working says nothing about the game.
+**friend1 logged in, but their game could not connect to Amberline.** Games use the game ports (UDP 5219 to 5222, or the range
+Settings shows under **Games**), not the sign-in port, so the login working says nothing about the game.
 
 - Check that your router sends the game ports to this PC (UPnP, or the port forwarding of the router guide), and that Windows
   Firewall lets Amberline in (the **Network** list on the dashboard).
@@ -229,8 +231,11 @@ called UPnP. These can stop that:
   folder yourself: **Choose another folder in a window** or **Paste a path** (when it found nothing, press Enter for the folder
   window or paste the path). Next time, the folders you chose are searched first.
 - **Nothing was changed. Your Amberline ... is not older than this download's build**: your Amberline is a release (a
-  release always counts as newer than a build made here). Update it with the newest release zip: unzip it and double-click
-  `Start Amberline.cmd`, not `START-HERE.cmd`.
+  release always counts as newer than a build made here), or the same version as this release zip or newer. Update it with
+  **Update now** on its page, or unzip the newest release zip and double-click its `START-HERE.cmd`.
+- **Nothing was changed. This download installs Amberline on the PC you start it on.** You typed `2` (a rented server) in the
+  release zip's guide. Unzip the zip on a Windows server and type `1` there, or build a Linux server's package with the code
+  download's `START-HERE.cmd`.
 - **Nothing was changed.** (after step 3) You answered `N` to **Update this Amberline now?**. To install Amberline
   in another folder instead, uninstall it first (`Uninstall Amberline.cmd` in its folder), then double-click `START-HERE.cmd`
   again.
@@ -238,7 +243,7 @@ called UPnP. These can stop that:
 ### Start Amberline.cmd (the release zip)
 
 - **Amberline's program files are not all here.** Unzip the whole zip again, keep its folders together, then double-click
-  `Start Amberline.cmd`.
+  `START-HERE.cmd`.
 - **You already have a newer Amberline.** Nothing changed. Start Amberline from its icon on your desktop.
 - **The running Amberline did not stop.** Close its window, then double-click `Start Amberline.cmd` again.
 - **Amberline could not copy or replace its files.** Close every Amberline
@@ -253,6 +258,11 @@ called UPnP. These can stop that:
 - **This link has expired.** Each link works once, for 2 minutes. Start Amberline again from its desktop icon.
 - **Amberline refused this request.** It came from another website. Use the page that Amberline opened for you.
 - **The page expired. Please choose again.** Open the page again and repeat what you did.
+- **Your copy cannot be shared.** (Settings, **Game files**) The reason follows: the game's or the AIR client's executable is not
+  the 1.0.0.126 one, a folder holds a link, or a file cannot be read. Choose the right folders (**Change the folders**) or fix that,
+  then choose **Save** under **Game files** again. Until then nothing is shared.
+- **Amberline is checking every file once before it shares them.** (Settings, **Game files**) Wait a few minutes, then open
+  Settings again.
 - **Windows did not start your game client.** (**Play**) Try again, or restart Amberline. **Your game client is already
   open**: look for it on the taskbar.
 
@@ -319,6 +329,17 @@ When `Play.cmd` cannot finish, its window says **Play could not finish:** and wh
 
 Your folders are always where they were, or complete in the install folder. **Copy** copies what happened, to send to
 your host.
+
+When your host shares their game ([Game files](HOSTING.md#game-files)) and setup finds no copy of your own, it offers **Download
+the game from** the server's name:
+
+- **No download button.** Your host has not turned on **Share the game files with players**, setup found your own copy, or the
+  server was still checking its files when setup opened. Close setup and double-click the Play file again a few minutes later.
+- **The download stopped.** You chose **Cancel**, or the connection dropped (**The download from the server stopped.**). Choose
+  **Download the game from** ... again: it continues where it stopped.
+- **A downloaded file did not pass its check.** A file from the server differs from the server's own list, for example because the
+  host changed their game folder. Nothing was installed. Ask your host to choose **Save** under **Game files** again, then download
+  again.
 
 ### The desktop icon
 

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Amberline.Host;
 using Microsoft.AspNetCore.Antiforgery;
@@ -24,8 +25,23 @@ public sealed record PlatformSettings(string DataRoot, string ServerExecutable, 
     public long? HostAccount { get; init; }
     /// <summary>Settings' "Let people register themselves" (<see cref="HostSelfRegistration"/>, batch 656); off unless the host turned it on.</summary>
     public bool SelfRegistration { get; init; }
-    /// <summary>Settings' "Allow cheat commands in my games" (batch 666): off unless the host turned it on, then for the host's own login only.</summary>
+    /// <summary>Settings' "Share the game files with players" (<see cref="HostFileShare"/>, batch 681); off unless the host turned it on.</summary>
+    public bool ShareFiles { get; init; }
+    /// <summary>
+    /// Retired (batch 680): batch 666's "Allow cheat commands in my games". Read only while <see cref="CheatAccounts"/> is missing, when
+    /// it ticks the host's own login (<see cref="CheatLogins"/>); the list's first Save drops it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool AllowCheats { get; init; }
+    /// <summary>
+    /// Settings' Cheat commands list (batch 680): the account ids that may use the cheat commands, null until its first Save. An id
+    /// outlives a login's new password and its Remove access, which keep the account.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long[]? CheatAccounts { get; init; }
+
+    /// <summary>The logins the Cheat commands list ticks; before its first Save, the host's own while batch 666's switch was on.</summary>
+    public IReadOnlyList<long> CheatLogins() => CheatAccounts ?? (AllowCheats && HostAccount is { } own ? [own] : []);
     /// <summary>The data format that wrote this file (<see cref="HostChecks.DataVersion"/>; a file without it is format 1).</summary>
     public int DataVersion { get; init; } = HostChecks.DataVersion;
 
@@ -119,7 +135,7 @@ public static class Program
         accounts.RecoverResults(manager, Console.Out);
         var sessions = new PlatformSessions(accounts);
         var games = new PlatformGames(accounts, manager, settings.GameHost);
-        // DIAGNOSTICS (owner, 3 November 2026: "Disable cheats"): in home mode only Settings' switch gives cheats, to the host's own login.
+        // DIAGNOSTICS (owner, 3 and 4 November 2026): in home mode only the logins Settings' Cheat commands list ticks get cheats.
         if (host is not null) games.MayCheat = HostSettingsPage.CheatRule(host.Paths.Settings);
         var services = new PlatformServices(accounts, sessions, games, settings.HttpPort);
         await using var chat = new AirXmppHost(accounts, sessions, Path.Combine(home, "social"), settings.XmppPort);
@@ -135,6 +151,8 @@ public static class Program
         var pin = tls.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256);
         // NOT RETAIL: people register themselves on the friends' port while Settings' switch is on (HostSelfRegistration); home mode only.
         using var signUp = host is null ? null : new HostSelfRegistration(host, accounts, settings.RemotePort, pin, settings.SelfRegistration);
+        // NOT RETAIL: the host's own game and AIR client for players who have none, while Settings' switch is on (HostFileShare); home mode only.
+        var share = host is null ? null : new HostFileShare(host, settings.DataRoot, airRoot, settings.RemotePort, settings.ShareFiles);
         await using var rtmp = new AirRtmpHost(new IPEndPoint(IPAddress.Loopback, settings.RtmpPort),
             services.Route, sessions.AuthenticateChannel, sessions.AccountForConnection, services.Disconnect,
             Console.Out, services.ResponseSent, sessions.Resume, services.ConnectionClosed,
@@ -175,14 +193,15 @@ public static class Program
                 : rejected.HttpContext.Request.Path != LoginQueuePath ? ValueTask.CompletedTask
                 : new ValueTask(AttemptRateTooFast(rejected.Lease.TryGetMetadata(MetadataName.RetryAfter, out var wait)
                     ? wait : TimeSpan.FromMinutes(1)).ExecuteAsync(rejected.HttpContext));
-            o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(RequestPartition);
+            o.GlobalLimiter = PartitionedRateLimiter.CreateChained(PartitionedRateLimiter.Create<HttpContext, string>(RequestPartition),
+                PartitionedRateLimiter.Create<HttpContext, string>(FilesPartition));
             o.AddPolicy("registration", context => RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new FixedWindowRateLimiterOptions
                 { PermitLimit = 12, Window = TimeSpan.FromHours(1), QueueLimit = 0 }));
         });
         await using var app = builder.Build();
         await using var dashboard = host is null ? null : new HostDashboard(host, settings,
-            () => PlatformManagement.Online(accounts, sessions, games, chat), () => HostDashboard.RunningGames(manager))
+            () => PlatformManagement.Online(accounts, sessions, games, chat), () => HostDashboard.RunningGames(manager), maxGames: () => manager.MaxGames)
             { Support = HostSupport.For(host, settings, manager, accounts, sessions) };
         UseRegistrationProxy(app, settings);
         app.UseRateLimiter();
@@ -195,7 +214,8 @@ public static class Program
                 context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self'; form-action 'self'; frame-ancestors 'self' file: app:";
             if (context.Connection.LocalPort == settings.RemotePort)
             {
-                if (!context.Request.IsHttps || !(AirRemoteTunnel.IsPublicPath(context.Request.Path.Value ?? "/") || signUp?.Serves(context) == true))
+                if (!context.Request.IsHttps || !(AirRemoteTunnel.IsPublicPath(context.Request.Path.Value ?? "/") || signUp?.Serves(context) == true ||
+                    share?.Serves(context) == true))
                 { context.Response.StatusCode = 404; return; }
                 host?.Friend.Observe(context.Connection.RemoteIpAddress, context.Request.Path.Value, DateTimeOffset.UtcNow);
             }
@@ -226,9 +246,12 @@ public static class Program
         if (host is not null) HostInvite.Map(app, host, () => steps!.PublicHost, () => steps!.ServerName, accounts, sessions, remoteAccess,
             settings.RemotePort, pin, signUp);
         signUp?.Map(app);
+        share?.Map(app);
         dashboard?.Map(app, steps, tls);
         // NOT RETAIL: Settings (what the first run asked) and Uninstall Amberline, under the gated /host pages.
-        if (host is not null) HostSettingsPage.Map(app, host, steps!, () => HostDashboard.RunningGames(manager).Count, signUp!);
+        // Batch 684: a saved Games at the same time counts for the next game and tests the network again (the router's ports at once).
+        if (host is not null) HostSettingsPage.Map(app, host, steps!, () => HostDashboard.RunningGames(manager).Count, signUp!, accounts, share,
+            maxGames => { manager.MaxGames = maxGames; dashboard?.TestAgain(); });
         // NOT RETAIL: the host's notice (Advanced's Send a notice to players) leads the Home's News while it stands; retail's Home had none.
         PlatformHomeNotice? hostNotice = null;
         PlatformManagement.Map(app, accounts, settings.HttpPort, settings.RemotePort,
@@ -276,7 +299,7 @@ public static class Program
     public const string LoginQueuePath = "/login-queue/rest/queue/authenticate";
 
     /// <summary>
-    /// The global per-address request limit: 180 requests a minute, except the two public-port caps below.
+    /// The global per-address request limit: 180 requests a minute, except the public-port caps below.
     /// NOT RETAIL: security additions for the public port (retail served this art and no companion at all). The images
     /// (<c>/img</c>, <c>/store/img</c>, <c>/store/art</c>) get a bucket of 1000 refilled at 20 a second, enough for a whole
     /// store page of cards and rune icons at once, and <c>/bootstrap/companion.zip</c> six downloads an hour. The host's
@@ -296,9 +319,19 @@ public static class Program
         if (!local && path.StartsWithSegments("/bootstrap/companion.zip"))
             return RateLimitPartition.GetFixedWindowLimiter("companion:" + key, _ => new FixedWindowRateLimiterOptions
             { PermitLimit = 6, Window = TimeSpan.FromHours(1), QueueLimit = 0 });
+        // NOT RETAIL (batch 681): a download of the shared game is thousands of requests, so it is held to transfers at a time instead of
+        // requests a minute; loopback too, so no address is exempt.
+        if (path.StartsWithSegments(HostFileShare.Prefix))
+            return RateLimitPartition.GetConcurrencyLimiter("files:" + key, _ => new ConcurrencyLimiterOptions
+            { PermitLimit = HostFileShare.PerAddress, QueueLimit = 0 });
         return RateLimitPartition.GetFixedWindowLimiter(key,
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 180, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 });
     }
+
+    /// <summary>NOT RETAIL (batch 681): the shared game's transfers of every address together (<see cref="HostFileShare.InAll"/>).</summary>
+    public static RateLimitPartition<string> FilesPartition(HttpContext context) => context.Request.Path.StartsWithSegments(HostFileShare.Prefix)
+        ? RateLimitPartition.GetConcurrencyLimiter("files", _ => new ConcurrencyLimiterOptions { PermitLimit = HostFileShare.InAll, QueueLimit = 0 })
+        : RateLimitPartition.GetNoLimiter("all");
 
     public static async Task<IResult> AuthenticateAsync(HttpContext context, PlatformAccounts accounts, PlatformSessions sessions,
         AirRemoteAccess? remoteAccess = null)

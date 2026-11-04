@@ -125,6 +125,70 @@ internal sealed class BbScriptChannels
     /// </summary>
     public void Tick(double dt)
     {
+        if (_channels.Count == 0 && _windups.Count == 0) return;
+        TickChannels(dt);
+        TickWindups(dt);
+    }
+
+    /// <summary>
+    /// Batch 678: use casts (<c>BbSummonerModule.BeginUseChannel</c>) whose windup still runs: the script, the slot, the cast point, the unit
+    /// used and the seconds left to the cast frame. The cast answer goes out at the use, and the client's SpellCaster starts the channel and
+    /// its bar at the cast frame, <c>DesignerCastTime</c> later; so does this channel, as every channelled cast's <c>ChannelingStart</c>
+    /// runs at its cast frame (<see cref="Begin"/>). The use channel used to begin at the use, a cast time ahead of the client's bar.
+    /// </summary>
+    private readonly Dictionary<Entity, (BbScript Script, int Slot, Position3 At, Entity Target, double Remaining)> _windups =
+        new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Batch 678: begins the channel <paramref name="windup"/> seconds from now, at the cast's frame (at once for none).</summary>
+    public void BeginAfter(double windup, BbScript script, Entity caster, int slot, Position3 at, Entity target)
+    {
+        _windups.Remove(caster);
+        if (windup > 0.0) _windups[caster] = (script, slot, at, target, windup);
+        else Begin(script, caster, slot, 1, 0.0, at, at, target);
+    }
+
+    /// <summary>Batch 678: whether the caster's use cast of <paramref name="spellName"/> at <paramref name="target"/> is still in its windup.</summary>
+    public bool WindsUp(Entity caster, Entity target, string spellName) =>
+        _windups.TryGetValue(caster, out var pending) && ReferenceEquals(pending.Target, target) &&
+        string.Equals(pending.Script.Name, spellName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Batch 678 (Reconstruction): a stop before the cast frame (a fresh order, an accepted cast, a script's <c>BBStopChanneling</c>) drops
+    /// the cast: no channel began, so no channel hook runs. False when the caster winds none up.
+    /// </summary>
+    public bool CancelWindup(Entity caster) => _windups.Remove(caster);
+
+    // A windup that reaches its cast frame inside this step begins its channel with the time the step ran past the frame, so the channel ends
+    // ChannelDuration after the frame whatever the step size (Recall's rule, BbSummonerModule.Tick). Reconstruction: the caster's death, a state
+    // that stops it from acting, a displacement or the used unit's death drops the cast, as they stop a channel.
+    private void TickWindups(double dt)
+    {
+        foreach (var (caster, pending) in _windups.ToArray())
+        {
+            var state = CharacterState.Of(caster);
+            if (!caster.Alive || !pending.Target.Alive || !state.CanCast || state.Taunted || caster.ForcedMove is not null)
+            {
+                _windups.Remove(caster);
+                continue;
+            }
+            var remaining = pending.Remaining - dt;
+            if (remaining > 1e-9)
+            {
+                _windups[caster] = pending with { Remaining = remaining };
+                continue;
+            }
+            _windups.Remove(caster);
+            Begin(pending.Script, caster, pending.Slot, 1, 0.0, pending.At, pending.At, pending.Target);
+            if (Of(caster) is { } channel && ReferenceEquals(channel.Script, pending.Script))
+            {
+                channel.Remaining += remaining;
+                channel.Elapsed -= remaining;
+            }
+        }
+    }
+
+    private void TickChannels(double dt)
+    {
         if (_channels.Count == 0) return;
         foreach (var channel in _channels.Values.ToArray())
         {

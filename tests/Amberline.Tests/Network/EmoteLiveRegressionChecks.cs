@@ -7,6 +7,9 @@ namespace Amberline.Tests;
 
 public static partial class ChampionLiveRegressionChecks
 {
+    // Batch 679: how long a walking or attacking hero's emote waits behind its stop.
+    private const double EmoteSettle = Amberline.Network.Sessions.ProductionGameplayDispatcher.EmoteSettleSeconds;
+
     [Check("protocol.champion-emotes")]
     public static void ChampionEmoteWireContract()
     {
@@ -68,14 +71,15 @@ public static partial class ChampionLiveRegressionChecks
                 {
                     // Batch 437 (owner, 28 October 2026: "Emoting when moving only stops the character"): the walking hero's stop
                     // leaves in the request's flush and the 0x48 waits one simulation step, so the stop lands before the emote
-                    // (Reconstruction; batch 420 sent both in one burst, and the stop cancelled the emote).
+                    // (Reconstruction; batch 420 sent both in one burst, and the stop cancelled the emote). Batch 679 restates the
+                    // wait: EmoteSettle of simulation time, because one step was still the stop's own flush in production.
                     var packets = capture.Packets.ToArray();
                     TestAssert.True(packets.Any(packet => Opcode(packet) == 0xC1 && HeroPacket(packet)),
                         "the walking hero's stop route leaves in the request's own flush");
                     TestAssert.False(packets.Any(packet => Opcode(packet) == EmotePackets.ServerOpcode),
-                        "the 0x48 waits for the next step after the stop");
+                        "the 0x48 waits after the stop");
                 }
-                match.Runtime.Tick(1.0 / 30.0);
+                match.Runtime.Tick(EmoteSettle + 1.0 / 30.0);
                 foreach (var capture in match.Captures)
                 {
                     var packets = capture.Packets.ToArray();
@@ -217,9 +221,9 @@ public static partial class ChampionLiveRegressionChecks
         BinaryPrimitives.WriteUInt32LittleEndian(request.AsSpan(1), hero.NetId);
         hero.Waypoints.Add(new Position2(7300, 7000));
         TestAssert.True(Send(request));
-        // Batch 437: a walking hero's stop leaves with the request and its 0x48 waits one step, so the stop lands first.
+        // Batch 437: a walking hero's stop leaves with the request and its 0x48 waits, so the stop lands first (batch 679: EmoteSettle).
         TestAssert.False(match.Captures[0].Packets.Any(packet => Opcode(packet) == EmotePackets.ServerOpcode),
-            "the walking emote waits one step after its stop");
+            "the walking emote waits after its stop");
         TestAssert.True(Send(ClientGameplayPackets.MoveOrder(hero.NetId, 2,
             new Position2(7400, 7000)).Plaintext.ToArray()), "new movement after emote is accepted");
         TestAssert.True(Send(ClientGameplayPackets.MoveOrder(hero.NetId, 1, hero.Position)
@@ -230,7 +234,7 @@ public static partial class ChampionLiveRegressionChecks
 
         hero.Waypoints.Add(new Position2(7300, 7000));
         TestAssert.True(Send(request));
-        match.Runtime.Tick(0.07);
+        match.Runtime.Tick(EmoteSettle + 0.07);
         TestAssert.True(match.Captures[0].Packets.Any(packet => Opcode(packet) == EmotePackets.ServerOpcode),
             "the deferred emote plays and opens its hold-echo window");
         match.Runtime.World.Clock.Advance(0.6);
@@ -262,18 +266,79 @@ public static partial class ChampionLiveRegressionChecks
         match.Runtime.Delivery.Flush();
         TestAssert.True(accepted, "native emote request is accepted");
         TestAssert.True(hero.Waypoints.Count == 0 && hero.AttackTarget is null, "the emote stops the walking champion");
-        // Batch 437 restates batch 420: the walking hero's stop leaves in the request's flush, and the 0x48 leaves on the next step.
+        // Batch 437 restates batch 420: the walking hero's stop leaves in the request's flush, and the 0x48 leaves later (batch 679:
+        // EmoteSettle of simulation time, not the next step, which production flushed together with the stop).
         var packets = match.Captures[0].Packets.ToArray();
         var stopAt = Array.FindIndex(packets, packet => Opcode(packet) == 0xC1 &&
             packet.EntityReferences.Any(reference => reference.NetId == hero.NetId));
         TestAssert.True(stopAt >= 0, "the walking hero's stop route leaves in the request's own flush");
         TestAssert.False(packets.Any(packet => Opcode(packet) == EmotePackets.ServerOpcode),
-            "the 0x48 waits one step after the stop (batch 437)");
-        match.Runtime.Tick(1.0 / 30.0);
+            "the 0x48 waits after the stop (batches 437 and 679)");
+        match.Runtime.Tick(EmoteSettle + 1.0 / 30.0);
         var later = match.Captures[0].Packets.ToArray();
         var emoteAt = Array.FindIndex(later, packet => Opcode(packet) == EmotePackets.ServerOpcode);
         TestAssert.True(emoteAt > stopAt,
-            "the walking hero's 0x48 leaves on the next step, after its stop, so the client does not cancel the emote");
+            "the walking hero's 0x48 leaves after its stop, so the client does not cancel the emote");
+    }
+
+    // Batch 679 (owner, 4 November 2026: "Emoting when moving only stops the champ. It should first stop the champ, wait a moment
+    // then start emoting"). The production loop (ServerRuntime.RunIteration) pumps the request without a flush and then steps, and the
+    // step flushes once after its deferred orders, so batch 437's next-step 0x48 left in the stop's own flush: one burst, which the
+    // stop cancels. This check receives the request the way production does (no flush until the step): the stop leaves alone, the
+    // 0x48 follows EmoteSettleSeconds later in a later flush, on every client, and nothing stops or moves the hero after it.
+    [Check("session-live-emote-while-walking-waits-after-its-stop")]
+    public static void WalkingEmoteWaitsAfterItsStop()
+    {
+        using var match = new Match("LeeSin", Team.Order);
+        var hero = match.Hero(0);
+        var movingFrom = hero.Position;
+        match.Move(0, movingFrom + new Position2(0, 300));
+        match.Runtime.Movement.Tick(0.1);
+        TestAssert.True(hero.Position.Z > movingFrom.Z, "the champion was moving when the emote arrived");
+        var request = new byte[EmotePackets.Length];
+        request[0] = EmotePackets.ClientOpcode;
+        BinaryPrimitives.WriteUInt32LittleEndian(request.AsSpan(1), hero.NetId);
+        BinaryPrimitives.WriteUInt32LittleEndian(request.AsSpan(5), (uint)ChampionEmote.Dance);
+        match.Clear();
+        var accepted = false;
+        match.Runtime.Session.Receive(1, 1, match.Runtime.Cipher.Encrypt(request), context =>
+            accepted = match.Runtime.Dependencies.Gameplay(context));
+        TestAssert.True(accepted, "native emote request is accepted");
+        const double step = 1.0 / 30.0;
+        match.Runtime.Tick(step);
+        bool HeroPacket(PlaintextPacket packet) => packet.EntityReferences.Any(reference => reference.NetId == hero.NetId);
+        bool HeroControl(PlaintextPacket packet) => Opcode(packet) is 0x39 or 0xC1 && HeroPacket(packet);
+        foreach (var capture in match.Captures)
+        {
+            TestAssert.True(capture.Packets.Any(packet => Opcode(packet) == 0xC1 && HeroPacket(packet)),
+                "the walking hero's stop route leaves in the first flush after the request");
+            TestAssert.False(capture.Packets.Any(packet => Opcode(packet) == EmotePackets.ServerOpcode),
+                "the 0x48 does not share the stop's flush (one burst: the stop cancels the emote)");
+        }
+        var playedAt = new double?[match.Captures.Count];
+        for (var elapsed = step; elapsed < 2.0; elapsed += step)
+        {
+            match.Clear();
+            match.Runtime.Tick(step);
+            for (var seat = 0; seat < match.Captures.Count; seat++)
+            {
+                var packets = match.Captures[seat].Packets;
+                if (packets.Any(packet => Opcode(packet) == EmotePackets.ServerOpcode && HeroPacket(packet)))
+                {
+                    TestAssert.True(playedAt[seat] is null, "the emote plays once");
+                    playedAt[seat] = elapsed + step;
+                }
+                TestAssert.False(packets.Any(HeroControl), "nothing stops or moves the hero while its emote waits or plays");
+            }
+        }
+        foreach (var at in playedAt)
+        {
+            TestAssert.True(at is not null, "every client sees the emote");
+            TestAssert.True(at >= EmoteSettle - 1e-9,
+                $"the emote waits a moment after the stop (played {at:F3} s after it)");
+            TestAssert.True(at < EmoteSettle + 2 * step, $"and plays right then ({at:F3} s)");
+        }
+        TestAssert.Equal(match.Runtime.Movement.ClientAnchor(hero.Position), hero.Position, "the hero stays at its stop");
     }
 
     // Batch 437 (owner, 28 October 2026: "Dancing emote does not loop"): a standing hero has no route or attack to stop, so its

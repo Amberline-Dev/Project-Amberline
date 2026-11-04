@@ -27,12 +27,12 @@ public static class BbVfxChecks
         public void Send(PlaintextPacket packet) => Packets.Add(packet);
     }
 
-    /// <summary>A packet tap for the hero's own seat of a <see cref="Match"/>: what its client would receive.</summary>
-    private static Wire Tap(Match match)
+    /// <summary>A packet tap for a seat of a <see cref="Match"/> (the hero's own by default): what its client would receive.</summary>
+    private static Wire Tap(Match match, int seat = 0)
     {
         var wire = new Wire();
-        var participant = match.Runtime.Session.Participants[0];
-        match.Runtime.Delivery.AddObserver(new ReplicationObserver(1, match.Hero.Team, match.Hero.NetId, wire, ready: true,
+        var participant = match.Runtime.Session.Participants[seat];
+        match.Runtime.Delivery.AddObserver(new ReplicationObserver((ulong)seat + 1, participant.Hero!.Team, participant.Hero.NetId, wire, ready: true,
             view: participant.View));
         match.Runtime.Delivery.Flush();
         wire.Packets.Clear();
@@ -537,6 +537,92 @@ public static class BbVfxChecks
         TestAssert.Equal(SpellPackets.BuffNameHash("exile_E_mis"), hashes[0], "the 0x8C names the stem of Riven's E particle");
         TestAssert.Equal(SpellPackets.BuffNameHash("renektoncleave_trail_rage"), hashes[1], "the 0x8C names the stem of Renekton's Q particle");
         TestAssert.Equal(SpellPackets.BuffNameHash("galio_windTunnel_speed_buf_team_red"), hashes[2], "the 0x8C names the stem of Galio's E particle");
+    }
+
+    // Batch 677, GitHub issue #1: Final Hour's plain attack is BBOverrideAutoAttack ExtraSlots 4 (VayneInquisition.OnBuffActivate), Vayne's
+    // ExtraSpell5 VayneUltAttack. That spell ships only VayneUltAttack.inibin and .fx, no script. The 0x0D handler picks the character's own
+    // attack by its slot byte (0x40..0x46), so only a cast of the override spell makes the client draw VayneUltAttack's missile and hit.
+    [Check("scripting.bb-vfx-vayne-r-plain-attack-leaves-as-a-cast-of-vayne-ult-attack")]
+    public static void FinalHourPlainAttackIsACastOfTheUltAttack()
+    {
+        TestAssert.False(File.Exists(GameData.Default.Paths.Data("Spells/VayneUltAttack.luaobj")), "VayneUltAttack ships no script");
+        TestAssert.True(GameData.Default.HasSpell("VayneUltAttack"), "but its spell data (VayneUltAttack.inibin)");
+        using var match = new Match("Vayne");
+        match.Learn(3);
+        match.Refill();
+        TestAssert.True(match.Cast(3), "Final Hour");
+        match.Advance(0.3);
+        TestAssert.True(match.Hero.ScriptAttackOverride is { SpellName: "VayneUltAttack", Slot: 46 }, "her attack is ExtraSpell5");
+        var wire = Tap(match);
+        match.Log.Casts.Clear();
+        match.Hero.AttackCooldown = 0.0;
+        TestAssert.True(match.Runtime.Combat.QueueBasicAttack(match.Hero, match.Foe), "the attack");
+        Run(match, wire, 1.2);
+        var swings = match.Log.Casts.Where(cast => cast.SpellHash == SpellSystem.ProtocolHash("VayneUltAttack")).ToList();
+        TestAssert.True(swings.Count >= 1 && swings.All(cast => cast.Flags == 1 && cast.Slot == 46 && cast.Targets.Count == 1 &&
+                                                                 cast.Targets[0].NetId == match.Foe.NetId && cast.MissileNetId != 0),
+            "the swing is an auto-attack cast of VayneUltAttack at slot 46: " + string.Join(" | ", match.Log.Casts.Select(c => $"{c.SpellHash:X8} f{c.Flags} s{c.Slot}")));
+        TestAssert.True(Packets(wire, 0xBD).Count >= 1, "her client receives the cast");
+        TestAssert.Equal(0, Packets(wire, 0x0D).Count(packet => U32(packet, 1) == match.Hero.NetId), "and no 0x0D of her own attack");
+        TestAssert.Equal(1, HitsOn(match, "Foe").Count(hit => hit.Kind == "Basic"), "the hit is still the engine's one basic attack");
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
+    }
+
+    // Batch 677, GitHub issue #2: Spirit Fire (SpiritFire.SelfExecute) spawns a SpellBook1 placemarker at the point; its SpiritFire buff draws
+    // nassus_spiritFire_warning, and SpiritFireAoE (5 s) the afterburn and the team-coloured nassus_spiritFire_tar_green/_red, all bound to
+    // the cube (BindObjectVar Owner). SpellBook1 is NeverRender and ServerOnly (SpellBook1.inibin): NoRender on the client from its creation,
+    // with no replication to lift it, so a bound effect is never drawn there. They were sent bound (the server held the cube's NoRender only
+    // after the hook); the placemarker rule sends them unbound at the cube's point (batch 397).
+    [Check("scripting.bb-vfx-nasus-e-spirit-fire-ground-effects-are-sent-unbound-at-the-point")]
+    public static void SpiritFireGroundEffectsAreUnboundAtThePoint()
+    {
+        TestAssert.True(GameData.Default.Champion("SpellBook1") is { NeverRender: true, ServerOnly: true }, "SpellBook1.inibin: NeverRender, ServerOnly");
+        using var match = new Match("Nasus");
+        match.Hero.Position = new Position2(7000, 7000);
+        match.Foe.Position = new Position2(7250, 7000);
+        match.Learn(2);
+        match.Refill();
+        var own = Tap(match);
+        var enemy = Tap(match, seat: 2);
+        own.Packets.Clear();
+        TestAssert.True(match.Cast(2, at: new Position2(7300, 7000)), "Spirit Fire at a point");
+        Run(match, own, 1.5);
+        var cube = match.Runtime.World.Entities.Values.Single(unit => unit.Name == "SpellBook1");
+        foreach (var (wire, seat, zone, other) in new[] { (own, "Nasus's", "tar_green", "tar_red"), (enemy, "the enemy's", "tar_red", "tar_green") })
+        {
+            var fx = Packets(wire, 0x8C).Select(Fx).ToList();
+            var seen = string.Join(",", fx.Select(f => $"{f.Hash:X8} bind {f.Bind:X} target {f.Target:X}"));
+            foreach (var name in new[] { "warning", "afterburn", zone })
+                TestAssert.True(fx.Any(f => f.Hash == SpellPackets.BuffNameHash("nassus_spiritFire_" + name) && f.Bind == 0 && f.Target == 0),
+                    $"{seat} client gets nassus_spiritFire_{name} unbound: {seen}");
+            TestAssert.False(fx.Any(f => f.Hash == SpellPackets.BuffNameHash("nassus_spiritFire_" + other)), $"not the other team's zone: {seen}");
+            TestAssert.False(fx.Any(f => f.Bind == cube.NetId || f.Target == cube.NetId), $"nothing names the hidden cube: {seen}");
+        }
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + string.Join(" | ", match.Module.ScriptFailures.Select(f => f.Message)));
+    }
+
+    // Batch 677: the same rule for the other point spells that spawn a SpellBook1 cube (LayWaste, MegaAdhesive, MissFortuneScattershot): no 0x8C
+    // binds the cube, whatever the order of the script's effect create and its SetNoRender. A target that is the cube (LayWaste_point and _tar:
+    // BindObjectVar Nothing, PosVar Owner, TargetObjectVar Target) is another field, which the client's draw gate does not read; it stays.
+    [Check("scripting.bb-vfx-spellbook1-cube-effects-are-never-sent-bound")]
+    public static void SpellBook1CubeEffectsAreNeverSentBound()
+    {
+        var bound = new List<string>();
+        foreach (var (champion, slot) in new[] { ("Karthus", 0), ("Singed", 1), ("MissFortune", 2) })
+        {
+            using var match = new Match(champion);
+            match.Learn(3);
+            match.Refill();
+            var wire = Tap(match);
+            TestAssert.True(match.Cast(slot, at: new Position2(7300, 7000)), $"{champion} casts slot {slot} at a point");
+            Run(match, wire, 1.5);
+            var cubes = match.Runtime.World.Entities.Values.Where(unit => unit.Name == "SpellBook1").Select(unit => unit.NetId).ToHashSet();
+            var fx = Packets(wire, 0x8C).Select(Fx).ToList();
+            TestAssert.True(fx.Count > 0 && cubes.Count > 0, $"{champion}: a SpellBook1 cube and its effects");
+            bound.AddRange(fx.Where(f => cubes.Contains(f.Bind)).Select(f => $"{champion} {f.Hash:X8}"));
+            TestAssert.Equal(0, match.Module.ScriptFailures.Count, $"{champion}: no script failed");
+        }
+        TestAssert.Equal(0, bound.Count, "no effect is bound to a hidden SpellBook1 cube: " + string.Join(", ", bound));
     }
 
     private sealed class CaptureQueue : ICombatPacketQueue

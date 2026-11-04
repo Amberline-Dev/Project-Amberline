@@ -273,6 +273,8 @@ public static class DominionGuardianChecks
         chaos.Position = Offset(guardian, -300.0);
         var mana = guardian.Mana;
         TestAssert.True(runtime.Spells.BeginCaptureChannel(chaos, guardian), "the Chaos champion starts the capture channel on the guardian");
+        // Batch 678: the channel (and its ChannelingStart's suppression) begins at the cast frame, the spell's cast time after the start.
+        TestAssert.True(Until(runtime, () => runtime.Spells.CaptureChannelTarget(chaos) == guardian, 0.5), "the channel begins after its windup");
         TestAssert.True(guardian.Buffs.Any(buff => buff.Name == "Stun"),
             $"the suppression's activation stuns the guardian (buffs {string.Join(",", guardian.Buffs.Select(b => b.Name))})");
         var lostAt = -1.0;

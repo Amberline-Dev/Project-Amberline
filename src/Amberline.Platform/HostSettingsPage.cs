@@ -9,53 +9,72 @@ namespace Amberline.Platform;
 /// (<see cref="HostSteps.MapSettings"/>), the game and AIR client folders (<see cref="HostFolders.MapSettings"/>, which restarts), the
 /// update check (the Updates page) and the Play file (H8's download, and the certificate's Make new Play files). A change friends
 /// must hear about says so and links the Play file. Batch 656: Sign-ups holds the switch of <see cref="HostSelfRegistration"/> and, while
-/// it is on, the link to send. Batch 666: Cheat commands holds the switch of <see cref="CheatRule"/>. Uninstall Amberline
+/// it is on, the link to send. Batch 681: Game files holds the switch of <see cref="HostFileShare"/> and what it shares. Batch 680: Cheat
+/// commands holds the list of <see cref="CheatRule"/>. Batch 684: Games holds <see cref="HostGamesSetting"/>, how many games run at
+/// once. Uninstall Amberline
 /// (<see cref="HostUninstall"/>) is its last section.
 /// </summary>
 public static class HostSettingsPage
 {
     public const string PagePath = "/host/settings";
     public const string NamePath = PagePath + "/name", AddressPath = PagePath + "/address", FoldersPath = PagePath + "/folders",
-        UninstallPath = PagePath + "/uninstall", RegisterPath = PagePath + "/register", CheatsPath = PagePath + "/cheats";
+        UninstallPath = PagePath + "/uninstall", RegisterPath = PagePath + "/register", CheatsPath = PagePath + "/cheats",
+        SharePath = PagePath + "/share";
 
     /// <summary>
-    /// DIAGNOSTICS (batch 666; owner, 3 November 2026: "Disable cheats", off for everyone, the host included, with a Settings switch):
-    /// the home host's cheat rule for <see cref="PlatformGames.MayCheat"/>. A seat may cheat only while Settings' "Allow cheat commands in
-    /// my games" is on (<see cref="PlatformSettings.AllowCheats"/>, off for new and existing installs) and only when it is the host's own
-    /// login (<c>hostAccount</c>). It reads <c>platform.json</c> as each game starts; a file it cannot read allows nobody.
+    /// DIAGNOSTICS (batch 680; owner, 4 November 2026: "selected person will have cheats in all matches - only toggleable by the host",
+    /// replacing batch 666's one switch): the home host's cheat rule for <see cref="PlatformGames.MayCheat"/>. A seat may cheat only when
+    /// its login is ticked in Settings' Cheat commands (<see cref="PlatformSettings.CheatLogins"/>; nobody for a new install, the host's
+    /// own for one whose batch-666 switch was on). It reads <c>platform.json</c> as each game starts; a file it cannot read allows nobody.
+    /// Only this gated page writes the list: no AIR call, chat command or friends' port route does.
     /// </summary>
     public static Func<long, bool> CheatRule(string settingsFile) => account =>
-        HostMode.ReadOrDefault(settingsFile) is { AllowCheats: true, HostAccount: { } own } && own == account;
+        HostMode.ReadOrDefault(settingsFile).CheatLogins().Contains(account);
 
     private const string PlayFileLink = $"<a href={HostInvite.PlayFilePath} download>Download the Play file</a>";
 
     /// <summary>
     /// Settings and its pages in the full home Platform; <paramref name="games"/> counts the matches a restart or an uninstall would end.
-    /// Batch 656: <see cref="RegisterPath"/> saves the switch of <paramref name="signUp"/> (people register themselves).
+    /// Batch 656: <see cref="RegisterPath"/> saves the switch of <paramref name="signUp"/> (people register themselves). Batch 680:
+    /// Cheat commands lists the logins of <paramref name="accounts"/> (none for a page-only Settings without a store). Batch 681: Game files
+    /// holds the switch of <paramref name="share"/> (the host shares the game with players; none for a page-only Settings). Batch 684:
+    /// <paramref name="gamesChanged"/> hears a saved Games at the same time.
     /// </summary>
-    public static void Map(WebApplication app, HostLoop loop, HostSteps steps, Func<int> games, HostSelfRegistration signUp)
+    public static void Map(WebApplication app, HostLoop loop, HostSteps steps, Func<int> games, HostSelfRegistration signUp,
+        PlatformAccounts? accounts = null, HostFileShare? share = null, Action<int>? gamesChanged = null)
     {
         steps.MapSettings(app);
         HostFolders.MapSettings(app, loop, games);
-        app.MapGet(PagePath, (HttpContext context, IAntiforgery antiforgery) =>
-            HostMode.Page(Render(loop, steps, signUp, Program.RegistrationToken(context, antiforgery), context.Request.Query["saved"].ToString())));
+        PlatformAccount[] Logins() => [.. (accounts?.ListAccounts() ?? []).OrderBy(account => account.Username, StringComparer.Ordinal)];
+        IResult Page(HttpContext context, IAntiforgery antiforgery, string saved, string? problem = null, string? typed = null) =>
+            HostMode.Page(Render(loop, steps, signUp, share, Logins(), Program.RegistrationToken(context, antiforgery), saved, problem, typed),
+                problem is null ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+        if (share is not null)
+            app.MapPost(SharePath, async (HttpContext context, IAntiforgery antiforgery) =>
+            {
+                var form = await HostSteps.FormAsync(context, antiforgery);
+                if (form is null) return Page(context, antiforgery, "", HostSteps.Expired);
+                share.Set(form["on"] == "on");
+                return Results.Redirect(PagePath + "?saved=share");
+            });
+        HostGamesSetting.Map(app, loop, (context, antiforgery, problem, typed) => Page(context, antiforgery, "", problem, typed), gamesChanged);
+        app.MapGet(PagePath, (HttpContext context, IAntiforgery antiforgery) => Page(context, antiforgery, context.Request.Query["saved"].ToString()));
         app.MapPost(RegisterPath, async (HttpContext context, IAntiforgery antiforgery) =>
         {
             var form = await HostSteps.FormAsync(context, antiforgery);
-            if (form is null)
-                return HostMode.Page(Render(loop, steps, signUp, Program.RegistrationToken(context, antiforgery), "", HostSteps.Expired),
-                    StatusCodes.Status400BadRequest);
+            if (form is null) return Page(context, antiforgery, "", HostSteps.Expired);
             signUp.Set(form["on"] == "on");
             return Results.Redirect(PagePath + "?saved=register");
         });
         app.MapPost(CheatsPath, async (HttpContext context, IAntiforgery antiforgery) =>
         {
             var form = await HostSteps.FormAsync(context, antiforgery);
-            if (form is null)
-                return HostMode.Page(Render(loop, steps, signUp, Program.RegistrationToken(context, antiforgery), "", HostSteps.Expired),
-                    StatusCodes.Status400BadRequest);
-            // Batch 657's one way to save: a failed read writes nothing, and the page says so.
-            HostMode.Change(loop.Paths.Settings, saved => saved with { AllowCheats = form["on"] == "on" });
+            if (form is null) return Page(context, antiforgery, "", HostSteps.Expired);
+            // One field per ticked box; only ids of existing logins are kept.
+            var logins = Logins().Select(account => account.Id).ToHashSet();
+            long[] ticked = [.. form["cheat"].Select(value => long.TryParse(value, out var id) ? id : 0).Where(logins.Contains).Distinct().Order()];
+            // Batch 657's one way to save: a failed read writes nothing, and the page says so. The list replaces batch 666's switch.
+            HostMode.Change(loop.Paths.Settings, saved => saved with { CheatAccounts = ticked, AllowCheats = false });
             return Results.Redirect(PagePath + "?saved=cheats");
         });
         app.MapGet(UninstallPath, (HttpContext context, IAntiforgery antiforgery) =>
@@ -84,21 +103,38 @@ public static class HostSettingsPage
 
     private static string Encode(string? text) => WebUtility.HtmlEncode(text ?? "");
 
-    private static string Render(HostLoop loop, HostSteps steps, HostSelfRegistration signUp, string token, string saved, string? problem = null)
+    /// <summary>The page; a <paramref name="typed"/> value makes <paramref name="problem"/> the Games field's (<see cref="HostGamesSetting"/>).</summary>
+    private static string Render(HostLoop loop, HostSteps steps, HostSelfRegistration signUp, HostFileShare? share, PlatformAccount[] logins,
+        string token, string saved, string? problem, string? typed = null)
     {
         var settings = HostMode.ReadOrDefault(loop.Paths.Settings);
-        var notice = problem is not null ? HostPages.Errors((problem, null)) : saved switch
+        var cheaters = settings.CheatLogins();
+        var cheats = logins.Length == 0 ? "<p>Nobody has a login yet.</p>" : $"""
+            <form method=post action={CheatsPath}>{token}
+            {string.Concat(logins.Select(login => $"<label class=choice><input type=checkbox name=cheat value={login.Id}{(cheaters.Contains(login.Id) ? " checked" : "")}>" +
+                $"<span><b>{Encode(login.Username)}</b> · {Encode(login.Summoner)}{(login.Id == settings.HostAccount ? " (you)" : "")}</span></label>\n"))}<div class=buttons><button type=submit>Save</button></div></form>
+            """;
+        var notice = problem is not null ? HostPages.Errors((problem, typed is null ? null : "games")) : saved switch
         {
             "name" => $"<p class=notice role=status>Saved. Send your friends the new Play file to show the new name. {PlayFileLink}</p>",
             "address" => $"<p class=notice role=status>Saved. Send your friends the new Play file: their old one looks at the old address. {PlayFileLink}</p>",
             "folders" => "<p class=notice role=status>Saved. Amberline restarted to use the new folders.</p>",
-            "register" => "<p class=notice role=status>Saved.</p>",
+            "register" or "share" => "<p class=notice role=status>Saved.</p>",
             "cheats" => "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
+            HostGamesSetting.Saved => $"<p class=notice role=status>{HostGamesSetting.SavedNotice}</p>",
             _ => "",
         };
         var address = string.IsNullOrWhiteSpace(steps.PublicHost) ? "Not chosen yet."
             : $"<b>{Encode(steps.PublicHost)}</b> ({HostSteps.Source(settings.AddressSource)})";
         var updates = HostUpdates.Read(loop.Paths.Data).Check == true ? "On: Amberline asks GitHub once a day." : "Off.";
+        var files = share is null ? "" : $"""
+            <section class=folder aria-labelledby=share-title><h2 id=share-title>Game files</h2>
+            <p>{HostFileShare.Notice}</p>
+            <form method=post action={SharePath}>{token}
+            <label class=choice><input type=checkbox name=on value=on{(share.On ? " checked" : "")}>Share the game files with players</label>
+            <div class=buttons><button type=submit>Save</button></div></form>
+            {share.Status()}</section>
+            """;
         return $$"""
             <h1>Settings</h1>
             {{notice}}
@@ -109,6 +145,7 @@ public static class HostSettingsPage
             <section class=folder aria-labelledby=folders-title><h2 id=folders-title>Your game folders</h2>
             <p>Game folder: {{Encode(settings.DataRoot)}}</p><p>AIR client folder: {{Encode(settings.AirRoot)}}</p>
             <p><a href={{FoldersPath}}{{HostPages.Wait("Looking at your folders. This takes a few seconds.")}}>Change the folders</a></p></section>
+            {{HostGamesSetting.Section(settings, token, typed is null ? null : problem, typed)}}
             <section class=folder aria-labelledby=updates-title><h2 id=updates-title>Updates</h2><p>{{updates}}</p>
             <p><a href=/host/updates>Change the update check</a></p></section>
             <section class=folder aria-labelledby=play-title><h2 id=play-title>Play file</h2>
@@ -119,11 +156,10 @@ public static class HostSettingsPage
             <label class=choice><input type=checkbox name=on value=on{{(signUp.On ? " checked" : "")}}>Let people register themselves</label>
             <div class=buttons><button type=submit>Save</button></div></form>
             {{signUp.Link(steps.PublicHost)}}</section>
+            {{files}}
             <section class=folder aria-labelledby=cheats-title><h2 id=cheats-title>Cheat commands</h2>
-            <form method=post action={{CheatsPath}}>{{token}}
-            <label class=choice><input type=checkbox name=on value=on aria-describedby=cheats-hint{{(settings.AllowCheats ? " checked" : "")}}>Allow cheat commands in my games</label>
-            <p class=hint id=cheats-hint>Only your own login can use them. Your friends never can.</p>
-            <div class=buttons><button type=submit>Save</button></div></form></section>
+            <p>A ticked login can use them in every game it plays here. Only you can change this list.</p>
+            {{cheats}}</section>
             <section class=folder aria-labelledby=uninstall-title><h2 id=uninstall-title>Uninstall Amberline</h2>
             <p><a href={{UninstallPath}}>Uninstall Amberline</a></p></section>
             """;
