@@ -13,6 +13,8 @@ public static class AirProtocolNames
     public const string BroadcastNotification = "com.riotgames.platform.broadcast.BroadcastNotification";
     public const string ChampionDTO = "com.riotgames.platform.catalog.champion.ChampionDTO";
     public const string ChampionSkinDTO = "com.riotgames.platform.catalog.champion.ChampionSkinDTO";
+    public const string ItemEffect = "com.riotgames.platform.catalog.ItemEffect";
+    public const string Rune = "com.riotgames.platform.catalog.runes.Rune";
     public const string RuneQuantity = "com.riotgames.platform.catalog.runes.RuneQuantity";
     public const string RuneType = "com.riotgames.platform.catalog.runes.RuneType";
     public const string Spell = "com.riotgames.platform.catalog.spell.Spell";

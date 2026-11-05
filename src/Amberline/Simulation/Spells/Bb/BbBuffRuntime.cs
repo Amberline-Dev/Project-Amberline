@@ -553,6 +553,31 @@ internal sealed class BbBuffRuntime
         return copied;
     }
 
+    private readonly Dictionary<string, bool> _unappliedSilenceTorch = new();
+
+    /// <summary>
+    /// Batch 696 (owner, 5 November 2026: "throwing twisted fate's Q produces a silence effect under him"): whether the template hands the
+    /// client the Silence buff's torch (<c>Global_Silence.troy</c>, Silence.luaobj's AutoBuffActivateEffect) while the script never silences
+    /// its holder (no <c>BBSetStatus SetSilenced</c> true). Silence and Fiddlesticks' DarkWind set the status, so they keep their adds.
+    /// WildCards is the shipped case: its template (BuffName 'Wild Cards', Q's icon, SealFate_tar.prt and GLOBAL_SILENCE.TROY at 'head',
+    /// the target debuff of the old Seal Fate, copied into InfectedCleaver too) rides only the add SelfExecute puts on the TestCubeRender
+    /// cube the cards leave from, and ExpirationTimer sets that cube's ForceRenderParticles, so the stock client drew the silence at the
+    /// cube for its 5 s. Reconstruction: retail's wire for this add is not in the shipped files; the add stays on the server, where its
+    /// BuffOnSpellHit is the cards' damage. Batch 695 did not cause it (the cube kept the add before), but ended the line's early 0xA6
+    /// that had cut the torch off when the cards landed.
+    /// </summary>
+    private bool DrawsUnappliedSilence(BbScript script)
+    {
+        if (_unappliedSilenceTorch.TryGetValue(script.Name, out var known)) return known;
+        var unapplied = AutoBuffTorchKeys.Any(key => script.Global(key) is BbValue.Text { Value: var torch } &&
+                            string.Equals(torch, "Global_Silence.troy", StringComparison.OrdinalIgnoreCase)) &&
+                        !script.Walk().Any(step => step.Block.Function == "BBSetStatus" &&
+                            step.Block.Param("Status") is BbValue.Reference { Name: "SetSilenced" } &&
+                            step.Block.Param("SrcValue") is BbValue.Bool { Value: true });
+        _unappliedSilenceTorch[script.Name] = unapplied;
+        return unapplied;
+    }
+
     /// <summary>
     /// Batch 380 (finding 48): the two buffs Zenith Blade adds to its own caster, Leona's in-flight lock (LeonaZenithBlade) and
     /// the lunge (LeonaZenithBladeMissile, named after the running script). Reconstruction: the wire is withheld by name, because
@@ -1000,7 +1025,9 @@ internal sealed class BbBuffRuntime
         // 'Blind', BuffTextureName Teemo_TranquilizingShot.dds, BlindingDart's icon). Reconstruction: retail's wire for these two adds is not
         // in the shipped files. The lock and the lunge are the script's and stay on the server (BBSetStatus, BBMove and the move hooks run as
         // before); only the client's add is withheld.
-        if (script is not null && (CarriesForeignBuffTemplate(script) || CarriesCopiedTorch(script) || IsZenithBladeOwnAdd(script)))
+        // Batch 696: so does a template that carries the Silence buff's torch for an add that silences nothing (DrawsUnappliedSilence: Wild Cards' cube).
+        if (script is not null && (CarriesForeignBuffTemplate(script) || CarriesCopiedTorch(script) || IsZenithBladeOwnAdd(script) ||
+                                   DrawsUnappliedSilence(script)))
             payload.ServerOnlyMarker = true;
         // Batch 169 part 2: a buff whose own OnBuffActivate clears it again never exists on the client in retail, so its add is
         // server-only too. OrianaGlobalCooldown is the shipped case: the add the four commands make is followed, inside the same

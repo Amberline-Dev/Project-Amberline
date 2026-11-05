@@ -315,7 +315,16 @@ public static class AirIntegrationChecks
         {
             TestAssert.Equal("com.riotgames.platform.summoner.runes.SummonerRune", rune.TypeName);
             TestAssert.Equal((double)account.SummonerId, rune["summonerId"]);
-            TestAssert.True(rune["rune"] is null, "AIR hydrates typed Rune/ItemEffect data from its shipped catalog");
+            // Batch 698: the stock catalog gives every effect categoryId 1 (Health), so a null rune made the rune book's
+            // "Runes Type" filter list everything for Health and nothing for the other choices. The typed Rune carries its
+            // imagePath, so Inventory.hydrateRuneData keeps it and RuneBookController.filterByRuneCategory reads our category.
+            var typed = (AsObject)rune["rune"]!;
+            TestAssert.Equal("com.riotgames.platform.catalog.runes.Rune", typed.TypeName);
+            TestAssert.Equal((int)rune["runeId"], typed["itemId"]);
+            TestAssert.True(typed["imagePath"] is string, "a null imagePath makes AIR replace the rune with its own catalog copy");
+            var effects = ((ArrayCollection)typed["itemEffects"]).Cast<AsObject>().ToArray();
+            TestAssert.True(effects.Length == 1 && effects[0].TypeName == "com.riotgames.platform.catalog.ItemEffect");
+            TestAssert.True((int)effects[0]["effectCategory"] is >= 1 and <= 6, $"rune {rune["runeId"]} has a rune book category");
             var quantity = catalog[(int)rune["runeId"]].Color == RuneColor.Black ? 3 : 9;
             TestAssert.Equal(quantity, rune["quantity"]);
             TestAssert.Equal(quantity, rune["currentAvailableQuantity"]);
@@ -323,6 +332,32 @@ public static class AirIntegrationChecks
         }
         TestAssert.Equal("end-of-runes", reader.ReadAmf3Item());
         TestAssert.Equal(input.Length, input.Position, "all nested objects must consume exactly their wire bodies");
+
+        // The stock filter: All (0) lists everything, any other choice lists the runes whose first effect has that category.
+        AsObject Effect(int id) => ((ArrayCollection)((AsObject)runes.Single(r => (int)r["runeId"] == id)["rune"]!)["itemEffects"])
+            .Cast<AsObject>().First();
+        int Listed(int category) => runes.Count(r => category == 0 || (int)Effect((int)r["runeId"])["effectCategory"] == category);
+        TestAssert.Equal(374, Listed(0));
+        for (var category = 1; category <= 6; category++)
+            TestAssert.True(Listed(category) is > 0 and < 374, $"category {category} lists only its own runes ({Listed(category)})");
+        TestAssert.Equal(374, Enumerable.Range(1, 6).Sum(Listed), "every rune is in exactly one category");
+        // Stock catalog values (AirGeneratedContent RuneGeneratedData): stat name, primary rune type, image.
+        foreach (var (id, name, category, type, image) in new[]
+                 {
+                     (5001, "FlatPhysicalDamageMod", 3, 1, "r_1_1.png"), (5255, "FlatHPPoolMod", 1, 3, "r_3_3.png"),
+                     (5299, "FlatMPPoolMod", 2, 5, "b_1_3.png"), (5297, "FlatMagicDamageMod", 4, 5, "b_3_3.png"),
+                     (5303, "rFlatMagicPenetrationMod", 4, 1, "b_1_3.png"), (5264, "rFlatDodgeModPerLevel", 5, 3, ""),
+                     (5266, "rPercentCooldownModPerLevel", 6, 5, "r_2_3.png"), (5369, "FlatEnergyRegenMod", 6, 3, "y_1_3.png"),
+                 })
+        {
+            var effect = Effect(id);
+            TestAssert.Equal(name, effect["name"]);
+            TestAssert.Equal(category, effect["effectCategory"], $"rune {id} category");
+            TestAssert.Equal(type, effect["effectType"], $"rune {id} primary rune type");
+            TestAssert.Equal(image, ((AsObject)runes.Single(r => (int)r["runeId"] == id)["rune"]!)["imagePath"]);
+        }
+        // The stock renderer prints "+ " before the formatted value; cooldown reductions keep the catalog's negative sign.
+        TestAssert.Near(-0.00016, Convert.ToDouble(Effect(5266)["value"]), 1e-7);
     }
 
     [Check("server.air-reserved-native-player-identity")]

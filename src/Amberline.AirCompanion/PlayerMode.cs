@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
@@ -93,9 +95,12 @@ internal static class PlayerMode
     /// <summary>
     /// DIAGNOSTICS: the shortcut's windows and its play step as delegates (a test seam), so a check drives a start, its failures and Try
     /// again without a window and without starting a client. <see cref="Play"/> gets the server folder, its connection file and the
-    /// callback that closes the start window once the League client's window shows.
+    /// callback that closes the start window once the League client's window shows. Batch 697: <see cref="Leftover"/> asks about a
+    /// client left from an earlier start (true for Close and start; the flag says whether closing is offered), and <see cref="Ports"/>
+    /// are the local ports the play step binds, so a check uses free ports instead of the real ones.
     /// </summary>
-    internal sealed record ShortcutUi(Action<string> Status, Action Hide, Func<PlayerProblem, bool> TryAgain, Func<string, string, Action, Task<int>> Play)
+    internal sealed record ShortcutUi(Action<string> Status, Action Hide, Func<PlayerProblem, bool> TryAgain, Func<PlayerProblem, bool, bool> Leftover,
+        Func<string, string, Action, Task<int>> Play, IReadOnlyList<int> Ports)
     {
         public static ShortcutUi Windows(PlayerInstallWindow.StatusWindow status) => new(status.Show, status.Hide,
             problem =>
@@ -103,12 +108,24 @@ internal static class PlayerMode
                 status.Hide();
                 return PlayerInstallWindow.AskTryAgain(problem);
             },
-            (server, connection, shown) => Program.RunDesktopAsync(server, MaestroPort, connection, shown));
+            (problem, canClose) =>
+            {
+                status.Hide();
+                return PlayerInstallWindow.AskCloseLeftover(problem, canClose);
+            },
+            (server, connection, shown) => Program.RunDesktopAsync(server, MaestroPort, connection, shown), LocalPorts);
     }
+
+    /// <summary>
+    /// The loopback ports the play step binds (Program.RunDesktopAsync): the proxy's RTMP 2099 (bound first), chat 5222 and HTTP 8390,
+    /// then Maestro. The font server's port is left out: a busy one never blocks the start.
+    /// </summary>
+    internal static readonly IReadOnlyList<int> LocalPorts = [2099, 5222, 8390, MaestroPort];
 
     // Batch 653: each wait says how long it takes.
     internal const string Checking = "Checking for updates. This takes a few seconds.";
     internal const string Starting = "Starting the game client. This takes up to a minute.";
+    internal const string Closing = "Closing the game client from the earlier start. This takes a few seconds.";
 
     /// <summary>
     /// One start of an installed server: its clients must be there, the update check runs (an unreachable server or one that fails the
@@ -129,6 +146,8 @@ internal static class PlayerMode
                 try
                 {
                     if (MissingClient(server, title, log) is { } missing) problem = missing;
+                    else if (!await ClearLeftoversAsync(install, server, title, log, ui)) return 2;
+                    else if (BusyPort(ui.Ports) is { } port) problem = PortInUse(title, port, $"127.0.0.1:{port} could not be bound on this PC.", log);
                     else if (checkUpdate && await StagedUpdateAsync(install, server) is { } staged)
                     {
                         StartStaged(staged, id);
@@ -161,7 +180,9 @@ internal static class PlayerMode
             if (inner is System.Security.Authentication.AuthenticationException)
                 return new(title, $"{title} did not prove it is the server this shortcut was made for.",
                     "Ask the host for a new Play file and double-click it.", details, log);
-        if (exception is HttpRequestException { StatusCode: null } or TaskCanceledException or System.Net.Sockets.SocketException)
+        // Batch 697: a local listener that could not bind (taken after BusyPort looked) is this PC's port, not the server.
+        if (exception is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse }) return PortInUse(title, null, details, log);
+        if (exception is HttpRequestException { StatusCode: null } or TaskCanceledException or SocketException)
             return new(title, $"Can't reach {title}.",
                 "Check that you are online and that the host's server is on, then choose Try again.", details, log);
         return new(title, $"{title} could not start.",
@@ -180,6 +201,100 @@ internal static class PlayerMode
             $"{title} can't find it in {missing}. Double-click {title}'s Play file again to repair the setup.",
             $"Missing: {missing}", log);
     }
+
+    /// <summary>
+    /// NOT RETAIL (batch 697; retail had no companion): a client from an earlier start that is still running. An AIR client that did
+    /// not exit keeps its companion waiting, and that companion holds the local ports this start binds, which used to read "Can't
+    /// reach the server". Only processes started from this install's own folders count (the install, the server's AIR folder and its
+    /// game executable), never anything else on the PC. A running game is never closed: the player gets Cancel only. Otherwise the
+    /// player chooses Close and start or Cancel. False when the start stops here.
+    /// </summary>
+    private static async Task<bool> ClearLeftoversAsync(string install, string server, string title, string log, ShortcutUi ui)
+    {
+        var leftovers = Leftovers(install, Remembered(server, "airRoot"), Remembered(server, "stockExecutable"));
+        try
+        {
+            if (leftovers.Count == 0) return true;
+            var details = "Still running from this install:\r\n" + string.Join("\r\n", leftovers.Select(left => $"{left.Image} (process {left.Process.Id})"));
+            var game = leftovers.Any(left => Path.GetFileName(left.Image).Equals(GameFile, StringComparison.OrdinalIgnoreCase));
+            var question = game
+                ? new PlayerProblem(title, "A game is in progress on this PC.", "Finish the game first, then double-click the shortcut again.", details, log)
+                : new PlayerProblem(title, "A game client from an earlier start is still running in the background.", "Close it and start?", details, log);
+            Console.WriteLine($"start: {question.WhatHappened}\r\n{details}");
+            if (!ui.Leftover(question, !game)) return false;
+            ui.Status(Closing);
+            await CloseAsync(leftovers, ui.Ports);
+            return true;
+        }
+        finally
+        {
+            foreach (var (process, _) in leftovers) process.Dispose();
+        }
+    }
+
+    /// <summary>The running processes (but this one) whose executable is inside <paramref name="install"/> or <paramref name="air"/>, or is <paramref name="game"/>.</summary>
+    internal static List<(Process Process, string Image)> Leftovers(string install, string? air, string? game)
+    {
+        var found = new List<(Process, string)>();
+        foreach (var process in Process.GetProcesses())
+        {
+            string? image = null;
+            // A process this user cannot inspect (another user's, an elevated or protected one) is not ours to close.
+            try { if (process.Id != Environment.ProcessId) image = process.MainModule?.FileName; }
+            catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
+            if (image is not null && (FolderMove.Inside(image, install) || air is not null && FolderMove.Inside(image, air) ||
+                game is not null && FolderMove.Same(image, game)))
+                found.Add((process, image));
+            else process.Dispose();
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// Gracefully first: a process with a window is asked to close it; one with none (the windowless companion, an AIR client whose
+    /// window is gone) has nothing to ask and ends at once, as does one still running after five seconds. Then the ports get as long.
+    /// </summary>
+    private static async Task CloseAsync(List<(Process Process, string Image)> leftovers, IReadOnlyList<int> ports)
+    {
+        foreach (var (process, image) in leftovers)
+            try
+            {
+                Console.WriteLine($"start: closing {image} (process {process.Id})");
+                if (!process.CloseMainWindow()) process.Kill();
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+        var deadline = Environment.TickCount64 + 5000;
+        foreach (var (process, _) in leftovers)
+            try
+            {
+                if (!process.WaitForExit(TimeSpan.FromMilliseconds(Math.Max(0, deadline - Environment.TickCount64)))) process.Kill();
+                process.WaitForExit(5000);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+        for (var poll = 0; poll < 20 && BusyPort(ports) is not null; poll++) await Task.Delay(250);
+    }
+
+    /// <summary>
+    /// The first of <paramref name="ports"/> the start cannot bind on loopback (another program listens there, or Windows keeps it), or
+    /// null. Each is bound and released at once, the way the play step binds it.
+    /// </summary>
+    internal static int? BusyPort(IReadOnlyList<int> ports)
+    {
+        foreach (var port in ports)
+        {
+            var probe = new TcpListener(IPAddress.Loopback, port);
+            try { probe.Start(); }
+            catch (SocketException) { return port; }
+            finally { probe.Stop(); }
+        }
+        return null;
+    }
+
+    /// <summary>A local port another program holds: the server is not to blame, so the dialog never says "Can't reach".</summary>
+    private static PlayerProblem PortInUse(string title, int? port, string details, string log) =>
+        new(title, port is null ? "A port this start needs is in use by another program." : $"Port {port} is in use by another program.",
+            $"{title} needs it on this PC. Close the other program, then choose Try again. If you can't tell which program it is, restart the PC.",
+            details, log);
 
     private static void StartStaged(string staged, string id)
     {

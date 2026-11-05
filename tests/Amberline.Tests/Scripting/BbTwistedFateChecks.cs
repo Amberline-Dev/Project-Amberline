@@ -60,6 +60,43 @@ public static class BbTwistedFateChecks
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));
     }
 
+    /// <summary>The 0xBF buff adds of <paramref name="buff"/> a client received (the name hash is at byte 9).</summary>
+    private static int AddsOf(WireCapture wire, string buff) => wire.Packets.Count(entry => entry.Packet.Plaintext.Span[0] == SpellPackets.BuffAddOpcode &&
+        BinaryPrimitives.ReadUInt32LittleEndian(entry.Packet.Plaintext.Span[9..]) == SpellPackets.BuffNameHash(buff));
+
+    /// <summary>
+    /// Batch 696 (owner, 5 November 2026: "throwing twisted fate's Q produces a silence effect under him"). WildCards.SelfExecute adds its own buff
+    /// to the TestCubeRender cube it casts the cards from, and ExpirationTimer force-renders the cube's particles; the WildCards template carries the
+    /// Silence buff's torch (AutoBuffActivateEffect2 GLOBAL_SILENCE.TROY) though nothing is silenced, so a client holding the add drew it at the cube.
+    /// The add stays on the server (its BuffOnSpellHit is the cards' damage); no client receives it. Null Sphere's silence is the control.
+    /// </summary>
+    [Check("scripting.bb-twistedfate-wild-cards-cube-draws-no-silence")]
+    public static void WildCardsCubeDrawsNoSilence()
+    {
+        using var match = Duel();
+        match.Foe.Position = new Position2(7800, 7000);
+        var own = Observe(match, Team.Order, match.Hero, 9001);
+        var enemy = Observe(match, Team.Chaos, match.Foe, 9002);
+        TestAssert.True(match.Cast(0, at: new Position2(7800, 7000)), "Wild Cards casts at a point");
+        match.Advance(1.0);
+        var cube = match.Runtime.World.Entities.Values.Single(unit => unit.Placemarker && unit.Name == "TestCubeRender");
+        TestAssert.True(Buff(cube, "WildCards") is not null && Buff(cube, "ExpirationTimer") is not null, "the cube holds the script's two adds: " + Names(cube));
+        match.Advance(5.0);
+        TestAssert.Equal(1, HitsOn(match, "Foe").Count, "the cube's WildCards still deals the cards' hit");
+        TestAssert.Equal(0, AddsOf(own, "WildCards") + AddsOf(enemy, "WildCards"), "no client holds the WildCards add, so none draws its silence torch");
+        TestAssert.True(AddsOf(own, "ExpirationTimer") > 0, "the cube's other add still reaches the clients");
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));
+
+        using var kassadin = new Match("Kassadin");
+        kassadin.Learn(5);
+        kassadin.Refill();
+        var foeWire = Observe(kassadin, Team.Chaos, kassadin.Foe, 9002);
+        TestAssert.True(kassadin.Cast(0, target: kassadin.Foe), "Null Sphere casts at the foe");
+        kassadin.Advance(1.0);
+        TestAssert.True(Buff(kassadin.Foe, "Silence") is not null, "Null Sphere silences");
+        TestAssert.True(AddsOf(foeWire, "Silence") > 0, "a silence that silences keeps its add, and its torch, on the client");
+    }
+
     [Check("scripting.bb-twistedfate-pick-a-card-cycles-locks-and-throws-the-card")]
     public static void PickACardLocksEachColour()
     {

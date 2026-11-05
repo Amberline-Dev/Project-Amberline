@@ -352,6 +352,14 @@ the game from** the server's name:
 - **This shortcut's server is not set up any more.** Double-click your server's Play file again: it sets the server up and
   makes a new icon.
 - The server **could not start**: choose **Try again**. If it keeps happening, choose **Copy** and send the text to the host.
+- **A game client from an earlier start is still running in the background.** Sometimes the game client does not close fully
+  and keeps running without a window. Choose **Close and start**: Amberline closes only the programs that run from its own
+  install folder, then starts. **Cancel** leaves them running. **Show details** lists them.
+- **A game is in progress on this PC.** A game started from this install is still running. Amberline never closes it: finish
+  the game, then double-click the icon again.
+- **Port 2099 is in use by another program.** (or 5222, 8390, 8393): Amberline needs these ports on your PC, and a program
+  that is not part of this install holds one, for example an Amberline server or another game client. Close it, then choose
+  **Try again**. If you can't tell which program it is, restart the PC.
 
 The details never show the server's address.
 

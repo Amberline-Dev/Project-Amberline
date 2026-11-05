@@ -59,15 +59,29 @@ internal static class PlayerInstallWindow
     }
 
     /// <summary>A failure with Copy and Close, for a program with no window of its own (the shortcut).</summary>
-    internal static void ShowProblem(PlayerProblem problem) => OnWindowsThread(() => Problem(null, problem, tryAgain: false));
+    internal static void ShowProblem(PlayerProblem problem) => OnWindowsThread(() => Problem(null, problem, null));
 
     /// <summary>A failure with Try again, Copy and Close. True when the player chose Try again.</summary>
     internal static bool AskTryAgain(PlayerProblem problem)
     {
         var again = false;
-        OnWindowsThread(() => again = Problem(null, problem, tryAgain: true));
+        OnWindowsThread(() => again = Problem(null, problem, TryAgainButton));
         return again;
     }
+
+    /// <summary>
+    /// Batch 697: a client left from an earlier start, with Close and start (the default), Copy and Cancel; a running game gets Copy and
+    /// Cancel only. True when the player chose Close and start.
+    /// </summary>
+    internal static bool AskCloseLeftover(PlayerProblem problem, bool canClose)
+    {
+        var close = false;
+        OnWindowsThread(() => close = Problem(null, problem, canClose ? CloseAndStart : null, TaskDialogButton.Cancel));
+        return close;
+    }
+
+    internal const string TryAgainButton = "Try again";
+    internal const string CloseAndStart = "Close and start";
 
     /// <summary>Windows' dialogs need a single-threaded apartment, which the companion's Main does not have.</summary>
     internal static void OnWindowsThread(Action action)
@@ -101,9 +115,10 @@ internal static class PlayerInstallWindow
     /// <summary>
     /// A failure as a Windows task dialog: what happened (the heading), what to do, the details behind "Show details", the log's path, a
     /// Copy button that keeps the dialog open (the text then says "Copied."), and Try again when it can help. True when the player chose
-    /// Try again. Batch 653: the word list's Copy, not "Copy details".
+    /// Try again. Batch 653: the word list's Copy, not "Copy details". Batch 697: the button that goes on is <paramref name="action"/> (none
+    /// for a failure without one), and <paramref name="dismiss"/> (Close by default) ends it.
     /// </summary>
-    private static bool Problem(IWin32Window? owner, PlayerProblem problem, bool tryAgain)
+    private static bool Problem(IWin32Window? owner, PlayerProblem problem, string? action, TaskDialogButton? dismiss = null)
     {
         var copy = new TaskDialogButton(CopyButton) { AllowCloseDialog = false };
         TaskDialogPage? shown = null;
@@ -116,8 +131,8 @@ internal static class PlayerInstallWindow
             }
             catch (System.Runtime.InteropServices.ExternalException) { }
         };
-        var again = new TaskDialogButton("Try again");
-        var close = TaskDialogButton.Close;
+        var again = new TaskDialogButton(action ?? TryAgainButton);
+        var close = dismiss ?? TaskDialogButton.Close;
         var page = shown = new TaskDialogPage
         {
             Caption = problem.Title,
@@ -129,10 +144,10 @@ internal static class PlayerInstallWindow
             AllowCancel = true,
             SizeToContent = true,
         };
-        if (tryAgain) page.Buttons.Add(again);
+        if (action is not null) page.Buttons.Add(again);
         page.Buttons.Add(copy);
         page.Buttons.Add(close);
-        page.DefaultButton = tryAgain ? again : close;
+        page.DefaultButton = action is not null ? again : close;
         return (owner is null ? TaskDialog.ShowDialog(page) : TaskDialog.ShowDialog(owner, page)) == again;
     }
 
@@ -420,7 +435,7 @@ internal static class PlayerInstallWindow
             {
                 PlayerInstall.Log(profile, "download: stopped: " + exception);
                 Stopped();
-                Problem(this, InstallProblem(profile, Text, exception), tryAgain: false);
+                Problem(this, InstallProblem(profile, Text, exception), null);
                 return;
             }
             finally { downloading = false; }
@@ -493,7 +508,7 @@ internal static class PlayerInstallWindow
             if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.SelectedPath)) return;
             if (problem(dialog.SelectedPath) is { } wrong)
             {
-                Problem(this, wrong, tryAgain: false);
+                Problem(this, wrong, null);
                 return;
             }
             accept(dialog.SelectedPath);
@@ -573,7 +588,7 @@ internal static class PlayerInstallWindow
             {
                 PlayerInstall.Log(profile, "install: stopped: " + exception);
                 Stopped();
-                Problem(this, InstallProblem(profile, Text, exception), tryAgain: false);
+                Problem(this, InstallProblem(profile, Text, exception), null);
                 return;
             }
             canceling = null;
@@ -621,7 +636,7 @@ internal static class PlayerInstallWindow
             catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or FileNotFoundException)
             {
                 Problem(this, new(Text, $"{name} could not be opened.", $"Open \"{name}\" on your desktop instead.",
-                    PlayerProblem.Describe(exception), profile.InstallLog), tryAgain: false);
+                    PlayerProblem.Describe(exception), profile.InstallLog), null);
             }
             Close();
         }
@@ -751,7 +766,7 @@ internal static class PlayerInstallWindow
             try { PlayerUninstall.RemoveServer(profile, server); }
             catch (InstallRefusedException refused)
             {
-                Problem(this, new(Text, $"{server.Name} was not removed.", refused.Message, PlayerProblem.Describe(refused), profile.InstallLog), tryAgain: false);
+                Problem(this, new(Text, $"{server.Name} was not removed.", refused.Message, PlayerProblem.Describe(refused), profile.InstallLog), null);
             }
             FillServers();
         }
@@ -781,7 +796,7 @@ internal static class PlayerInstallWindow
                 alsoGame.Enabled = gameBytes > 0;
                 FillServers();
                 Problem(this, new(Text, "Amberline was not removed.", exception is InstallRefusedException ? exception.Message
-                    : "Close the game client and the game, then choose Remove Amberline again.", PlayerProblem.Describe(exception), profile.InstallLog), tryAgain: false);
+                    : "Close the game client and the game, then choose Remove Amberline again.", PlayerProblem.Describe(exception), profile.InstallLog), null);
                 return;
             }
             UseWaitCursor = false;

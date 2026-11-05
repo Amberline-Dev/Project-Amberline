@@ -250,9 +250,7 @@ public static class AirDtos
             .Select(rune => AirWire.Object(SummonerRuneAlias,
                 ("summonerId", (double)account.SummonerId),
                 ("runeId", rune.Id),
-                // Inventory.hydrateRuneData builds the typed Rune/ItemEffects
-                // from AIR's own shipped catalog for all supported IDs.
-                ("rune", null),
+                ("rune", TypedRune(rune)),
                 ("quantity", Quantity(rune)),
                 ("currentAvailableQuantity", Quantity(rune)),
                 ("usesRem", 0),
@@ -262,6 +260,51 @@ public static class AirDtos
             ("dateString", DateTime.UtcNow.ToString("O")),
             ("summonerRunes", AirWire.List(ids)));
     }
+
+    // The rune book's "Runes Type" filter (RuneBookController.filterByRuneCategory) lists a rune when its first ItemEffect's
+    // effectCategory equals the choice (RuneCategories: 1 Health, 2 Mana, 3 PhysicalAttack, 4 Magic, 5 Defense, 6 Utility; 0 All).
+    // AIR's own catalog (AirGeneratedContent RuneGeneratedData) gives all 411 effects categoryId 1, and Inventory.hydrateRuneData
+    // falls back to it whenever SummonerRune.rune is null or has no imagePath, so a null rune put every rune under Health.
+    // effectType is that catalog's per-stat primary rune type (consistent for each stat name), which the tooltip
+    // ("Primary"/"Secondary") and the rune book glow read. Reconstruction: the category per stat. Retail's effect table is
+    // unrecovered; RuneCategories.effectToCategoryMap (unread by the client) indexes it by an effect id no shipped file names.
+    // Its layout (six Health and six Mana ids in the first thirteen, i.e. the HP and MP pool/regen families) leaves no Mana id
+    // for energy, so the energy stats are Utility; armor penetration and crit are PhysicalAttack, dodge Defense, magic
+    // penetration Magic, and movement speed, cooldown, gold, experience and time dead Utility.
+    private static readonly Dictionary<string, (int Category, int Type)> RuneEffectCategories = new(StringComparer.Ordinal)
+    {
+        ["FlatHPPoolMod"] = (1, 3), ["rFlatHPModPerLevel"] = (1, 3), ["FlatHPRegenMod"] = (1, 3), ["rFlatHPRegenModPerLevel"] = (1, 3),
+        ["FlatMPPoolMod"] = (2, 5), ["rFlatMPModPerLevel"] = (2, 5), ["FlatMPRegenMod"] = (2, 3), ["rFlatMPRegenModPerLevel"] = (2, 3),
+        ["FlatPhysicalDamageMod"] = (3, 1), ["rFlatPhysicalDamageModPerLevel"] = (3, 1), ["PercentAttackSpeedMod"] = (3, 1),
+        ["rPercentAttackSpeedModPerLevel"] = (3, 1), ["FlatCritChanceMod"] = (3, 1), ["rFlatCritChanceModPerLevel"] = (3, 1),
+        ["FlatCritDamageMod"] = (3, 1), ["rFlatCritDamageModPerLevel"] = (3, 1), ["rFlatArmorPenetrationMod"] = (3, 1),
+        ["rFlatArmorPenetrationModPerLevel"] = (3, 1),
+        ["FlatMagicDamageMod"] = (4, 5), ["rFlatMagicDamageModPerLevel"] = (4, 5), ["rFlatMagicPenetrationMod"] = (4, 1),
+        ["rFlatMagicPenetrationModPerLevel"] = (4, 1),
+        ["FlatArmorMod"] = (5, 3), ["rFlatArmorModPerLevel"] = (5, 3), ["FlatSpellBlockMod"] = (5, 5), ["rFlatSpellBlockModPerLevel"] = (5, 5),
+        ["rFlatDodgeMod"] = (5, 3), ["rFlatDodgeModPerLevel"] = (5, 3),
+        ["PercentMovementSpeedMod"] = (6, 7), ["rPercentCooldownMod"] = (6, 5), ["rPercentCooldownModPerLevel"] = (6, 5),
+        ["rFlatGoldPer10Mod"] = (6, 7), ["PercentEXPBonus"] = (6, 7), ["rPercentTimeDeadMod"] = (6, 7),
+        ["FlatEnergyPoolMod"] = (6, 5), ["rFlatEnergyModPerLevel"] = (6, 5), ["FlatEnergyRegenMod"] = (6, 3), ["rFlatEnergyRegenModPerLevel"] = (6, 3),
+    };
+
+    // The fields Inventory.makeHydratedRune sets, from the shipped rune record. The values keep the shipped sign: the stock
+    // renderers print "+ " before the formatted value, so a cooldown rune reads "+ -0.29%" exactly as with AIR's own catalog.
+    // imagePath only has to be non-null (every renderer loads the art by itemId from AIR's catalog); the twelve Elusion
+    // records have no icon in the shipped data or in that catalog, so they send "".
+    private static AsObject TypedRune(RuneData rune) => AirWire.Object(AirProtocolNames.Rune,
+        ("itemId", rune.Id),
+        ("runeType", AirWire.Object(RuneTypeAlias, ("runeTypeId",
+            rune.Color switch { RuneColor.Red => 1, RuneColor.Yellow => 3, RuneColor.Blue => 5, _ => 7 }))),
+        ("tier", (int)rune.Tier),
+        ("imagePath", rune.Icon.Length == 0 ? string.Empty : Path.ChangeExtension(Path.GetFileName(rune.Icon), ".png")),
+        ("itemEffects", AirWire.List(rune.Modifiers.Select(modifier =>
+        {
+            var (category, type) = RuneEffectCategories.GetValueOrDefault(modifier.Name);
+            return (object)AirWire.Object(AirProtocolNames.ItemEffect,
+                ("name", modifier.Name), ("displayName", modifier.Name), ("value", modifier.Value),
+                ("effectCategory", category), ("effectType", type));
+        }))));
 
     public static AsObject StatsSummary(PlatformAccount account) => AirProfileDtos.PlayerStatSummaries(account, []);
 

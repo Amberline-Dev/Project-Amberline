@@ -752,28 +752,132 @@ public static class AirPlayerInstallChecks
         finally { Cleanup(root); }
     }
 
-    /// <summary>The shortcut's seam: the start window's lines, the dialogs it would show and the answers to Try again, and the play step.</summary>
-    private sealed class FakeStart
+    [Check("server.air-player-shortcut-leftover-client", TimeoutSeconds = 300)]
+    public static void ALeftoverClientIsNamedAndClosedOnlyWhenAsked() => LeftoverClientAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Batch 697: a local port the start binds is held. The owner's report: a leftover client from an earlier start kept it, and the
+    /// shortcut said "Can't reach &lt;server&gt;" although the server answered. The port holder is this check's own listener; the
+    /// leftovers are copies of the 64-bit cmd.exe this check starts inside its temporary install (and one outside it, which must stay).
+    /// </summary>
+    private static async Task LeftoverClientAsync()
     {
-        private readonly Queue<bool> answers;
-
-        public FakeStart(params bool[] answers)
+        if (!OperatingSystem.IsWindows()) return;
+        var root = AirBootstrapChecks.TemporaryDirectory("league-air-shortcut-leftover");
+        var started = new List<Process>();
+        try
         {
-            this.answers = new(answers);
-            Seam = new(Lines.Add, () => Hidden++, problem =>
+            using var certificate = HostFiles.Certificate(Path.Combine(root, "remote"));
+            var pin = certificate.GetCertHashString(HashAlgorithmName.SHA256);
+            var fixture = Fixture.Make(Path.Combine(root, "player"));
+            var port = AirBootstrapChecks.FreePort();
+            var result = PlayerInstall.Install(fixture.Profile, fixture.Plan(), Connection("127.0.0.1", pin, port), "Alpha", fixture.Tool);
+            var id = PlayerInstall.ServerId(pin);
+            var served = ServedTool(root, "one");
+            File.WriteAllText(Path.Combine(fixture.Install, PlayerInstall.ToolFolder) + ".sha256", served.Sha256);
+            await using var platform = await AirPlayFileChecks.StartPlatformAsync(served.Folder, port, certificate);
+            var held = AirBootstrapChecks.FreePort();
+            var holder = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, held);
+            holder.Start();
+            try
             {
-                Problems.Add(problem);
-                return answers.Length > 0 && this.answers.TryDequeue(out var again) && again;
-            }, (server, connection, shown) =>
-            {
-                Played++;
-                PlayedWith = (server, connection);
-                shown();
-                return Task.FromResult(0);
-            });
-        }
+                // Another program (this check) holds the port: a plain message naming it, never "Can't reach Alpha.".
+                var ui = new FakeStart(false) { Binds = held };
+                TestAssert.Equal(2, await PlayerMode.StartAsync(fixture.Install, id, checkUpdate: true, ui.Seam));
+                var busy = ui.Problems.Single();
+                TestAssert.Equal($"Port {held} is in use by another program.", busy.WhatHappened);
+                TestAssert.True(busy.WhatToDo.Contains("Try again", StringComparison.Ordinal), busy.WhatToDo);
+                TestAssert.Equal((0, 0), (ui.Played, ui.Questions.Count));
 
-        public PlayerMode.ShortcutUi Seam { get; }
+                // A leftover AIR client of this install (its companion held the port), and a program of the same name elsewhere.
+                var leftover = Synthetic(Path.Combine(result.Record.Air, "LolClient.exe"), started);
+                var elsewhere = Synthetic(Path.Combine(root, "elsewhere", "LolClient.exe"), started);
+                _ = leftover.WaitForExitAsync().ContinueWith(_ => holder.Stop(), TaskScheduler.Default);
+
+                // Cancel: nothing is closed and nothing plays.
+                ui = new FakeStart { Binds = held };
+                TestAssert.Equal(2, await PlayerMode.StartAsync(fixture.Install, id, checkUpdate: true, ui.Seam));
+                var (question, canClose) = ui.Questions.Single();
+                TestAssert.Equal("A game client from an earlier start is still running in the background.", question.WhatHappened);
+                TestAssert.Equal(("Close it and start?", true), (question.WhatToDo, canClose));
+                TestAssert.True(question.Details.Contains(Path.Combine(result.Record.Air, "LolClient.exe"), StringComparison.OrdinalIgnoreCase) &&
+                    !question.Details.Contains("elsewhere", StringComparison.Ordinal), question.Details);
+                TestAssert.Equal((false, false, 0, 0), (leftover.HasExited, elsewhere.HasExited, ui.Played, ui.Problems.Count));
+
+                // Close and start: only the install's leftover ends, the port frees, and play starts.
+                ui = new FakeStart { Binds = held, CloseAndStart = true };
+                TestAssert.Equal(0, await PlayerMode.StartAsync(fixture.Install, id, checkUpdate: true, ui.Seam));
+                TestAssert.Equal(new[] { PlayerMode.Checking, PlayerMode.Closing, PlayerMode.Starting }, ui.Lines.ToArray());
+                TestAssert.True(leftover.WaitForExit(10_000), "the leftover AIR client was not closed");
+                TestAssert.False(elsewhere.HasExited, "a program outside the install was closed");
+                TestAssert.Equal((1, 1, 0), (ui.Played, ui.Questions.Count, ui.Problems.Count));
+
+                // The game itself runs from the install: a game in progress, Cancel only, and the game keeps running.
+                var game = Synthetic(Path.Combine(result.Record.Game, "League of Legends.exe"), started);
+                ui = new FakeStart { Binds = held, CloseAndStart = true };
+                TestAssert.Equal(2, await PlayerMode.StartAsync(fixture.Install, id, checkUpdate: true, ui.Seam));
+                (question, canClose) = ui.Questions.Single();
+                TestAssert.Equal(("A game is in progress on this PC.", false), (question.WhatHappened, canClose));
+                TestAssert.Equal((false, false, 0), (game.HasExited, elsewhere.HasExited, ui.Played));
+            }
+            finally { holder.Stop(); }
+        }
+        finally
+        {
+            foreach (var process in started)
+            {
+                if (!process.HasExited) process.StandardInput.Close();
+                process.WaitForExit(30_000);
+                process.Dispose();
+            }
+            Cleanup(root);
+        }
+    }
+
+    /// <summary>A copy of the 64-bit cmd.exe at <paramref name="path"/>, started: it waits on its input and ends when that closes.</summary>
+    private static Process Synthetic(string path, List<Process> started)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.Copy(Path.Combine(Environment.SystemDirectory, "cmd.exe"), path, overwrite: true);
+        var start = new ProcessStartInfo(path) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true };
+        foreach (var argument in new[] { "/d", "/q", "/k" }) start.ArgumentList.Add(argument);
+        var process = Process.Start(start)!;
+        started.Add(process);
+        return process;
+    }
+
+    /// <summary>The shortcut's seam: the start window's lines, the dialogs it would show and the answers to Try again, and the play step.</summary>
+    private sealed class FakeStart(params bool[] answers)
+    {
+        private readonly Queue<bool> answers = new(answers);
+
+        /// <summary>The seam; batch 697: the leftover question's answer and the ports (only <see cref="Binds"/>, never the real ones).</summary>
+        public PlayerMode.ShortcutUi Seam => new(Lines.Add, () => Hidden++, problem =>
+        {
+            Problems.Add(problem);
+            return this.answers.TryDequeue(out var again) && again;
+        }, (question, canClose) =>
+        {
+            Questions.Add((question, canClose));
+            return canClose && CloseAndStart;
+        }, (server, connection, shown) =>
+        {
+            // As the real play step: the local listeners bind first (a held port throws the owner's SocketException).
+            if (Binds is { } port)
+            {
+                var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+                listener.Start();
+                listener.Stop();
+            }
+            Played++;
+            PlayedWith = (server, connection);
+            shown();
+            return Task.FromResult(0);
+        }, Binds is { } bound ? [bound] : []);
+
+        public bool CloseAndStart { get; init; }
+        public List<(PlayerProblem Question, bool CanClose)> Questions { get; } = [];
+        public int? Binds { get; init; }
         public List<string> Lines { get; } = [];
         public List<PlayerProblem> Problems { get; } = [];
         public int Hidden { get; private set; }
