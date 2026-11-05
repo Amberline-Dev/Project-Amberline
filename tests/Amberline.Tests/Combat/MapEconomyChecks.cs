@@ -250,6 +250,68 @@ public static class MapEconomyChecks
         TestAssert.Near(0.92, rules.SoloLaneUnitExperience, 0.0, "map 8 ships no Mission shares: the Summoner's Rift solo share stands");
     }
 
+    /// <summary>
+    /// Batch 688 ("Kills give way way too much XP on SR - check other modes too"): a champion kill pays 55% of the XP the victim needs
+    /// to level (V1.0.0.79 "Equal level champion kills now provide 50% of the XP needed to level", V1.0.0.96 55%, V1.0.0.120 the victim's
+    /// level), scaled per recipient by the V1.0.0.75 S curve on the level delta ("killing champions three levels and below provide
+    /// negligible rewards, and kills three levels and above provide almost twice the experience of even level kills"). Reconstruction,
+    /// the curve's shape: S(d) = 2 / (1 + 39^(-d/3)), d = victim level - recipient level, so S(0) = 1 and S(+-3) = 1 +- 0.95. Every map
+    /// pays it on its own ExpCurve. Each case is a fresh match on that map: a lone killer, then a killer with an ally inside 1600.
+    /// </summary>
+    [Check("combat.progression.champion-kill-xp-follows-the-level-delta-curve-on-every-map")]
+    public static void ChampionKillExperienceFollowsTheLevelDeltaCurve()
+    {
+        static double Curve(int delta) => 2.0 / (1.0 + Math.Pow(39.0, -delta / 3.0));
+        TestAssert.Near(0.05, Curve(-3), 1e-12, "three levels below: negligible (5%)");
+        TestAssert.Near(1.95, Curve(3), 1e-12, "three levels above: almost twice");
+        // Summoner's Rift's own numbers (ExpCurve: 500 from level 3 to 4, 830 from 6 to 7), the reported case.
+        TestAssert.Near(13.75, Kill(GameMaps.Normal, killerLevel: 6, victimLevel: 3).Killer, 1e-9,
+            "SR: a level-6 killer of a level-3 champion gets 5% of 275");
+        TestAssert.Near(456.5, Kill(GameMaps.Normal, killerLevel: 6, victimLevel: 6).Killer, 1e-9,
+            "SR: an even-level kill is 55% of the 830 the victim needs");
+        TestAssert.Near(890.175, Kill(GameMaps.Normal, killerLevel: 3, victimLevel: 6).Killer, 1e-9,
+            "SR: three levels up pays 1.95 x 456.5");
+        foreach (var map in new[] { GameMaps.Normal, GameMaps.Harrowing, GameMaps.Tutorial, GameMaps.TwistedTreeline, GameMaps.CrystalScar })
+        {
+            var rules = MapProgressionRules.Load(GameDataPaths.Default.ForMap(map));
+            foreach (var (killerLevel, victimLevel) in new[] { (6, 6), (6, 5), (6, 4), (6, 3), (6, 1), (5, 6), (4, 6), (3, 6), (9, 6) })
+            {
+                var expected = rules.ChampionKillExperienceBase(victimLevel) * Curve(victimLevel - killerLevel);
+                TestAssert.Near(expected, Kill(map, killerLevel, victimLevel).Killer, 1e-9,
+                    $"map {map}: a lone level-{killerLevel} killer of a level-{victimLevel} champion");
+            }
+            // Shared: the 110% pool split in two, each share on its recipient's own delta (V1.0.0.75 "on a per-champion basis").
+            var shared = Kill(map, killerLevel: 6, victimLevel: 6, allyLevel: 9);
+            var share = rules.ChampionKillExperienceBase(6) * 1.1 / 2.0;
+            TestAssert.Near(share, shared.Killer, 1e-9, $"map {map}: the even-level killer's half of the 110% pool");
+            TestAssert.Near(share * Curve(-3), shared.Ally, 1e-9, $"map {map}: the level-9 ally's half takes the three-level penalty");
+        }
+    }
+
+    private static (double Killer, double Ally) Kill(int map, int killerLevel, int victimLevel, int? allyLevel = null)
+    {
+        var (combat, world, killer) = CreateMatch(map);
+        killer.Level = killerLevel;
+        killer.Experience = 0.0;
+        var victim = new Entity(2, EntityKind.Hero, UnitType.Hero, Team.Chaos, new Position2(100.0, 0.0))
+        {
+            Level = victimLevel, MaxHealth = 10.0, Health = 10.0,
+        };
+        world.Register(victim);
+        Entity? ally = null;
+        if (allyLevel is int level)
+        {
+            ally = new Entity(3, EntityKind.Hero, UnitType.Hero, Team.Order, new Position2(200.0, 0.0))
+            {
+                Level = level, MaxHealth = 500.0, Health = 500.0,
+            };
+            world.Register(ally);
+        }
+        TestAssert.True(combat.ApplyHit(killer.NetId, victim.NetId, 20.0, DamageType.True), "the killing hit lands");
+        TestAssert.False(victim.Alive, "the victim dies");
+        return (killer.Experience, ally?.Experience ?? 0.0);
+    }
+
     private static void Tick(CombatService combat, double from, double to)
     {
         // One-second steps keep 3000 s cheap; the ambient rates are per second and the gates are whole seconds.

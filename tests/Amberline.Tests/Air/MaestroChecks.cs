@@ -11,11 +11,14 @@ public static class MaestroChecks
         var source = Path.GetFullPath(Path.Combine(Amberline.Data.GameData.Default.Paths.Root, "../../../../../lol_air_client"));
         var start = Amberline.AirCompanion.Program.CreateAirStartInfo(source);
         TestAssert.Equal(source, start.WorkingDirectory);
-        TestAssert.Equal(4, start.ArgumentList.Count);
+        // Batch 686: -nodebug runs the client as an installed application, so the stock client's uncaught errors (logged by
+        // ClientModuleMain.onUncaughtError) open no debugger "ActionScript error" window, as an installed client opened none.
+        TestAssert.Equal(5, start.ArgumentList.Count);
         TestAssert.Equal("-runtime", start.ArgumentList[0]);
         TestAssert.Equal(source, start.ArgumentList[1]);
-        TestAssert.Equal(Path.Combine(source, "META-INF", "AIR", "application.xml"), start.ArgumentList[2]);
-        TestAssert.Equal(source, start.ArgumentList[3]);
+        TestAssert.Equal("-nodebug", start.ArgumentList[2]);
+        TestAssert.Equal(Path.Combine(source, "META-INF", "AIR", "application.xml"), start.ArgumentList[3]);
+        TestAssert.Equal(source, start.ArgumentList[4]);
         TestAssert.False(start.UseShellExecute);
         TestAssert.True(start.RedirectStandardOutput && start.RedirectStandardError);
         TestAssert.True(start.CreateNoWindow);
@@ -28,6 +31,32 @@ public static class MaestroChecks
             TestAssert.Throws<FileNotFoundException>(() => Amberline.AirCompanion.Program.CreateAirStartInfo(incomplete));
         }
         finally { Directory.Delete(incomplete, recursive: true); }
+    }
+
+    /// <summary>
+    /// Batch 686b, DIAGNOSTICS (owner, 4 November 2026): AMBERLINE_AIR_DEBUG_WINDOWS=1 at launch leaves out -nodebug, so a tester gets the
+    /// AIR runtime's error windows back; players never set it, and any other value keeps the installed-application mode.
+    /// </summary>
+    [Check("server.air-adl-debug-windows-switch", Serial = true)] // sets a process environment variable
+    public static void DebugWindowsSwitchLeavesOutNoDebug()
+    {
+        const string variable = "AMBERLINE_AIR_DEBUG_WINDOWS";
+        var source = Path.GetFullPath(Path.Combine(Amberline.Data.GameData.Default.Paths.Root, "../../../../../lol_air_client"));
+        var saved = Environment.GetEnvironmentVariable(variable);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, "1");
+            var debug = Amberline.AirCompanion.Program.CreateAirStartInfo(source);
+            TestAssert.False(debug.ArgumentList.Contains("-nodebug"), "with the switch the error windows come back");
+            TestAssert.Equal(4, debug.ArgumentList.Count);
+            foreach (var off in new[] { null, "", "0" })
+            {
+                Environment.SetEnvironmentVariable(variable, off);
+                var start = Amberline.AirCompanion.Program.CreateAirStartInfo(source);
+                TestAssert.Equal("-nodebug", start.ArgumentList[2], $"without the switch ({off ?? "unset"}) the launch keeps -nodebug");
+            }
+        }
+        finally { Environment.SetEnvironmentVariable(variable, saved); }
     }
 
     [Check("server.air-maestro-protocol")]

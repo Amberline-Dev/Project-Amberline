@@ -321,7 +321,11 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     {
         // A destroyed missile's client object went at the call; the natural end tells the client now.
         if (_missileNetId != 0 && !_flight.Destroyed) system.Effects.SendDestroyMissile(_missileNetId);
-        if (_projection is { } projected) system.Effects.RetireProjectedCaster(projected.NetId);
+        // Batch 695: only a projection that stands for no unit of the entity paths is retired with its line. A world unit they serve (any but an
+        // un-announced placemarker: Janna's TestCube is announced, Entity.Announced) stays on the clients until its own death, which they send;
+        // retiring it put an 0xA6 on the wire while it lived, and the next visibility refresh created it a second time.
+        if (_projection is { } projected && system.World.Get(projected.NetId) is null or { Placemarker: true, Announced: false })
+            system.Effects.RetireProjectedCaster(projected.NetId);
         _flight.End(_position, reached);
         _forget(this);
         return false;

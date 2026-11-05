@@ -295,6 +295,17 @@ public static partial class BehaviorLeaves
         _ => 0.5 + progress / 200.0,
     }, 0.0, 1.0);
 
+    /// <summary>
+    /// Batch 694 (Reconstruction): the progress that <paramref name="par"/> of the guardian's pool is on a point held by <paramref name="owner"/>,
+    /// the change <see cref="CaptureMeterPool"/> maps back to that much pool (unclamped).
+    /// </summary>
+    internal static double CaptureProgressOfPar(Entity guardian, double par, Team owner) => guardian.MaxMana <= 0.0 ? 0.0 : par / guardian.MaxMana * owner switch
+    {
+        Team.Order => 100.0,
+        Team.Chaos => -100.0,
+        _ => 200.0,
+    };
+
     // The guardian's PAR type as the client loads it: OdinNeutralGuardian.inibin names no Data*PARType, and the loader's default "MP" is
     // PrimaryAbilityResourceType 0 (PrimaryResourceType.Mana). Its pool is the capture meter (BaseMP 50000; BBIncPAR in the shipped buffs).
     private const byte GuardianParType = (byte)Amberline.Data.PrimaryResourceType.Mana;

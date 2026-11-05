@@ -1115,6 +1115,10 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     // Resources, ids, positions
     // ------------------------------------------------------------------------------------------------------------
 
+    // Batch 512: the shipped scripts whose BBIncPAR on a capture guardian the point's tree models itself (see IncPar).
+    private static readonly HashSet<string> TreeModelledMeterScripts =
+        new(StringComparer.OrdinalIgnoreCase) { "OdinGuardianSuppression", "OdinGuardianBuff", "OdinMinionSpellAttack" };
+
     private void IncPar(BbCall call)
     {
         if (Unit(call, "TargetVar") is not { } target) return;
@@ -1127,7 +1131,15 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         // Batch 512 (Reconstruction, owner "one timer", 31 October 2026): a capture guardian's pool is the point tree's progress
         // (BehaviorLeaves.CapturePointSetValue). OdinGuardianSuppression's drain, OdinGuardianBuff's regen and OdinMinionSpellAttack's hit keep
         // running for their other effects (particles, sounds, buffs) but do not move it: a second writer is what made the meter go back (batch 510).
-        if (target.ParIsCaptureMeter) return;
+        // Batch 694: those three are the tree's own math (CapturePointMath's rate, the owner's regen, the minions' +/-9). Any other script's PAR
+        // has no tree counterpart (SummonerOdinGarrison's 800 a stats sample, "Quickly restores the neutralized portion"), so it goes to the point's
+        // tree as progress, and the tree's CapturePoint_SetValue writes the pool. A stats hook's mutation lands on the buff's mutation clock (M4).
+        if (target.ParIsCaptureMeter)
+        {
+            if (_host.HasFrame && !_host.Frame.MutationSuppressed && !TreeModelledMeterScripts.Contains(_host.Frame.ScriptName))
+                target.CaptureMeterParPending += delta;
+            return;
+        }
         target.Mana = Math.Clamp(target.Mana + delta, 0.0, target.MaxMana);
         Spells.SendChampionStats(target);
     }

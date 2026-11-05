@@ -1074,7 +1074,7 @@ public sealed class BbChampionModule : IChampionSpellModule
     private static void StartChildCooldown(SpellSystem system, Entity caster, int slot, int parentSlot, SpellData data, int rank)
     {
         var cooldown = caster.CooldownsDisabled ? 0.0
-            : Math.Max(0.0, data.Cooldowns[Math.Clamp(rank, 1, data.Cooldowns.Count) - 1] * (1.0 + caster.CooldownMod));
+            : Math.Max(0.0, data.Cooldowns[Math.Clamp(rank, 1, data.Cooldowns.Count) - 1] * (1.0 + Math.Max(Amberline.Simulation.Stats.HeroStatCalculator.MinimumCooldownMod, caster.CooldownMod)));
         var hero = caster.UnitType == UnitType.Hero;
         if (hero && parentSlot != slot && (uint)parentSlot < (uint)caster.SpellCooldowns.Count && caster.SpellCooldowns[parentSlot] > 0.0)
             cooldown = Math.Min(cooldown, caster.SpellCooldowns[parentSlot]);

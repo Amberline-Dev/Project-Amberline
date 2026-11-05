@@ -287,7 +287,11 @@ public sealed class BbUnitCharacterModule
         void Charge()
         {
             if (child.OverrideCooldownCheck) return;
-            var cooldown = caster.CooldownsDisabled ? 0.0 : Math.Max(0.0, data.Cooldowns[Math.Clamp(rank, 1, data.Cooldowns.Count) - 1]);
+            // Batch 694: times 1 + the unit's PercentCooldownMod, as a champion slot's (SummonerOdinGarrison's IncPercentCooldownMod -1 on a
+            // guardian). Reconstruction: held at the global character floor gcd_PercentCooldownModMinimum -0.4 (LEVELS/Map8/Constants.var, the
+            // value Map1's holds), which the client loads for every character; the server's own use of it is not in the client.
+            var cooldown = caster.CooldownsDisabled ? 0.0 : Math.Max(0.0, data.Cooldowns[Math.Clamp(rank, 1, data.Cooldowns.Count) - 1] *
+                (1.0 + Math.Max(Amberline.Simulation.Stats.HeroStatCalculator.MinimumCooldownMod, caster.CooldownMod)));
             if (cooldown > 0.0) caster.ScriptSlotReadyAt[slot] = system.CurrentTime + cooldown;
             else caster.ScriptSlotReadyAt.Remove(slot);
         }

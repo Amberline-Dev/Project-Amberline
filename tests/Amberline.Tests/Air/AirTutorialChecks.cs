@@ -153,6 +153,109 @@ public static class AirTutorialChecks
         }
     }
 
+    /// <summary>
+    /// Batch 686 (community report: leaving a tutorial left the player "assigned to an existing game"): the stock client goes home when its
+    /// tutorial game closes, crashed or abandoned, and offers no reconnect (InGameController.onGameCrashedOrAbandoned: a tutorial calls
+    /// cancelGameFlow), so the platform ends a tutorial whose player has left. A tutorial still loading (no seat connected yet), still
+    /// played, or finished (its result decides) is kept, and so is any other game's disconnected seat (that player may reconnect).
+    /// </summary>
+    [Check("server.air-tutorial-ends-when-its-player-leaves")]
+    public static void TutorialEndsWhenItsPlayerLeaves()
+    {
+        foreach (var tutorial in new[] { LeaverGame(GameMaps.Tutorial), LeaverGame(GameMaps.Normal, GameMaps.TutorialMode) })
+        {
+            TestAssert.False(Left(tutorial, LeaverRemote("Waiting for players", connected: false)), "still loading");
+            TestAssert.False(Left(tutorial, LeaverRemote("Playing", connected: true)), "being played");
+            TestAssert.True(Left(tutorial, LeaverRemote("Playing", connected: false)), "its player has left");
+            TestAssert.False(Left(tutorial, LeaverRemote("Finished", connected: false)), "a finished game has its result");
+        }
+        var left = LeaverGame(GameMaps.Tutorial);
+        TestAssert.False(Left(left, LeaverRemote("Waiting for players", connected: true)), "connected while loading");
+        TestAssert.True(Left(left, LeaverRemote("Waiting for players", connected: false)), "and gone before the start");
+
+        // Batch 686b: restated to two humans; a custom game with one human now ends too (server.air-solo-custom-game-ends-when-its-player-leaves).
+        var custom = LeaverGame(GameMaps.Normal, humans: 2);
+        TestAssert.False(Left(custom, LeaverRemote("Playing", connected: true, other: true)));
+        TestAssert.False(Left(custom, LeaverRemote("Playing", connected: false, other: true)), "a custom game with others waits for a reconnect");
+    }
+
+    /// <summary>
+    /// Batch 686b, NOT RETAIL (owner, 4 November 2026: "Custom games should end instantly the moment a player disconnects if only a
+    /// single player is present in a game"): a custom game whose only human (bots do not count) was connected and has left ends at once,
+    /// released like a tutorial. Two or more humans play on (the leaver may reconnect), and matchmade games are untouched.
+    /// </summary>
+    [Check("server.air-solo-custom-game-ends-when-its-player-leaves")]
+    public static void SoloCustomGameEndsWhenItsPlayerLeaves()
+    {
+        foreach (var map in new[] { GameMaps.Normal, GameMaps.TwistedTreeline, GameMaps.CrystalScar })
+        {
+            var solo = LeaverGame(map);
+            TestAssert.False(Left(solo, LeaverRemote("Waiting for players", connected: false)), "still loading");
+            TestAssert.False(Left(solo, LeaverRemote("Playing", connected: true)), "being played");
+            TestAssert.True(Left(solo, LeaverRemote("Playing", connected: false), TimeSpan.FromSeconds(1)), "one human with bots: ends at once");
+            TestAssert.False(Left(solo, LeaverRemote("Finished", connected: false)), "a finished game has its result");
+        }
+        var pair = LeaverGame(GameMaps.Normal, humans: 2);
+        TestAssert.False(Left(pair, LeaverRemote("Playing", connected: true, other: true)));
+        TestAssert.False(Left(pair, LeaverRemote("Playing", connected: false, other: true)), "two humans, one leaves: stays");
+        TestAssert.False(Left(pair, LeaverRemote("Playing", connected: false, other: false)), "and keeps today's rule after both");
+
+        var coop = LeaverGame(GameMaps.Normal);
+        coop.QueueId = PlatformGames.Queues.First(queue => queue.Type == "BOT").Id;
+        TestAssert.True(coop.IsMatchmade);
+        TestAssert.False(Left(coop, LeaverRemote("Playing", connected: true)));
+        TestAssert.False(Left(coop, LeaverRemote("Playing", connected: false)), "a matchmade game is untouched");
+    }
+
+    /// <summary>
+    /// Batch 686b (owner, 4 November 2026): a tutorial whose player never connects (a game client that failed before joining) ends three
+    /// minutes after its launch, released like a tutorial its player left; a player who connected and left is released at once, and no
+    /// other game is touched however long its seat stays empty.
+    /// </summary>
+    [Check("server.air-tutorial-ends-when-its-player-never-joins")]
+    public static void TutorialEndsWhenItsPlayerNeverJoins()
+    {
+        var limit = TimeSpan.FromMinutes(3);
+        foreach (var state in new[] { "Starting", "Waiting for players" })
+            foreach (var tutorial in new[] { LeaverGame(GameMaps.Tutorial), LeaverGame(GameMaps.Normal, GameMaps.TutorialMode) })
+            {
+                var waiting = LeaverRemote(state, connected: false);
+                TestAssert.False(Left(tutorial, waiting, limit - TimeSpan.FromSeconds(1)), $"{state}: never connected at 2:59 stays");
+                TestAssert.True(Left(tutorial, waiting, limit), $"{state}: never connected at 3:00 ends");
+            }
+        var left = LeaverGame(GameMaps.Tutorial);
+        TestAssert.False(Left(left, LeaverRemote("Waiting for players", connected: true), TimeSpan.FromSeconds(20)), "connected");
+        TestAssert.True(Left(left, LeaverRemote("Waiting for players", connected: false), TimeSpan.FromSeconds(30)), "connected then left ends at once");
+        foreach (var other in new[] { LeaverGame(GameMaps.Normal), LeaverGame(GameMaps.TwistedTreeline) })
+        {
+            TestAssert.False(Left(other, LeaverRemote("Waiting for players", connected: false), limit), "a non-tutorial game is untouched");
+            TestAssert.False(Left(other, LeaverRemote("Playing", connected: false), TimeSpan.FromHours(1)), "however long");
+        }
+    }
+
+    private static readonly DateTimeOffset LeaverLaunch = new(2026, 11, 4, 12, 0, 0, TimeSpan.Zero);
+    private static readonly PlatformAccount Leaver =
+        new(7, 70, "tutorialleaver", "Tutorial Leaver", "", "", new MatchPlayer("Tutorial Leaver", "Ashe", Team.Order));
+
+    private static bool Left(PlatformGames.Lobby game, RemoteGame remote, TimeSpan sinceLaunch = default) =>
+        PlatformGames.PlayerLeftGame(game, remote, LeaverLaunch + sinceLaunch);
+
+    private static readonly PlatformAccount Partner =
+        new(8, 80, "tutorialpartner", "Tutorial Partner", "", "", new MatchPlayer("Tutorial Partner", "Annie", Team.Chaos));
+
+    /// <param name="other">Null: the game has no second human; otherwise the second human's seat and whether it is connected.</param>
+    private static RemoteGame LeaverRemote(string state, bool connected, bool? other = null) => new(Guid.NewGuid(), "host", state, 5119,
+        [new(1, Leaver.Loadout with { PlayerId = 70 }, true, true, connected, connected),
+         .. other is { } partner ? [new RemoteSeat(2, Partner.Loadout with { PlayerId = 80 }, true, false, partner, partner)] : Array.Empty<RemoteSeat>(),
+         new(3, PlatformBots.Seat(AirGameDtos.ChampionNames.Single(pair => pair.Value == "Nunu").Key, Team.Order, 0), false, false, false, false)],
+        CanStop: true, Error: null);
+
+    private static PlatformGames.Lobby LeaverGame(int map, string? mode = null, int humans = 1) => new(1, "game", "", Leaver.Id, 3)
+    {
+        MapId = map, Mode = mode, State = "IN_PROGRESS", HostId = Guid.NewGuid(), CredentialsSent = true, Launched = LeaverLaunch,
+        Members = humans == 1 ? [new(Leaver, Team.Order)] : [new(Leaver, Team.Order), new(Partner, Team.Chaos)],
+    };
+
     private sealed class ManualClock : TimeProvider
     {
         public DateTimeOffset Now = DateTimeOffset.UtcNow;

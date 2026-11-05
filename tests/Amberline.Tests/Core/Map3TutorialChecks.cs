@@ -206,6 +206,236 @@ public static class Map3TutorialChecks
 
 
     /// <summary>
+    /// Batch 691 (owner, 4 November 2026: "I had already learned 'W' before the prompt told me to learn it, and now it's just stuck at this
+    /// stage"). OnTutorialInit locks INPUT_ABILITIES (TutorialScript proto 0.3 pc 0232-0235) and only EventSpendAbilityPoint unlocks it
+    /// (proto 0.26 pc 0007-0009), in the same step that asks for W (<c>RegisterOnSpellLevelupCallback(1, 'EventLevelUpGrats')</c>, which
+    /// fires on W's next rank). At the prompt the player is level 2 (map 3's curve), so a W learnt before it holds the one rank W can have
+    /// and the wait never fires. Here the player tries W, Q and E once a second from the start until the prompt, through the wire as the
+    /// stock client sends them: none is learnt before the prompt, and at the prompt W is learnt and the tutorial goes on.
+    /// </summary>
+    [Check("map3.tutorial-goes-on-when-a-skill-is-learned-before-its-prompt", Serial = true, TimeoutSeconds = 600)]
+    public static void TheTutorialGoesOnWhenASkillIsLearnedBeforeItsPrompt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "league-map3-skill-" + Guid.NewGuid().ToString("N"));
+        LevelScriptHost? level = null;
+        Entity? ashe = null;
+        double? promptAt = null;
+        var now = 0.0;
+        var step = 0;
+        var tries = 0;
+        var accepted = new List<(double At, int Slot)>();
+        try
+        {
+            var report = Amberline.Tools.Diagnostics.HeadlessMatch.Run(new Amberline.Tools.Diagnostics.HeadlessMatchOptions(691, Path.Combine(root, "map3"), 25.0,
+                Amberline.Tools.Diagnostics.HeadlessMatch.TutorialRoster)
+            {
+                MapId = GameMaps.Tutorial,
+                // Ends once the wait has fired, or a minute after the prompt without it (stuck).
+                StopWhen = () => level?.TutorialStepRan("EventLevelUpGrats") == true || promptAt is double at && now > at + 60.0,
+                OnStep = runtime =>
+                {
+                    level ??= runtime.Waves?.LevelScript;
+                    if (level is null || !level.TutorialStepRan("OnTutorialInit")) return;
+                    now = runtime.Combat.CurrentTime;
+                    var seat = runtime.Session.Participants[0];
+                    ashe ??= seat.Hero;
+                    if (level.TutorialStepRan("EventSpendAbilityPoint"))
+                    {
+                        promptAt ??= now;
+                        return;
+                    }
+                    if (++step % 30 != 0 || ashe is not { Alive: true } hero || seat.ConnectionId is not long connection) return;
+                    // NpcUpgradeSpellReq (0x3E: the hero, then the slot; six bytes, so sent clear), W first as the owner did.
+                    foreach (var slot in new[] { 1, 0, 2 })
+                    {
+                        tries++;
+                        runtime.Session.Receive(connection, 1, [0x3E, .. BitConverter.GetBytes(hero.NetId), (byte)slot], runtime.Dependencies.Gameplay);
+                        if (runtime.Session.LastGameplayAccepted) accepted.Add((now, slot));
+                    }
+                },
+            });
+            Console.WriteLine(report.Summary());
+            Console.WriteLine(FormattableString.Invariant(
+                $"skill-up tries before the prompt {tries}, accepted {string.Join(", ", accepted.Select(entry => $"slot {entry.Slot} at {entry.At:0.0}"))}; prompt at {promptAt:0.0}; ranks Q/W/E/R {string.Join("/", ashe?.SpellRanks.Take(4) ?? [])}"));
+            TestAssert.True(report is { Outcome: "stopped", PacketViolations: 0, LifecycleViolations: 0 }, report.Summary());
+            TestAssert.True(tries > 0 && promptAt is not null, "the player tried to learn skills before EventSpendAbilityPoint, which ran");
+            TestAssert.Equal(0, accepted.Count, "no skill is learnt while OnTutorialInit's INPUT_ABILITIES lock holds");
+            TestAssert.True(level!.TutorialStepRan("EventLevelUpGrats"), "W learnt at the prompt fires the wait: the tutorial goes on");
+            TestAssert.Equal(1, ashe!.SpellRanks[1], "W holds its rank from the prompt");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>A client packet through the session's wire boundary, as the stock client sends it (whole blocks encrypted, the tail clear).</summary>
+    private static bool Wire(Amberline.Network.Sessions.MatchRuntime runtime, long connection, byte[] payload)
+    {
+        var blocks = payload.Length - payload.Length % LegacyBlowfishCipher.BlockSize;
+        runtime.Session.Receive(connection, 1, [.. runtime.Cipher.Encrypt(payload.AsSpan(0, blocks)), .. payload[blocks..]], runtime.Dependencies.Gameplay);
+        return runtime.Session.LastGameplayAccepted;
+    }
+
+    /// <summary>
+    /// Batch 691b: every input lock the TutorialScript sets on something the server decides holds on the server. OnTutorialInit locks
+    /// INPUT_ABILITIES, INPUT_SUMMONERSPELLS, INPUT_MOVEMENT and INPUT_SHOP (proto 0.3 pc 0232-0247); the lessons unlock them in turn
+    /// (abilities at EventSpendAbilityPoint, proto 0.26; summoner spells at the Heal lesson, proto 0.31; the shop at EventSpendGold, proto 0.45;
+    /// movement at EventMoveChampion/EventMoveAshe2/EventTakeUpArms, relocked at Event2ndWaypoint and EventGold). Once a second, while the
+    /// level script holds a lock, the player sends what it locks: a skill-up (0x3E), both summoner casts (0xA2), a move order (0x75) and a
+    /// Thornmail purchase (0x87, the shop lesson's own item). None is accepted, and each lesson after its unlock still plays.
+    /// </summary>
+    [Check("map3.tutorial-refuses-what-its-input-locks-hold", Serial = true, TimeoutSeconds = 600)]
+    public static void TheTutorialRefusesWhatItsInputLocksHold()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "league-map3-locks-" + Guid.NewGuid().ToString("N"));
+        LevelScriptHost? level = null;
+        var now = 0.0;
+        var step = 0;
+        var tries = new Dictionary<string, int>(StringComparer.Ordinal);
+        var accepted = new List<string>();
+        var richest = 0.0;
+        try
+        {
+            var report = Amberline.Tools.Diagnostics.HeadlessMatch.Run(new Amberline.Tools.Diagnostics.HeadlessMatchOptions(6911, Path.Combine(root, "map3"), 25.0,
+                Amberline.Tools.Diagnostics.HeadlessMatch.TutorialRoster)
+            {
+                MapId = GameMaps.Tutorial,
+                // Ends once the shop lesson's purchase has played, or two minutes after the last step (stuck).
+                StopWhen = () => level is { } script && (script.TutorialStepRan("EventPowerEquipment") ||
+                                                         script.TutorialSteps.Count > 0 && now > script.TutorialSteps[^1].At + 120.0),
+                OnStep = runtime =>
+                {
+                    level ??= runtime.Waves?.LevelScript;
+                    if (level is null || !level.TutorialStepRan("OnTutorialInit")) return;
+                    now = runtime.Combat.CurrentTime;
+                    var seat = runtime.Session.Participants[0];
+                    if (++step % 30 != 0 || seat.Hero is not { Alive: true } hero || seat.ConnectionId is not long connection) return;
+                    var locks = level.InputLocks;
+                    void Try(string what, uint bit, Func<bool> send)
+                    {
+                        if ((locks & bit) == 0) return;
+                        tries[what] = tries.GetValueOrDefault(what) + 1;
+                        if (send()) accepted.Add(FormattableString.Invariant($"{what} at {now:0.0}"));
+                    }
+                    var height = runtime.Navigation.HeightAt(hero.Position);
+                    Try("skill-up", 4, () => Wire(runtime, connection, [0x3E, .. BitConverter.GetBytes(hero.NetId), 1]));
+                    foreach (var slot in new[] { 0, 1 })
+                        Try("summoner cast", 8, () => Wire(runtime, connection,
+                            Amberline.Tools.Scenarios.SeatOrders.CastPayload(hero.NetId, slot, true, hero.Position, height, hero.Position, height, 0)));
+                    var near = new Position2(hero.Position.X + 150.0, hero.Position.Z);
+                    Try("move order", 2, () => Wire(runtime, connection, ClientGameplayPackets.MoveOrder(hero.NetId, 2, near, 0).Plaintext.ToArray()));
+                    Try("purchase", 16, () =>
+                    {
+                        // The purchase shows in the gold it costs.
+                        var gold = hero.Gold;
+                        Wire(runtime, connection, [0x87, .. BitConverter.GetBytes(hero.NetId), .. BitConverter.GetBytes(3075u)]);
+                        return hero.Gold < gold;
+                    });
+                    if (level.TutorialStepRan("EventGold") && (locks & 16) != 0) richest = Math.Max(richest, hero.Gold);
+                },
+            });
+            Console.WriteLine(report.Summary());
+            var steps = level!.TutorialSteps.Select(entry => entry.Step).ToList();
+            Console.WriteLine("tries " + string.Join(", ", tries.Select(entry => $"{entry.Key} {entry.Value}")) + "; accepted: " + string.Join(", ", accepted) +
+                FormattableString.Invariant($"; gold while the shop was locked after EventGold {richest:0}; steps {string.Join(",", steps.Skip(Math.Max(0, steps.Count - 8)))}"));
+            TestAssert.True(report is { Outcome: "stopped", PacketViolations: 0, LifecycleViolations: 0 }, report.Summary());
+            foreach (var what in new[] { "skill-up", "summoner cast", "move order", "purchase" })
+                TestAssert.True(tries.GetValueOrDefault(what) > 0, $"the player tried a {what} while its lock held");
+            TestAssert.Equal("", string.Join(", ", accepted), "nothing a held input lock covers is accepted");
+            TestAssert.True(richest >= 2000.0, "the player could pay for the Thornmail while the shop was locked (the purchase was tried in earnest)");
+            foreach (var lesson in new[] { "EventLevelUpGrats", "EventSummonerHealCongrats", "EventPowerEquipment" })
+                TestAssert.True(steps.Contains(lesson), $"the tutorial reaches {lesson} after its unlock");
+            // The stand-in sends the shop's opening (0x60) as soon as EventGold waits for it; the shop lesson starts only after
+            // EventSpendGold unlocks the shop (the stock client sends 0x60 only then).
+            TestAssert.True(steps.IndexOf("EventSpendGold") is >= 0 and var unlock && unlock < steps.IndexOf("EventPowerEquipment"),
+                "the shop opens (EventPowerEquipment) only after EventSpendGold unlocks it");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>
+    /// Batch 691b: a tutorial client that reconnects starts with no input locks (the client's tutorial manager is new, its flags 0), and
+    /// the script's later <c>ToggleInputLockingFlag</c> (0xA3, an XOR) would then lock what it means to unlock. The player's seat drops at
+    /// 30 s and comes back; from its return, the flags its client holds (each 0x89 sets or clears one, each 0xA3 flips its bits) equal the
+    /// level script's own at every step, through EventSpendAbilityPoint's toggle.
+    /// </summary>
+    [Check("map3.tutorial-reconnect-restores-the-script-input-locks", Serial = true, TimeoutSeconds = 600)]
+    public static void TheTutorialReconnectRestoresTheScriptInputLocks()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "league-map3-reconnect-" + Guid.NewGuid().ToString("N"));
+        LevelScriptHost? level = null;
+        var now = 0.0;
+        uint client = 0;
+        var dropped = false;
+        var back = false;
+        double? backAt = null;
+        var lastDiffered = false;
+        var mismatches = new List<string>();
+        try
+        {
+            var report = Amberline.Tools.Diagnostics.HeadlessMatch.Run(new Amberline.Tools.Diagnostics.HeadlessMatchOptions(6912, Path.Combine(root, "map3"), 25.0,
+                Amberline.Tools.Diagnostics.HeadlessMatch.TutorialRoster)
+            {
+                MapId = GameMaps.Tutorial,
+                Reconnects = [new Amberline.Tools.Diagnostics.ReconnectPlan(0, 30.0)],
+                // Runs 3 s past EventLevelUpGrats, so the unlock EventSpendAbilityPoint toggled has reached the client.
+                StopWhen = () => level is { } script && (script.TutorialSteps.Any(entry => entry.Step == "EventLevelUpGrats" && now > entry.At + 3.0) ||
+                                                         script.TutorialSteps.Count > 0 && now > script.TutorialSteps[^1].At + 120.0),
+                PacketSink = (peer, packet) =>
+                {
+                    var bytes = packet.Plaintext.Span;
+                    if (peer != 0) return;
+                    if (bytes.Length >= 10 && bytes[0] == 0x89)
+                    {
+                        var flag = BinaryPrimitives.ReadUInt32LittleEndian(bytes[5..]);
+                        client = bytes[9] != 0 ? client | flag : client & ~flag;
+                    }
+                    else if (bytes.Length >= 9 && bytes[0] == TutorialPackets.ToggleInputLockingFlagOpcode)
+                        client ^= BinaryPrimitives.ReadUInt32LittleEndian(bytes[5..]);
+                },
+                OnStep = runtime =>
+                {
+                    level ??= runtime.Waves?.LevelScript;
+                    if (level is null) return;
+                    now = runtime.Combat.CurrentTime;
+                    var seat = runtime.Session.Participants[0];
+                    // A dropped seat's client is gone; the one that comes back starts with a new tutorial manager (flags 0).
+                    if (seat.ConnectionId is null) (dropped, client) = (true, 0u);
+                    else if (dropped && seat.Ready) backAt ??= now;
+                    back = backAt is double returned && now > returned + 3.0;
+                    // The tool's reconnect director hands a judged seat back to the bot scripts, which would spend the player's points;
+                    // the tutorial's stand-in keeps the seat (a human's seat is never bot-run in production).
+                    runtime.Bots?.SetSeatScripted(seat.PlayerId, true);
+                    // Compared from 3 s after the seat is ready again, once its late reconnect state has certainly been sent; a lock the
+                    // script changed during the last step reaches the client with that step's packets, so only a difference seen on two
+                    // steps running counts.
+                    var differs = back && client != level.InputLocks;
+                    if (differs && lastDiffered && mismatches.Count < 8)
+                        mismatches.Add(FormattableString.Invariant($"{now:0.0} s after {level.TutorialSteps[^1].Step}: client {client:X} script {level.InputLocks:X}"));
+                    lastDiffered = differs;
+                },
+            });
+            Console.WriteLine(report.Summary());
+            Console.WriteLine("mismatches: " + string.Join("; ", mismatches));
+            TestAssert.True(report is { Outcome: "stopped", PacketViolations: 0, LifecycleViolations: 0 }, report.Summary());
+            TestAssert.True(dropped && back, "the player's seat dropped and came back");
+            TestAssert.True(level!.TutorialStepRan("EventLevelUpGrats"), "the tutorial goes on after the reconnect");
+            TestAssert.Equal("", string.Join("; ", mismatches), "the returned client holds the script's input locks");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>
     /// Batch 664 (owner's hand test, 3 November 2026), the Basic Tutorial headless (seed 664):
     /// <list type="bullet">
     /// <item>"Champ doesn't get damaged": EventNormalBattle's Aggro.lua wizards (TutorialScript proto 0.19) answer the player's attack

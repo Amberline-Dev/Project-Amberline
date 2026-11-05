@@ -291,6 +291,8 @@ public interface ICombatTransport
     void SendHeroGoldExp(Entity hero);
     void SendHeroNeutralKills(Entity hero);
     void SendHeroMultiKill(Entity hero, Entity victim, int count);
+    /// <summary>The champion death event <c>OnChampionDie</c> (batch 690): the HUD's kill counter and the kill callout run from it.</summary>
+    void SendChampionDie(Entity victim, uint killerNetId, double goldGiven, IReadOnlyList<Entity> assistants);
     void SendRespawn(Entity hero);
     void SendMinionNoRender(Entity minion);
     // The end-of-game ceremony is EndOfGame.luaobj's own now: each of its natives is one of these

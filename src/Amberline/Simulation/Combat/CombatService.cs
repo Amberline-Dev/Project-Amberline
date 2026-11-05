@@ -57,8 +57,9 @@ public sealed partial class CombatService : IEndOfGameEngine
     private static double AmbientRate(IReadOnlyDictionary<string, double> constants, string amount, string interval) =>
         constants[interval] > 0.0 ? constants[amount] / constants[interval] : 0.0;
 
-    // Turrets whose script has called TurnOnAutoAttack and not TurnOffAutoAttack since (Turret.luaobj TimerFindEnemies).
-    private readonly HashSet<uint> _turretAutoAttack = new();
+    // Each turret whose script has called TurnOnAutoAttack and not TurnOffAutoAttack since (Turret.luaobj TimerFindEnemies), with the
+    // object that call gave its attack (batch 693: a SetTarget to another object does not move the attack; see SetTurretAutoAttack).
+    private readonly Dictionary<uint, uint> _turretAutoAttack = new();
     // What each turret's client was last told it targets (0x6D/0xC8), which is not the same as the
     // target id the script keeps: see PublishTurretDisplay.
     private readonly Dictionary<uint, uint?> _turretDisplay = new();
@@ -301,11 +302,13 @@ public sealed partial class CombatService : IEndOfGameEngine
             if (attacker.UnitType != UnitType.Hero || result.Outcome is not (BasicAttackOutcome.Normal or BasicAttackOutcome.Critical) ||
                 !_hooks.SendAttackAsCast(attacker, target, missileNetId))
                 _transport.SendBasicAttack(attacker, target, missileNetId,
-                    // Reconstruction: inherited from the Python server, its derivation is lost. The 0x0D extra time shifts
-                    // the client's cast frame (the cast init: mTimeCast = now + extraTimeForCast + ...) and
-                    // the turret attack spells ship CastFrame 4.95 (0.165 s at 30 fps), so -0.17 plausibly cancels that
-                    // cast time so the shot leaves at the send. Retail's value is not recovered.
-                    attacker.UnitType == UnitType.Turret ? -0.17 : 0.0, result.Outcome, animation);
+                    // Batch 693: no extra time for any attacker, turrets included. The stock 0x0D handler times the cast frame
+                    // at receipt + extra + its own attack cast delay, period x (0.3 + AttackDelayCastOffsetPercent), the AttackWindup the
+                    // pending hit below waits for; so with 0 the client draws the turret's wind-up (0.128 s for a lane turret) and its shot
+                    // leaves when the server's does. The inherited -0.17 (no derivation) put the cast frame in the past: no wind-up, and the
+                    // shot left 0.128 s before the server launched it. Reconstruction: retail's byte is not in the shipped files; 0 is the
+                    // value whose cast frame is the server's.
+                    0.0, result.Outcome, animation);
             attacker.ClientAttackArmed = true;
             attacker.ClientSwingDropped = false;
             attacker.ClientSwingMissileNetId = missileNetId;
@@ -613,6 +616,8 @@ public sealed partial class CombatService : IEndOfGameEngine
             ? ResolveChampionExperienceRecipients(unit, creditedKiller, championAssistants)
             : Array.Empty<Entity>();
         var championExperienceVictimLevel = unit.Level;
+        // Batch 688: each recipient's level at the death, for its share's level-delta curve (V1.0.0.75, ProgressionRules).
+        var championExperienceRecipientLevels = championExperienceRecipients.Select(recipient => recipient.Level).ToArray();
         var championExperienceBase = championExperienceRecipients.Length == 0
             ? 0.0
             : _progression.ChampionKillExperienceBase(championExperienceVictimLevel);
@@ -673,6 +678,9 @@ public sealed partial class CombatService : IEndOfGameEngine
                     creditedKiller?.NetId ?? killerNetId,
                     deathSeconds,
                     becomesZombie);
+            // Batch 690: the HUD's kill counter and kill callout count a champion's death only from OnChampionDie (CombatPackets.ChampionDie).
+            if (unit.UnitType == UnitType.Hero && unit.OwnerNetId == 0)
+                _transport.SendChampionDie(unit, creditedKiller?.NetId ?? killerNetId, bounty, championAssistants);
         }
         if (unit.UnitType == UnitType.Hero && unit.Kind == EntityKind.Hero)
         {
@@ -763,11 +771,15 @@ public sealed partial class CombatService : IEndOfGameEngine
                 DominionPlayerScore?.OnChampionKill(killer, unit, assistants, multiKillCount, firstBlood);
             }
             else if (unit.Kind == EntityKind.Minion) DominionPlayerScore?.OnMinionKill(killer);
-            foreach (var recipient in championExperienceRecipients)
+            for (var index = 0; index < championExperienceRecipients.Length; index++)
             {
-                // Batch 552: one share for every recipient, whatever its level (no level-difference modifier before V1.0.0.138).
+                var recipient = championExperienceRecipients[index];
+                // Batch 688: the recipient's share of the pool on its own level delta to the victim (V1.0.0.75's S curve; batch 552 paid
+                // every recipient the bare share, so a fed champion took the full reward for kills far below its level).
                 var experience = ProgressionRules.SharedChampionKillExperience(
-                    championExperienceBase, championExperienceRecipients.Length);
+                    championExperienceBase, championExperienceRecipients.Length) *
+                    ProgressionRules.ChampionKillLevelDeltaFactor(championExperienceVictimLevel,
+                        championExperienceRecipientLevels[index]);
                 var earnedCredit = recipient.NetId == killer?.NetId ||
                     championAssistants.Any(assistant => assistant.NetId == recipient.NetId);
                 AwardHeroProgress(recipient, experience: experience,
@@ -1078,7 +1090,9 @@ public sealed partial class CombatService : IEndOfGameEngine
                 //    the target but calls nothing else, no hit calls TurnOffAutoAttack(TARGET_LOST). In
                 //    ATTACKING or TAUNTED it calls TurnOnAutoAttack when the target is in attack range,
                 //    else it sets HARDIDLE and calls TurnOffAutoAttack(MOVING) — the target id stays.
-                //  So a turret swings at a new target only from the timer tick after it got the target.
+                //  So a turret swings at a new target only from the timer tick after it got the target, whichever of the scan,
+                //  OnTargetLost, OnCallForHelp or OnTauntBegin gave it: the swing gate below fires only on the object the last
+                //  TurnOnAutoAttack named (batch 693, SetTurretAutoAttack).
                 AiHost.StepUnit(attacker, _time, dt);
                 // SyncShrineLaser: a Crystal Scar shrine's laser enters and leaves range with the swing gate, at the same tick.
                 if (TurretRules.IsCrystalScarShrine(attacker)) PublishTurretDisplay(attacker, attacker.AttackTarget);
@@ -1119,7 +1133,7 @@ public sealed partial class CombatService : IEndOfGameEngine
                 UpdateAggroOutline(attacker);
             if (attacker.AttackCooldown <= 0.0 && !AttackDisabled(attacker) &&
                 !_hooks.IsActionBlocked(attacker) &&
-                (attacker.UnitType != UnitType.Turret || _turretAutoAttack.Contains(attacker.NetId)) &&
+                (attacker.UnitType != UnitType.Turret || _turretAutoAttack.TryGetValue(attacker.NetId, out var armed) && armed == target.NetId) &&
                 (attacker.UnitType != UnitType.Minion ||
                  attacker.MinionAutoAttackEnabled &&
                  attacker.MinionState is MinionAiState.Engage or MinionAiState.Taunted) &&

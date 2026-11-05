@@ -25,14 +25,28 @@ public static class ProgressionRules
     public const double SoloLaneUnitExperience = 0.92;
     // Patch notes (League wiki, Experience (champion) history and the V1.0.0.x pages): V1.0.0.96 "Base champion kill experience
     // reduced to 55% from 60% of level up experience"; V1.0.0.120 (22 June 2011) "Experience granted for kills is now determined by
-    // the dying champion's level". The first level-difference modifier is V1.0.0.138 (18 April 2012, "modified by 8% per level of
-    // difference" from two levels), after 1.0.0.126, so a 126 kill pays every recipient the same share of the victim's base (batch
-    // 552 removed the invented 10%-per-level, 50..150% adjustment). No shipped key holds a champion XP value (ExpCurve, Mission,
-    // bounty.inibin, Constants.var) and the client's award path is a stub. V1.0.0.113 (General, Experience): "When more than 1
-    // champion is sharing experience, 10% extra experience is split among all targets"; the wiki's Experience history files that
-    // line under minion kills, the patch note itself names no unit type.
+    // the dying champion's level". The level delta scales it per recipient (batch 688, ChampionKillLevelDeltaFactor): V1.0.0.75
+    // (24 February 2010) reworked kill experience "on a per-champion basis, with the rewards scaling based on the delta of champion
+    // levels" on an S curve; V1.0.0.79 states its base as "Equal level champion kills now provide 50% of the XP needed to level", and
+    // V1.0.0.120's "Killing champions higher level than you will now grant more experience ... lower level ... less ... equal level
+    // champions is unaffected" holds only with the curve still in place (without it a kill three levels up would drop from almost
+    // twice to the ratio of two level increments). V1.0.0.138 (18 April 2012) replaced the curve with 8% per level of difference.
+    // Batch 552 read V1.0.0.138 as the first modifier and paid every recipient the bare share. No shipped key holds a champion XP
+    // value (ExpCurve, Mission, bounty.inibin, Constants.var, the champion records' ExpGivenOnDeath) and the client's award path is a
+    // stub. V1.0.0.113 (General, Experience): "When more than 1 champion is sharing experience, 10% extra experience is split among
+    // all targets"; the wiki's Experience history files that line under minion kills, the patch note itself names no unit type.
     public const double ChampionKillExperienceFraction = 0.55;
     public const double SharedChampionExperiencePool = 1.10;
+
+    /// <summary>
+    /// The V1.0.0.75 S curve on the level delta <c>d = victimLevel - recipientLevel</c>, a multiplier of the recipient's share:
+    /// "killing champions three levels and below provide negligible rewards, and kills three levels and above provide almost twice
+    /// the experience of even level kills". Reconstruction: the curve's formula is not in the shipped files or the notes; this is the
+    /// logistic from 0 to 2 through 1 at an even level whose two anchors are the note's words, 5% at three levels below and 195% at
+    /// three above: <c>2 / (1 + 39^(-d/3))</c> (1.54 one level up, 0.46 one level down).
+    /// </summary>
+    public static double ChampionKillLevelDeltaFactor(int victimLevel, int recipientLevel) =>
+        2.0 / (1.0 + Math.Pow(39.0, -(victimLevel - recipientLevel) / 3.0));
 
     // Map1/DeathTimes.inibin, TimeDeadPerLevel*Level01..Level18.
     private static readonly double[] DeathTimesByLevel =
@@ -155,7 +169,7 @@ public static class ProgressionRules
 
     /// <summary>
     /// Splits a champion-kill XP pool over a snapshotted recipient set: one recipient takes the base, two or more split 110% evenly
-    /// (V1.0.0.113). Every recipient gets the same share whatever its level (no level-difference modifier before V1.0.0.138).
+    /// (V1.0.0.113). Each recipient's share is then scaled by its own level delta (<see cref="ChampionKillLevelDeltaFactor"/>).
     /// </summary>
     public static double SharedChampionKillExperience(double baseExperience, int recipients)
     {

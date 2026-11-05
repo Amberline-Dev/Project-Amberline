@@ -202,6 +202,16 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
         for (var index = 0; index < _captures.Count; index++)
         {
             var capture = _captures[index];
+            // Batch 694 (Reconstruction): a script's PAR on the guardian (SummonerOdinGarrison's 800 a stats sample) is the progress that much
+            // pool shows, taken into the tree's CaptureProgress before its tick; the tree's CapturePoint_SetValue then writes the pool (batch 512).
+            if (Context.PointGuardian(index + 2) is { CaptureMeterParPending: not 0.0 } meter)
+            {
+                var heldBy = capture.Variable("CurrentPointOwner") is Team pointTeam ? pointTeam : Team.Neutral;
+                var progress = capture.Variable("CaptureProgress") is double value ? value : 0.0;
+                capture.SetVariable("CaptureProgress",
+                    Math.Clamp(progress + BehaviorLeaves.CaptureProgressOfPar(meter, meter.CaptureMeterParPending, heldBy), -100.0, 100.0));
+                meter.CaptureMeterParPending = 0.0;
+            }
             capture.Tick(now, dt);
             // Reconstruction: the caller hands the tree's NewPointOwner back as the next tick's CurrentPointOwner (the shipped trees name no caller).
             if (capture.Variable("NewPointOwner") is not Team owner) continue;
@@ -291,7 +301,7 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     /// <summary>
     /// Batch 662 (owner, 3 November 2026: "Normal turret"; replaces batch 501's OdinTowerBehavior tree and its ally gate): each guardian of an
     /// owned point runs Turret.luaobj (<see cref="GuardianTurretAi"/>): every 0.15 s it looks for the nearest summoned unit, else minion, else
-    /// any enemy within its 950 acquisition range, keeps it while it is within its Spell1's 1000, and casts that Spell1
+    /// any enemy within its reach, keeps it while it stays within it (batch 687: the OdinTower tree's 600, GuardianTurretAi.Reach), and casts its Spell1
     /// (OdinGuardianSpellAttackCast, cooldown 1 s) at it whenever the slot is ready. The shot of that cast is batch 481b's (OdinGuardianShot).
     /// The script does not run for a neutral or a channelled guardian (batch 466's gate below, kept).
     /// Batch 466: the guardian fires only while its team holds the point: a neutral guardian attacks nothing (wiki Capture_point, Basis >

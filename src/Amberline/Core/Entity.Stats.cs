@@ -89,6 +89,12 @@ public sealed partial class Entity
     public bool ParIsCaptureMeter { get; set; }
 
     /// <summary>
+    /// Batch 694: the PAR a script added to a capture meter (<see cref="ParIsCaptureMeter"/>) since the point's last tick, which the point's tree
+    /// takes into its progress (BehaviorTreeQuestHost.Tick) so that its <c>CapturePoint_SetValue</c> stays the meter's one writer.
+    /// </summary>
+    public double CaptureMeterParPending { get; set; }
+
+    /// <summary>
     /// <c>BBSetNotTargetableToTeam</c>: the unit's own team cannot target it (Monkey King's decoy),
     /// and the other teams cannot (Jarvan's Demacian Standard). The client's <c>IsTargetableToTeam</c> flags (<c>SPELL_NonTargetableAlly</c>,
     /// <c>SPELL_NonTargetableEnemy</c>) replicate them; a late observer is told in <c>BuildBuffs</c>.

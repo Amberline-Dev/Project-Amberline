@@ -172,7 +172,17 @@ internal static class ChampionSpellSupport
         var height = launchHeight * (1.0 - life);
         if (launchHeight != 0.0) start3 = new Position3(start3.X, start3.Y + launchHeight, start3.Z);
         if (height != 0.0) current3 = new Position3(current3.X, current3.Y + height, current3.Z);
-        var velocity = new Position3(end3.X - current3.X, height == 0.0 ? 0.0 : -height, end3.Z - current3.Z);
+        // Batch 690 (community report, Talon W's blades vanishing mid air): the 0x41's velocity is per second. The client's line update moves a
+        // missile with no acceleration by the stored velocity times the frame time (the client; the 0x41 handler the client stores the packet's
+        // velocity, the speed field feeds only the acceleration branch). The remaining path sent before made a refresh-born line crawl (Talon's own
+        // Rake blades: about 620 instead of 2300) until the 0x5D at the end of its flight took it mid way. The vertical drop keeps its ratio.
+        var dx = end3.X - current3.X;
+        var dz = end3.Z - current3.Z;
+        var remaining = Math.Sqrt(dx * dx + dz * dz);
+        var perUnit = remaining > 1e-9 ? speed / remaining : 0.0;
+        var velocity = remaining > 1e-9
+            ? new Position3(dx * perUnit, height == 0.0 ? 0.0 : -height * perUnit, dz * perUnit)
+            : new Position3(direction.X * speed, 0.0, direction.Z * speed);
         if (casterProjection is { } projection)
             system.Effects.RefreshProjectedMissile(projection, info, current3,
                 direction, velocity, start3, end3, start3, start3,

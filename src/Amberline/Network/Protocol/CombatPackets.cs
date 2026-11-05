@@ -885,6 +885,37 @@ public static class CombatPackets
         return Packet(stream, LeaguePacketReliability.Reliable, Hero(heroNetId), Target(victimNetId));
     }
 
+    /// <summary>EventDetailsList id 2, <c>OnChampionDie</c>.</summary>
+    public const byte ChampionDieEvent = 2;
+
+    /// <summary>
+    /// Batch 690 (community report, "top right kill counter shows 0 vs 0"): the champion death event, 0xAB on the dying champion with
+    /// <c>OnChampionDie</c> (id 2) and its <c>ParamsDie</c>. The HUD's kill counter and
+    /// the kill callout run only from the global listener of event 2 (registered beside events 0, 0x38 and 0x22), and no client code
+    /// raises event 2 itself (every Notify call site names another id), so only the server's event packet reaches them. The listener reads the
+    /// source as the victim and <c>ParamsDie</c>'s first field as the killer: the side whose champion died adds one to
+    /// the other side's kills, when the killer is a champion of another team. <c>ParamsDie</c> (AB type) is the other net ID, <c>mGoldGiven</c>,
+    /// <c>mAssistCount</c> (the client asserts below 12) and <c>mAssists[12]</c>, which the callout's assist icons read. The hero's own dispatcher
+    /// has no event 2 listener (its OnDie, OnChampionKill, multi-kill and spell listeners), so nothing counts twice. Reconstruction: retail's
+    /// packet size is not in the client (it hands the raw bytes from offset 6 to the listeners); the whole 60-byte struct is sent so the client
+    /// never reads past the packet.
+    /// </summary>
+    public static PlaintextPacket ChampionDie(uint victimNetId, uint killerNetId, float goldGiven, IReadOnlyList<uint> assists)
+    {
+        if (assists.Count > 11) throw new ArgumentOutOfRangeException(nameof(assists));
+        using var writer = ProtocolEncoding.Writer(66, out var stream);
+        writer.Write((byte)0xAB);
+        writer.Write(victimNetId);
+        writer.Write(ChampionDieEvent);
+        writer.Write(killerNetId == 0 ? victimNetId : killerNetId);
+        writer.Write(goldGiven);
+        writer.Write((uint)assists.Count);
+        for (var slot = 0; slot < 12; slot++) writer.Write(slot < assists.Count ? assists[slot] : 0u);
+        writer.Flush();
+        // The references are the catalog row's (offsets 1 and 6); the assists are heroes, which every client holds.
+        return Packet(stream, LeaguePacketReliability.Reliable, Hero(victimNetId), Target(killerNetId == 0 ? victimNetId : killerNetId));
+    }
+
     /// <summary>
     /// Batch 455: the stock client's EventDetailsList ids (one table entry per id, filled by the static initializer):
     /// 79 OnStartGameMessage1 and 80 OnStartGameMessage2 (Dominion's texts are Map8 keys), 85 + n OnCapturePointNeutralized_A + n and

@@ -865,6 +865,10 @@ public sealed partial class DuelSession
                 {
                     if (opcode is 0x60 or 0x87 or 0x09 or 0x23)
                     {
+                        // Batch 691b: while the level script holds INPUT_SHOP (bit 16) the shop does not open, buy or sell (an inventory swap
+                        // is not the shop's). The stock client's lock closes the shop and unbinds evtOpenShop, so it sends none
+                        // of them (Reconstruction: the server's own check is not in the shipped files).
+                        if (opcode is not 0x23 && (ScriptInputLocks?.Invoke() & 16u) is > 0u) break;
                         // Batch 580: the shop's opening is also the tutorial's RegisterOnShopOpenedCallback (map 3 only).
                         if (opcode == TutorialPackets.ShopOpenedClientOpcode) TutorialAcknowledgement?.Invoke(plaintext.ToArray());
                         DispatchShop(input);
@@ -1381,8 +1385,17 @@ public sealed partial class DuelSession
         }
         AddReconnectSurrender(packets, seat);
         AddReconnectPause(packets);
+        // Batch 691b: the returning client's tutorial manager is new (its input-locking flags 0), and the script's later
+        // ToggleInputLockingFlag (0xA3) is an XOR, so each flag the level script holds is set again, one 0x89 per flag (the client's
+        // callback switches on one flag). Reconstruction: retail's reconnect burst is not recovered.
+        if (ScriptInputLocks?.Invoke() is uint locks)
+            for (var flag = 1u; flag <= 128u; flag <<= 1)
+                if ((locks & flag) != 0) packets.Add(CombatPackets.SetInputLockingFlag(flag, true));
         return packets;
     }
+
+    /// <summary>Batch 691b: the input-locking flags the map's level script holds on the clients (LevelScriptHost.InputLocks).</summary>
+    public Func<uint>? ScriptInputLocks { get; set; }
 
     /// <summary>
     /// Builds the actor-owned Classic snapshot plus narrow public projections

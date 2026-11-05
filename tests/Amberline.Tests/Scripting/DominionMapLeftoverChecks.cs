@@ -52,6 +52,30 @@ public static class DominionMapLeftoverChecks
         });
     }
 
+    /// <summary>
+    /// Batch 689 (community report, 4 November 2026: "minions hitting player do not cancel recall"). OdinRecall.luaobj carries Recall's
+    /// BuffOnTakeDamage (a hit whose source type is not DAMAGESOURCE_PERIODIC sets WillRemove; BuffOnUpdateActions stops the channel), and its
+    /// ChannelingStart adds the buff with no BuffName (pc 0110-0127), so the buff is the script's own. A basic hit cancels it on the next actions line.
+    /// </summary>
+    [Check("dominion.odin-recall-is-cancelled-by-a-basic-hit")]
+    public static void OdinRecallIsCancelledByABasicHit()
+    {
+        WithMatch(("Annie", "SummonerFlash", "SummonerHaste"), (runtime, bursts, captures) =>
+        {
+            var hero = Hero(runtime, Team.Order);
+            var foe = Hero(runtime, Team.Chaos);
+            Advance(runtime, 1.0);
+            hero.Position = new Position2(6900.0, 6450.0);
+            TestAssert.True(Cast(runtime, 1, hero, SpellSystem.RecallSlot, hero.Position), "recall accepted");
+            Advance(runtime, 1.5);
+            TestAssert.True(runtime.Spells.RecallRemaining(hero) > 0.0, "the channel runs before the hit");
+            var buffs = string.Join(",", hero.Buffs.Select(buff => buff.Name));
+            runtime.Combat.ApplyHit(foe.NetId, hero.NetId, 10.0, sourceKind: DamageSourceKind.Basic);
+            Advance(runtime, 0.3);
+            TestAssert.Near(0.0, runtime.Spells.RecallRemaining(hero), 0.0, $"a basic hit cancels OdinRecall (buffs before the hit: {buffs})");
+        });
+    }
+
     [Check("dominion.map-8-camera-and-respawn-packets-carry-the-ground-height")]
     public static void MapEightPositionPacketsCarryTheGroundHeight()
     {

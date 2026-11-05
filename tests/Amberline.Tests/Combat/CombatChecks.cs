@@ -3794,12 +3794,12 @@ public static class CombatChecks
             adjustedWorld.Register(unit);
         adjustedService.ApplyHit(lowRecipient.NetId, adjustedVictim.NetId, 20.0,
             DamageType.True);
-        // Batch 552: 214.5 * 1.10 / 2 for both; the victim's level sets the base (V1.0.0.120) and no level-difference
-        // modifier exists before V1.0.0.138 (was the invented {1.1, 0.5}: 129.7725 and 58.9875).
-        TestAssert.Near(117.975, lowRecipient.Experience, 1e-9,
-            "a lower-level killer receives the same share as everyone else");
-        TestAssert.Near(117.975, highRecipient.Experience, 1e-9,
-            "a level-eighteen nearby ally receives the same share");
+        // 214.5 * 1.10 / 2 = 117.975 each before the level delta; the victim's level sets the base (V1.0.0.120). Batch 688: each share
+        // then takes V1.0.0.75's S curve on its own delta (batch 552 paid both the bare 117.975; before it the invented {1.1, 0.5}).
+        TestAssert.Near(117.975 * 2.0 / (1.0 + Math.Pow(39.0, -1.0 / 3.0)), lowRecipient.Experience, 1e-9,
+            "a level-one killer of a level-two champion takes the one-level-up factor (1.54)");
+        TestAssert.True(highRecipient.Experience < 1e-6 * 117.975,
+            $"a level-eighteen ally sixteen levels above the victim takes a negligible share, got {highRecipient.Experience}");
 
         var deadKillerWorld = new WorldState();
         var deadKillerService = new CombatService(deadKillerWorld, new TestHooks(),
@@ -4685,6 +4685,7 @@ public static class CombatChecks
         public void SendHeroGoldExp(Entity hero) => GoldExpPackets++;
         public void SendHeroNeutralKills(Entity hero) { }
         public void SendHeroMultiKill(Entity hero, Entity victim, int count) { }
+        public void SendChampionDie(Entity victim, uint killerNetId, double goldGiven, IReadOnlyList<Entity> assistants) { }
         public void SendRespawn(Entity hero) => Respawns++;
         public void SendEndGame(Team winner, bool surrendered) { }
         public void SendMinionNoRender(Entity minion) { }

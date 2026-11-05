@@ -33,8 +33,10 @@ public static partial class ChampionLiveRegressionChecks
                     var death = capture.Packets.Single(p => Opcode(p) == 0x61).Plaintext.Span;
                     TestAssert.Equal(enemy.NetId, BinaryPrimitives.ReadUInt32LittleEndian(death[1..]));
                     TestAssert.Equal(hero.NetId, BinaryPrimitives.ReadUInt32LittleEndian(death[5..]));
+                    // Batch 690: the client raises no OnChampionDie (event 2) itself, so the server's 0xAB of id 2 is the one event besides the
+                    // multi-kills (4..8); kill, first blood and spree (1, 3, 9) still come from the client's own death dispatch.
                     TestAssert.False(capture.Packets.Any(p => Opcode(p) == 0x4A ||
-                        Opcode(p) == 0xAB && p.Plaintext.Span[5] is not (>= 4 and <= 8)),
+                        Opcode(p) == 0xAB && p.Plaintext.Span[5] is not (2 or (>= 4 and <= 8))),
                         "stock death dispatch derives kill/first-blood/spree events once");
                 }
                 combat.ScheduleRespawn(enemy);

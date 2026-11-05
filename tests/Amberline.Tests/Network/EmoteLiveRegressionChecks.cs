@@ -345,6 +345,41 @@ public static partial class ChampionLiveRegressionChecks
     // emote sends no stop. Batch 420 sent the stop for every emote, and a redundant stop interrupts the animation (overnight
     // polish of 23 September 2026, item 6). The dance then loops until the hero's next order: for ten seconds its client receives no
     // stop, route or animation packet.
+    /// <summary>
+    /// Batch 689 (community report, 4 November 2026: "emotes arent supposed to cancel channels (which they do)"). The stock client's 0x48
+    /// handler issues AI_HOLD on the local hero (the client -> the client(1,...)</c>), an order that ends a cancellable channel on the
+    /// client and comes back to the server as a hold. So a server that answers an emote during a channel ends it either way: the channel
+    /// keeps the request unanswered. Recall (its windup and its channel) and a champion channel (Death Lotus) run on, and no 0x48 leaves.
+    /// </summary>
+    [Check("session-live-emote-during-a-channel-is-ignored")]
+    public static void EmoteDuringAChannelIsIgnored()
+    {
+        foreach (var (champion, slot, label) in new[] { ("Annie", Amberline.Simulation.Spells.SpellSystem.RecallSlot, "Recall"), ("Katarina", 3, "Death Lotus") })
+        foreach (var wait in new[] { 0.2, 1.5 })
+        {
+            if (label == "Death Lotus" && wait < 1.0) continue;
+            using var match = new Match(champion, Team.Order);
+            var hero = match.Hero(0);
+            if (label == "Recall") match.Hero(1).Position = new Position2(13000, 13000);
+            match.Cast(0, slot, label == "Recall" ? hero : match.Hero(1));
+            match.Runtime.Tick(wait);
+            bool Channelling() => label == "Recall" ? match.Runtime.Spells.RecallRemaining(hero) > 0.0 : hero.ActiveScriptChannels > 0;
+            TestAssert.True(Channelling(), $"{label} at {wait} s: the channel runs before the emote");
+            var request = new byte[EmotePackets.Length];
+            request[0] = EmotePackets.ClientOpcode;
+            BinaryPrimitives.WriteUInt32LittleEndian(request.AsSpan(1), hero.NetId);
+            match.Clear();
+            match.Runtime.Session.Receive(1, 1, match.Runtime.Cipher.Encrypt(request), context => match.Runtime.Dependencies.Gameplay(context));
+            match.Runtime.Delivery.Flush();
+            match.Runtime.Tick(EmoteSettle + 0.1);
+            match.Runtime.Delivery.Flush();
+            TestAssert.True(Channelling(), $"{label} at {wait} s: the emote does not end the channel");
+            foreach (var capture in match.Captures)
+                TestAssert.False(capture.Packets.Any(packet => Opcode(packet) == EmotePackets.ServerOpcode),
+                    $"{label} at {wait} s: no 0x48 reaches a client (its AI_HOLD would end the channel on the client)");
+        }
+    }
+
     [Check("session-live-emote-standing-dance-sends-no-stop")]
     public static void StandingDanceSendsNoStop()
     {

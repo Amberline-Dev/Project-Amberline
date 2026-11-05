@@ -9,13 +9,13 @@ namespace Amberline.Network.Replication;
 
 public sealed partial class ReplicationDelivery
 {
-    // Reconstruction: retail's packet order is not recovered (the native server's queue is not held). This server's Flush sends a
-    // lifecycle packet (death) ahead of the ordinary packets queued in the same step, so an attack or cast start the dying unit
-    // queued earlier in that step would reach the client after its death and play on the corpse; this filter retires those starts.
+    // Reconstruction: an attack or cast start the dying unit queued earlier in the step of its death is not sent. Since batch 692 Flush sends
+    // the death in its place in the step (it was sent ahead of the step, where such a start played on the corpse); the start is still retired,
+    // so no swing or cast begins on the client in the burst that kills its unit (the stock client's death routine, the client, would only
+    // finish it again).
     private void DropPreDeathStarts()
     {
-        // Lifecycle packets precede ordinary packets. Retire earlier hero
-        // gestures and NPC attack/cast starts so they cannot replay on corpses.
+        // Retire earlier hero gestures and NPC attack/cast starts of a unit that dies later in the step.
         var laterDeaths = new HashSet<uint>();
         var laterNpcDeaths = new HashSet<uint>();
         for (var index = _pending.Count - 1; index >= 0; index--)

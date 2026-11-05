@@ -64,6 +64,8 @@ public sealed partial class BuffLifecycle
             RecomputeNpcResistances(unit, addedPayload: payload);
             RecomputeNpcPenetration(unit, addedPayload: payload);
             unit.AttackDamage += payload.AttackDamage;
+            // Batch 694: a buff's IncPercentCooldownMod reaches a unit that is no hero (heroes take it in HeroStatCalculator); its slot casts read it.
+            unit.CooldownMod += payload.CooldownMod;
             unit.CritMultiplier += payload.CritDamage;
             ApplyNpcMaxHealth(unit, payload.MaxHp, payload.NonHealingMaxHp);
         }
@@ -98,6 +100,7 @@ public sealed partial class BuffLifecycle
             RecomputeNpcResistances(unit, removedPayload: payload);
             RecomputeNpcPenetration(unit, removedPayload: payload);
             unit.AttackDamage -= payload.AttackDamage;
+            unit.CooldownMod -= payload.CooldownMod;
             unit.CritMultiplier -= payload.CritDamage;
             ApplyNpcMaxHealth(unit, -payload.MaxHp, -payload.NonHealingMaxHp);
         }

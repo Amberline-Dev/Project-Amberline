@@ -15,7 +15,7 @@ namespace Amberline.Tests;
 /// guardian's total attack damage (BaseDamage 110 plus OdinGuardianStatsByLevel's 15 per highest champion level). The shrine-turret stand-ins
 /// batch 448 put on each point (1600 range, 462 damage) are gone from the world. A two-seat map 8 match (Order and Chaos Annie) on point C.
 /// </summary>
-public static class DominionGuardianChecks
+public static partial class DominionGuardianChecks
 {
     private const string GuardianName = "OdinNeutralGuardian";
     private const string Channel = "OdinCaptureChannel";
@@ -81,8 +81,8 @@ public static class DominionGuardianChecks
     /// Batch 662 (owner, 3 November 2026: "Normal turret"): the shipped map 8 AI list (LEVELS/Map8/Scripts/AiEntityDataFile.dat) has the lines
     /// that bound the team guardians to the OdinTower tree commented out (18-19), so the guardian of an owned point attacks like a turret with
     /// no champion of its own team near (the wiki's Capture point page: an allied point "will attack enemy units like a turret"; a point
-    /// minions attack "will still attack"). It runs the plain turret AI, DATA/Scripts/Turret.luaobj: it acquires within its record's
-    /// AcquisitionRange 950 (OdinNeutralGuardian.inibin), fires its Spell1 OdinGuardianSpellAttackCast (CastRange 1000, Cooldown 1) once a
+    /// minions attack "will still attack"). It runs the plain turret AI, DATA/Scripts/Turret.luaobj: it acquires within its reach (batch 687:
+    /// the OdinTower tree's 600; batch 662 took the record's AcquisitionRange 950), fires its Spell1 OdinGuardianSpellAttackCast (CastRange 1000, Cooldown 1) once a
     /// second, and takes a minion before a champion (the turret ladder, CombatService.AcquireTurretTarget). The Order champion is at its base.
     /// </summary>
     [Check("dominion.guardian-of-an-owned-point-fires-like-a-turret-with-no-ally-near", TimeoutSeconds = 300)]
@@ -95,17 +95,17 @@ public static class DominionGuardianChecks
         chaos.Position = Offset(guardian, -1100.0);
         var idle = CastAt(guardian);
         Advance(runtime, 2.0);
-        TestAssert.True(CastAt(guardian) == idle, "a Chaos champion 1100 away, past the guardian's 950 acquisition range, draws no shot");
+        TestAssert.True(CastAt(guardian) == idle, "a Chaos champion 1100 away, past the guardian's reach (batch 687: 600), draws no shot");
 
         chaos.Position = Offset(guardian, -EnemyDistance);
         var health = chaos.Health;
         TestAssert.True(Until(runtime, () => chaos.Health < health - 50.0, 1.5),
             $"with no Order champion near, the guardian fires on the Chaos champion {EnemyDistance:F0} away ({health:F0} to {chaos.Health:F0})");
 
-        // A Chaos minion at the empty point (beyond the point's capture area): the champion leaves, the guardian takes the minion.
+        // A Chaos minion at the point, inside the guardian's 600 reach (batch 687; it stood at 800): the champion leaves, the guardian takes it.
         chaos.Position = match.ChaosHome;
         var minion = runtime.World.Register(new Entity(runtime.World.Allocate(UnitType.Minion), EntityKind.Minion, UnitType.Minion, Team.Chaos,
-            Offset(guardian, -800.0)) { Health = 1e7, MaxHealth = 1e7, Name = "Dummy" });
+            Offset(guardian, -580.0)) { Health = 1e7, MaxHealth = 1e7, Name = "Dummy" });
         TestAssert.True(Until(runtime, () => minion.Health < 1e7, 2.0), "the guardian fires on the Chaos minion at its point");
         var hits = 0;
         for (var tick = 0; tick < (int)Math.Round(5.0 / Step); tick++)
@@ -120,7 +120,8 @@ public static class DominionGuardianChecks
     /// <summary>
     /// Batch 670 (owner, 3 November 2026: "Check turret attack speed on all maps"): the guardian of an owned point fires its Spell1 once per the
     /// Spell1's shipped Cooldown (OdinNeutralGuardian.inibin Spell1 OdinGuardianSpellAttackCast, Cooldown 1; no shipped script changes the
-    /// guardian's attack speed or cooldown: CharScriptOdinNeutralGuardian, OdinGuardianBuff and OdinGuardianStatsByLevel hold none). A cooldown
+    /// guardian's attack speed or cooldown: CharScriptOdinNeutralGuardian, OdinGuardianBuff and OdinGuardianStatsByLevel hold none; batch 694: only the summoner buff SummonerOdinGarrison does, see
+    /// dominion.garrison-speeds-the-guardians-shots-for-its-eight-seconds). A cooldown
     /// of whole 30 Hz steps takes exactly that many steps.
     /// </summary>
     [Check("dominion.guardian-fires-once-per-its-spell-cooldown", TimeoutSeconds = 300)]
@@ -134,7 +135,7 @@ public static class DominionGuardianChecks
         var spell = GameData.Default.Champion(GuardianName).SpellNames[0];
         var cooldown = GameData.Default.Spell(spell, 5).Cooldowns[0];
         runtime.World.Register(new Entity(runtime.World.Allocate(UnitType.Minion), EntityKind.Minion, UnitType.Minion, Team.Chaos,
-            Offset(guardian, -800.0)) { Health = 1e7, MaxHealth = 1e7, Name = "Dummy" });
+            Offset(guardian, -580.0)) { Health = 1e7, MaxHealth = 1e7, Name = "Dummy" });
         var casts = new List<double>();
         var ready = CastAt(guardian);
         for (var tick = 0; tick < (int)Math.Round(10.0 / Step); tick++)
@@ -650,12 +651,12 @@ public static class DominionGuardianChecks
         return blocks;
     }
 
-    private static Match StartMatch(bool secondChaos = false)
+    private static Match StartMatch(bool secondChaos = false, string chaosChampion = "Annie")
     {
         SessionParticipantDefinition[] roster =
         [
             new(1, 0, "Order", "Annie", Team.Order),
-            new(2, 1, "Chaos", "Annie", Team.Chaos),
+            new(2, 1, "Chaos", chaosChampion, Team.Chaos),
         ];
         if (secondChaos) roster = [.. roster, new(3, 2, "Chaos2", "Annie", Team.Chaos)];
         // A map 8 server process reads map 8's files as its default (Program.cs, GameData.ConfigureDefault): the combat sight grid included.

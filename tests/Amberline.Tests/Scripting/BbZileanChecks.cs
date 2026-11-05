@@ -1,6 +1,8 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
 using Amberline.Data;
+using Amberline.Network.Protocol;
+using Amberline.Network.Replication;
 using Amberline.Scripting.BuildingBlocks;
 using Amberline.Simulation;
 using Amberline.Simulation.Combat;
@@ -141,6 +143,40 @@ public static class BbZileanChecks
         TestAssert.Equal(0, HitsOn(match, "FarFoe").Count, "nobody out of the 350 is hurt");
         TestAssert.Equal(0, HitsOn(match, "Ally").Count, "nor a friend");
         TestAssert.True(Of(match.Foe, "TimeBomb") is null && Of(match.Foe, "TimeBombCountdown") is null, "both buffs are gone");
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));
+    }
+
+    /// <summary>
+    /// Batch 690 (community report: "zilean bomb not visible when lost vision of target"): the bomb's particle names Zilean's team as its own
+    /// fog-of-war team (<c>TimeBomb</c> OnBuffActivate, <c>FOWTeamOverrideVar</c> TeamOfOwner), so it reaches Zilean's team even when the carrier
+    /// is out of that team's sight as it lands; the client shows it once the carrier is seen. The foe steps out of sight during the windup.
+    /// </summary>
+    private sealed class NullTransport : IReplicationTransport { public void Send(PlaintextPacket packet) { } }
+
+    [Check("scripting.bb-zilean-time-bomb-reaches-the-casters-team-on-a-fogged-carrier")]
+    public static void TheBombReachesTheCastersTeamOnAFoggedCarrier()
+    {
+        using var match = Arena();
+        // The arena has no observers; Zilean's and the foe's clients take the delivery's routing here.
+        foreach (var seat in new[] { 0, 2 })
+        {
+            var participant = match.Runtime.Session.Participants[seat];
+            match.Runtime.Delivery.AddObserver(new ReplicationObserver((ulong)(seat + 1), participant.Team, participant.Hero!.NetId,
+                new NullTransport(), ready: true, view: participant.View));
+        }
+        match.Advance(0.1);
+        var heroView = match.Runtime.Session.Participants[0].View;
+        var foeView = match.Runtime.Session.Participants[2].View;
+        TestAssert.True(match.Cast(0, match.Foe), "Q casts");
+        match.Foe.Position = new Position2(11500, 3000);
+        match.Advance(0.5);
+        TestAssert.True(Of(match.Foe, "TimeBomb") is not null, "the bomb lands on the foe");
+        TestAssert.True(heroView.Known.Contains(match.Foe.NetId) && !heroView.Visible.Contains(match.Foe.NetId), "Zilean's team holds the foe but cannot see it");
+        var bomb = match.Log.EffectCalls.Single(call => string.Equals(call.Name, "TimeBomb_green.troy", StringComparison.OrdinalIgnoreCase));
+        TestAssert.True(bomb.Id != 0 && bomb.Bind == match.Foe.NetId, "the bomb is bound to its carrier");
+        TestAssert.True(foeView.Effects.Contains(bomb.Id), "the carrier's team gets the bomb (TimeBomb_red)");
+        TestAssert.True(heroView.Effects.Contains(bomb.Id), "Zilean's team gets the bomb too (TimeBomb_green)");
+        TestAssert.False(heroView.Visible.Contains(match.Foe.NetId), "the bomb reveals nothing");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));
     }
 

@@ -172,18 +172,13 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             observer => observer,
             observer => new HashSet<uint>(observer.View.Visible));
 
-        // Death and other lifecycle packets are resolved against each
-        // observer's old Known set before the visibility transition.
-        foreach (var message in _pending.OfType<LifecycleReplicationMessage>())
-        foreach (var observer in active)
-        {
-            if (!observer.View.Known.Contains(message.VictimNetId))
-                continue;
-            var killer = message.KillerNetId;
-            if (killer == 0 || !observer.View.Known.Contains(killer))
-                killer = message.VictimNetId;
-            Send(observer, message.BuildPacket(killer));
-        }
+        // Death and other lifecycle packets are resolved against each observer's old Known set (before the visibility transition), but go
+        // out in their place in the step (batch 692): a killing cast's announcement, its teleport and its hit were queued before the death they
+        // cause, and the original server sent the cast when it was accepted, before the script's effects (ShadowStep.luaobj: teleport, then
+        // BBApplyDamage). Sending the step's deaths first put a cast aimed at a corpse on every client.
+        var knownBefore = _pending.Any(message => message is LifecycleReplicationMessage)
+            ? active.ToDictionary(observer => observer, observer => new HashSet<uint>(observer.View.Known))
+            : null;
 
         foreach (var observer in active)
             RefreshObserver(observer, ObserverState(observer, teamState));
@@ -194,8 +189,21 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         PairBuffDeltas();
         foreach (var message in _pending)
         {
-            if (message is LifecycleReplicationMessage)
+            if (message is LifecycleReplicationMessage lifecycle)
+            {
+                foreach (var observer in active)
+                {
+                    // Known before the step, and still known (a retirement earlier in the step already ended the unit on this client).
+                    var known = knownBefore![observer];
+                    if (!known.Contains(lifecycle.VictimNetId) || !observer.View.Known.Contains(lifecycle.VictimNetId))
+                        continue;
+                    var killer = lifecycle.KillerNetId;
+                    if (killer == 0 || !known.Contains(killer))
+                        killer = lifecycle.VictimNetId;
+                    Send(observer, lifecycle.BuildPacket(killer));
+                }
                 continue;
+            }
             var routed = message is EffectCreateReplicationMessage create ? OnWire(create) : message;
             foreach (var observer in active)
                 Route(routed, observer, teamState[observer.Team], oldVisible[observer]);

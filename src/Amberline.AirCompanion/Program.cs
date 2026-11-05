@@ -636,8 +636,20 @@ public static class Program
             var runtime = Path.Combine(root, "Adobe AIR", "Versions", "1.0", "Adobe AIR.dll");
             foreach (var required in new[] { descriptor, runtime, Path.Combine(root, "LolClient.swf") })
                 if (!File.Exists(required)) throw new FileNotFoundException("Required AIR startup file is missing.", required);
-            // ADL's Windows -runtime path is the parent of the Adobe AIR folder.
-            foreach (var argument in new[] { "-runtime", root, descriptor, root }) start.ArgumentList.Add(argument);
+            // ADL's Windows -runtime path is the parent of the Adobe AIR folder. -nodebug (batch 686) is ADL's installed-application
+            // mode: no debugger connection and no window for an unhandled exception; trace output still reaches stderr, so the
+            // client's own "Uncaught Error" log lines (ClientModuleMain.onUncaughtError) stay in the desktop log. Without it every
+            // stock-client error a player meets opens an "ActionScript error" window, e.g. the fifteen #1009s the second open of the
+            // profile raises inside Flex's TileList (SummonerProfileController.updateSpellsFromInventory, batch 686 record).
+            // Reconstruction: the retail launcher's arguments for this adl.exe are not in the shipped files; an installed client
+            // showed no such windows.
+            start.ArgumentList.Add("-runtime");
+            start.ArgumentList.Add(root);
+            // DIAGNOSTICS: AMBERLINE_AIR_DEBUG_WINDOWS=1 at launch leaves out -nodebug, so a tester sees the AIR runtime's error
+            // windows again (batch 686b, owner, 4 November 2026). Players never set it.
+            if (Environment.GetEnvironmentVariable("AMBERLINE_AIR_DEBUG_WINDOWS") != "1") start.ArgumentList.Add("-nodebug");
+            start.ArgumentList.Add(descriptor);
+            start.ArgumentList.Add(root);
         }
         return start;
     }

@@ -168,6 +168,33 @@ public static partial class ChampionLiveRegressionChecks
         TestAssert.False(hero.Buffs.Any(buff => buff.Name == "Recall"), "and the Recall buff");
     }
 
+    [Check("spells-recall-minion-attack-cancels-the-channel")]
+    public static void RecallMinionAttackCancelsTheChannel()
+    {
+        // Batch 689 (community report, 4 November 2026: "minions hitting player do not cancel recall"). Recall.luaobj's BuffOnTakeDamage
+        // has no source filter: a lane minion's basic attack (DAMAGESOURCE_ATTACK) sets WillRemove and the next actions line cancels.
+        foreach (var type in new[] { MinionType.Melee, MinionType.Caster })
+        {
+            using var match = new Match("Annie", Team.Order);
+            var hero = match.Hero(0);
+            match.Hero(1).Position = new Position2(5000, 5000);
+            match.Runtime.Delivery.Flush(); match.Clear();
+            match.Cast(0, SpellSystem.RecallSlot, hero);
+            match.Runtime.Tick(1.0);
+            TestAssert.True(match.Runtime.Spells.RecallRemaining(hero) > 0.0, $"{type}: the channel runs before the minion's hit");
+            var minion = match.Runtime.Waves!.SpawnFixture(Team.Chaos, type, 0, "C", 0.0, 0.0);
+            minion.Position = new Position2(hero.Position.X + 100.0, hero.Position.Z);
+            minion.Waypoints.Clear();
+            var health = hero.Health;
+            TestAssert.True(match.Runtime.Combat.QueueBasicAttack(minion, hero, new AttackRolls(1.0, 1.0, 1.0)), $"{type}: the minion swings");
+            for (var step = 0; step < 30 && hero.Health >= health; step++) match.Runtime.Tick(0.05);
+            TestAssert.True(hero.Health < health, $"{type}: the minion's hit lands on the hero");
+            match.Runtime.Tick(0.3);
+            TestAssert.Near(0.0, match.Runtime.Spells.RecallRemaining(hero), 0.0, $"{type}: a minion's hit cancels the channel");
+            TestAssert.False(hero.Buffs.Any(buff => buff.Name == "Recall"), $"{type}: and the Recall buff");
+        }
+    }
+
     [Check("spells-recall-spell-cast-cancels-the-channel")]
     public static void RecallSpellCastCancelsTheChannel()
     {

@@ -83,9 +83,19 @@ public static class ProgressionChecks
             ProgressionRules.SharedChampionKillExperience(154.0, 3), 1e-12);
         TestAssert.Near(0.0,
             ProgressionRules.SharedChampionKillExperience(154.0, 0), 1e-12);
-        // Batch 552: no level-difference modifier exists before V1.0.0.138, so the share depends on the recipient count alone.
         TestAssert.Near(154.0,
             ProgressionRules.SharedChampionKillExperience(154.0, 1), 1e-12);
+        // Batch 688: V1.0.0.75's S curve on the level delta scales each share (batch 552 had none): even 1, three levels below
+        // "negligible" 0.05, three above "almost twice" 1.95, symmetric about 1 (the curve's shape is a Reconstruction).
+        TestAssert.Near(1.0, ProgressionRules.ChampionKillLevelDeltaFactor(7, 7), 1e-12);
+        TestAssert.Near(0.05, ProgressionRules.ChampionKillLevelDeltaFactor(4, 7), 1e-12);
+        TestAssert.Near(1.95, ProgressionRules.ChampionKillLevelDeltaFactor(10, 7), 1e-12);
+        for (var delta = 1; delta <= 17; delta++)
+        {
+            var up = ProgressionRules.ChampionKillLevelDeltaFactor(1 + delta, 1);
+            TestAssert.Near(2.0, up + ProgressionRules.ChampionKillLevelDeltaFactor(1, 1 + delta), 1e-12, $"the curve is symmetric at {delta}");
+            TestAssert.True(up > ProgressionRules.ChampionKillLevelDeltaFactor(delta, 1) && up < 2.0, $"the curve rises below 2 at {delta}");
+        }
     }
 
 }

@@ -47,9 +47,9 @@ public sealed partial class ReplicationDelivery
 
     /// <summary>
     /// Reconstruction (batch 419, batch 418 evidence): a bound effect whose unit is dead when Flush puts it on the wire is sent as its unbound variant
-    /// at the unit's point, as a NoRender placemarker's effect is (batch 397), when <see cref="SendsUnboundWhenDead"/> holds for that unit. Flush sends
-    /// the step's lifecycle first, so a create the script ran before the unit's death (the Xerath R cube's hit effect, whose self-damage follows the
-    /// create) reaches the clients after the death. A unit that is not in the world (its corpse is gone) keeps the bound packet, as before. A
+    /// at the unit's point, as a NoRender placemarker's effect is (batch 397), when <see cref="SendsUnboundWhenDead"/> holds for that unit. The test is
+    /// the flush's, so a create the script ran before the unit's death in the same step (the Xerath R cube's hit effect, whose self-damage follows the
+    /// create) goes unbound too, though since batch 692 it reaches the clients just before the death. A unit that is not in the world (its corpse is gone) keeps the bound packet, as before. A
     /// non-persistent effect is reported once, so it ends with its unit's corpse (SpellSystem.EndEffectWithUnitCorpse).
     /// </summary>
     private EffectCreateReplicationMessage OnWire(EffectCreateReplicationMessage message)
@@ -86,8 +86,15 @@ public sealed partial class ReplicationDelivery
         if (message.DeadBindNetId != 0 && routeVisible.Contains(message.DeadBindNetId))
             return true;
         var actors = dependencies.Where(reference => IsCurrentActor(reference.NetId)).ToArray();
+        // Batch 690 (community report, Zilean's Time Bomb on a carrier out of sight): an effect bound to a unit also reaches its own fog-of-war
+        // team (FOWTeam / FOWTeamOverrideVar) when that team holds the unit but sees none of the units it names. The stock client draws such an
+        // effect only while its bind or its target renders (the emitter's Draw), so it stays hidden until the
+        // unit is seen, and its FX create routine moves a held target it cannot see to the packet's position, the case of a
+        // create retail sent for a fogged unit. An effect whose bind or target the team sees keeps the sight rule (the client would draw it).
+        // Reconstruction: which teams retail's server sent a bound effect to is not in the client; the script's own team is the one it names.
         if (actors.Length > 0)
-            return actors.Any(reference => routeVisible.Contains(reference.NetId));
+            return actors.Any(reference => routeVisible.Contains(reference.NetId)) ||
+                   message.BindNetId != 0 && message.FowTeam == observer.Team && actors.Any(reference => reference.NetId == message.BindNetId);
         // Batch 473 (Reconstruction): an effect on no current unit reaches its own fog-of-war team (BBSpellEffectCreate's FOWTeam /
         // FOWTeamOverrideVar, else the placemarker cube it was bound to) wherever it stands, as a unit reaches its own team
         // (VisibilityRules.RevealsEntity); other teams need sight of its point. The 0x8C carries no team and the client's
@@ -163,7 +170,10 @@ public sealed partial class ReplicationDelivery
     {
         // Howling Gale's script casts from a TestCube placemarker. Keep this
         // object in the recipient's native object table only: it has no
-        // World entity, terrain-vision provider, collision, AI or reward.
+        // terrain-vision provider, collision, AI or reward. Since the cube is
+        // an announced world unit, this is its creation for a view that did
+        // not hold it yet, and its own death retires it (batch 695,
+        // BbLineMissile.Finish).
         SendAll(observer, TemporaryCasterPackets.Create(caster, castInfo, NextSyncId));
         observer.View.Known.Add(caster.NetId);
     }

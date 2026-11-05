@@ -205,6 +205,13 @@ public sealed class ProtocolCombatTransport : ICombatTransport
     public void SendHeroMultiKill(Entity hero, Entity victim, int count)
         => Enqueue(CombatPackets.HeroMultiKill(hero.NetId, victim.NetId, count), global: true);
 
+    // Batch 690: the champion death event (CombatPackets.ChampionDie) goes with the death, to every view that holds the victim, the killer
+    // resolved per view as the 0x61's is (an unknown killer becomes the victim).
+    public void SendChampionDie(Entity victim, uint killerNetId, double goldGiven, IReadOnlyList<Entity> assistants)
+        => EnqueueLifecycle(victim.NetId, killerNetId,
+            resolvedKiller => CombatPackets.ChampionDie(victim.NetId, resolvedKiller, Float(goldGiven),
+                assistants.Select(assistant => assistant.NetId).ToArray()));
+
     public void SendRespawn(Entity hero)
         => EnqueueLifecycle(hero.NetId, 0,
             _ => CombatPackets.HeroReincarnate(hero.NetId,

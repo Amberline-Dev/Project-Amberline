@@ -586,6 +586,7 @@ public sealed partial class LevelScriptHost
         _state.Register("ToggleInputLockingFlag", (_, args) =>
         {
             Engine(new TutorialCall("ToggleInputLockingFlag", Number: Number(args, 0)), args);
+            InputLocks ^= InputLockBit(Number(args, 0));
             return Array.Empty<LuaValue>();
         });
         _state.Register("MuteVolumeCategory", (_, args) =>

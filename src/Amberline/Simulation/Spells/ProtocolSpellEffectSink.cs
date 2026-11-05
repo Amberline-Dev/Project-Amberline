@@ -237,7 +237,7 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
         Enqueue(SpellPackets.SetCooldown(unit.NetId, checked((byte)slot), Float(seconds), summoner));
 
     // Temporary life can expire in the same step as ordinary respawn. Both
-    // must retain lifecycle order when delivery prioritizes lifecycle packets.
+    // must retain lifecycle order (both are lifecycle packets; Flush keeps their queue order).
     public void SendForceDead(Entity unit) =>
         _queue.EnqueueLifecycle(unit.NetId, 0, _ => CombatPackets.ForceDead(unit.NetId));
 

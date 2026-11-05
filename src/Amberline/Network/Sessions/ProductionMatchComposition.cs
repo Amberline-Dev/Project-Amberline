@@ -635,6 +635,8 @@ internal static class ProductionMatchComposition
             roster: roster,
             soloPlayerId: soloPlayerId);
         session.GroundHeight = point => navigation.HeightAt(point);
+        // Batch 691b: a returning client is sent the level script's input locks again.
+        session.ScriptInputLocks = () => level.InputLocks;
         holder.Session = session;
         // NOT RETAIL: production safety (the same contract as BbHookRouter.Fail). A script that raises loses that one
         // hook run and writes an ERROR record; the match keeps going.
@@ -770,7 +772,11 @@ internal static class ProductionMatchComposition
                 ["script"] = failure.Script, ["hook"] = failure.Hook, ["message"] = failure.Message,
             });
         var gameplay = new ProductionGameplayDispatcher(movement, combat, spells,
-            stats, items, world, effects, pets, heroOrders, HeroOrderVisible, fidelityTrace, collisionTrace, playtest, mapId);
+            stats, items, world, effects, pets, heroOrders, HeroOrderVisible, fidelityTrace, collisionTrace, playtest, mapId)
+        {
+            // Batch 691/691b: the level script's input locks (the Basic Tutorial's lessons) hold on the server too.
+            InputLocks = () => level.InputLocks,
+        };
         // Batch 563: the Basic Tutorial (map 3). Its TutorialScript's client packets and unit flags, the BuildingBlocks natives its
         // BBLuaConversionLibrary wrappers call (run by the unit-character module, the host of the map's own units), and the client's
         // two acknowledgements (popup closed, audio finished).
@@ -866,7 +872,8 @@ internal static class ProductionMatchComposition
                     CastRange: (unit, slot) => unitScripts.SlotSpellName(unit, slot) is { } name ? data.Spell(name).CastRangeAt(1) : null,
                     Cast: unitScripts.CastSpellSlot,
                     TargetLine: combat.PublishTargetLine,
-                    Acquire: guardian => combat.AcquireTurretTarget(guardian, target => target.Alive && GuardianMayAttack(guardian, target))),
+                    Acquire: guardian => combat.AcquireTurretTarget(guardian, target => target.Alive && GuardianMayAttack(guardian, target) &&
+                        Amberline.Simulation.BehaviorTrees.GuardianTurretAi.InReach(guardian, target))),
                 // Batch 471: a team's quest tracker packets and its quest announcement go to that team's clients only.
                 SendTeam: delivery.EnqueueForTeam));
         // Batch 447: Dominion's score (DualUpdateScoreMath) ticks with the quests; its control counts are the capture points' owners.

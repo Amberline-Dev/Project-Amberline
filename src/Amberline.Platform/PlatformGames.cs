@@ -163,6 +163,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         public Guid RequestId = Guid.NewGuid();
         public MatchResult? Result;
         public bool CredentialsSent;
+        /// <summary>Batch 686: the host has reported a human seat of this game connected (see <see cref="PlayerLeftGame"/>).</summary>
+        public bool PlayerConnected;
+        /// <summary>Batch 686b: when <see cref="Launch"/> asked the host for the game (a tutorial's join limit counts from it).</summary>
+        public DateTimeOffset Launched;
         public HashSet<long> Returned = [];
         public int QueueId;
         public int QueuePosition;
@@ -1120,6 +1124,14 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                     if (game.Result is not null) continue;
                     if (remote is null || remote.State is "Failed" or "Interrupted" or "Stopped")
                     { AbortMatch(game); continue; }
+                    if (PlayerLeftGame(game, remote, _clock.GetUtcNow()))
+                    {
+                        // TERMINATED_IN_ERROR: a client still in the game flow goes home with the stock error notice instead of
+                        // waiting on the end-of-game screen for results that never come; one already home ignores it.
+                        AbortMatch(game);
+                        _ = manager.StopAsync(owner, hostId).ContinueWith(static stop => _ = stop.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                        continue;
+                    }
                     if (!game.CredentialsSent && remote.State == "Waiting for players")
                     {
                         game.CredentialsSent = true;
@@ -1339,6 +1351,7 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             game.Members.Select(m => Guest(m.Account)).ToArray(),
             id => accounts.PrepareMatch(new(game.Id, id, game.QueueId, game.Members.Select(m => m.Account.Id).ToArray(), players)));
         game.HostId = host.Id;
+        game.Launched = _clock.GetUtcNow();
         game.State = "START_REQUESTED";
         Changed(game);
     }
@@ -1397,6 +1410,38 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         if (game.IsDraft && member.PickTurn != game.PickTurn) throw AirFault.NotYourTurn();
     }
     private static Member MemberFor(Lobby game, long account) => game.Members.FirstOrDefault(m => m.Account.Id == account) ?? throw AirFault.NoGame();
+    /// <summary>
+    /// Batch 686: a tutorial (the Basic Tutorial or Battle Training, mode TUTORIAL) whose player has left: the host reported its human seat
+    /// connected once and reports none now, and the game has not finished (a finished game's result decides). The stock client goes home
+    /// when its tutorial game closes, crashed or abandoned, and offers no reconnect to it (InGameController.onGameCrashedOrAbandoned:
+    /// a tutorial calls cancelGameFlow, which also stops listening for that game's messages), so the game ends then; its bots would
+    /// otherwise play on to the host's time limit, the player held "assigned to an existing game" all along. Reconstruction: the
+    /// retail server's own end of an abandoned tutorial is not recovered; no result is recorded for it, as for any aborted game.
+    /// Batch 686b: a player who never connected (a game client that failed before joining) has left too once
+    /// <see cref="TutorialJoinLimit"/> has passed since the launch.
+    /// <para>
+    /// NOT RETAIL (owner decision, 4 November 2026: "Custom games should end instantly the moment a player disconnects if only a single
+    /// player is present in a game"): a custom game whose only human (bots do not count) was connected and has left ends the same way at
+    /// once. Retail kept a launched game for its disconnected player to reconnect to, as this server still does for a custom game with two
+    /// or more humans and for every matchmade game.
+    /// </para>
+    /// </summary>
+    public static bool PlayerLeftGame(Lobby game, RemoteGame remote, DateTimeOffset now)
+    {
+        var tutorial = game.GameMode == GameMaps.TutorialMode;
+        var soloCustom = !tutorial && !game.IsMatchmade && game.Members.Count == 1;
+        if (!(tutorial || soloCustom) || game.Result is not null || remote.State is not ("Starting" or "Waiting for players" or "Playing"))
+            return false;
+        if (remote.Seats.Any(seat => !seat.Player.IsBot && seat.Connected)) { game.PlayerConnected = true; return false; }
+        return game.PlayerConnected || tutorial && now - game.Launched >= TutorialJoinLimit;
+    }
+
+    /// <summary>
+    /// Batch 686b: how long a launched tutorial waits for its player's first connection. Reconstruction: retail's limit is not recovered;
+    /// three minutes is the owner's (4 November 2026), against the host's own 30-minute waiting limit for every game.
+    /// </summary>
+    public static readonly TimeSpan TutorialJoinLimit = TimeSpan.FromMinutes(3);
+
     private void AbortMatch(Lobby game)
     {
         // Once launch begins, stock AIR treats plain TERMINATED as a completed

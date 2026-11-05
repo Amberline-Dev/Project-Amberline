@@ -466,11 +466,21 @@ public sealed partial class SpellSystem
     /// engine, <see cref="BbScriptChannels.Begin"/>). False when the module or the script is missing.
     /// </summary>
     public bool BeginCaptureChannel(Entity hero, Entity guardian) =>
-        SummonerScripts?.BeginCaptureChannel(hero, guardian) == true;
+        BeginUseChannel(hero, guardian, Bb.BbSummonerModule.CaptureChannelSpellName);
 
-    /// <summary>Batch 470: starts the shipped use channel <paramref name="spellName"/> (a useable unit's <c>HeroUseSpell</c>) on a champion aimed at that unit.</summary>
-    public bool BeginUseChannel(Entity hero, Entity used, string spellName) =>
-        SummonerScripts?.BeginUseChannel(hero, used, spellName) == true;
+    /// <summary>
+    /// Batch 470: starts the shipped use channel <paramref name="spellName"/> (a useable unit's <c>HeroUseSpell</c>) on a champion aimed at that unit.
+    /// Batch 687 (community report, 4 November 2026: a stealthed Evelynn's capture moved nothing): the use is a cast of the slot-0x33 spell, so it
+    /// crosses the cast hooks every other cast does (Recall's <c>OnNamedSpellCast</c>). OdinCaptureChannel and OdinCaptureChannelBomb set
+    /// <c>CastingBreaksStealth</c> true, and the stealth buffs end themselves on such a cast (the BuffOnSpellCast of ShadowWalk, Twitch's HideInShadows,
+    /// Deceive, VayneTumbleFade, AkaliSBStealth, CamouflageStealth); the point's tree counts no stealthed champion ("Doesn't count if stealthed", OdinScriptBehaviorTrees.xml:148).
+    /// </summary>
+    public bool BeginUseChannel(Entity hero, Entity used, string spellName)
+    {
+        if (SummonerScripts?.BeginUseChannel(hero, used, spellName) != true) return false;
+        _championHooks.OnNamedSpellCast(hero, Bb.BbSummonerModule.UseChannelSlot, spellName, used);
+        return true;
+    }
 
     /// <summary>Batch 494: whether <paramref name="hero"/> channels the use spell <paramref name="spellName"/> at <paramref name="used"/> now.</summary>
     public bool ChannelsUseAt(Entity hero, Entity used, string spellName) =>

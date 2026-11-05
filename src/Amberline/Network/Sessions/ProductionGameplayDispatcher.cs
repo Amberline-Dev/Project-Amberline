@@ -36,6 +36,24 @@ internal sealed class ProductionGameplayDispatcher
     /// hero before the 0x48 starts the clip (a stop that lands with or after the clip cancels it), short enough to read as one action.
     /// </summary>
     internal const double EmoteSettleSeconds = 0.25;
+
+    /// <summary>
+    /// Batch 691/691b: the input locks the map's level script holds on the clients (<see cref="LevelScriptHost.InputLocks"/>). A client's
+    /// command one of them covers is refused: INPUT_ABILITIES a skill-up (0x3E) and a champion-spell cast, INPUT_SUMMONERSPELLS a summoner
+    /// cast (0xA2), INPUT_MOVEMENT a move or attack order (0x75 MOVETO/ATTACKTO). Reconstruction: in the client enforces them
+    /// (the ability lock, the client, unbinds the cast and level-up keys; the right-click handler, the client, returns while bit 2 is
+    /// set, and its minimap branch while bit 64 is), and whether the retail server also checked them is not in the shipped files. The
+    /// client's ability lock has a gap: closing the item shop ("closeItemShop") rebinds those keys while the
+    /// flag stays set, and neither the level-up nor the key casts read the flag. A W learnt
+    /// through it stopped the Basic Tutorial (owner, 4 November 2026), and an early Heal is on cooldown at its lesson. The minimap's own
+    /// lock (INPUT_MINIMAPMOVEMENT) sends the same 0x75, so only INPUT_MOVEMENT is read (the TutorialScript always sets the two together).
+    /// </summary>
+    internal Func<uint>? InputLocks { get; set; }
+
+    // AiGlobals.InputLockMask: INPUT_MOVEMENT, INPUT_ABILITIES, INPUT_SUMMONERSPELLS.
+    private const uint MovementLock = 2, AbilitiesLock = 4, SummonerLock = 8;
+
+    private bool Locked(uint flag) => InputLocks is { } locks && (locks() & flag) != 0;
     // Reconstruction: an order received inside an uncancellable spell windup (SpellWindup), applied when the windup is over.
     private readonly Dictionary<uint, SessionGameplayContext> _windupQueued = new();
     private readonly MovementSystem _movement;
@@ -84,7 +102,7 @@ internal sealed class ProductionGameplayDispatcher
         if (_pendingCaptures.Count == 0) return;
         foreach (var (netId, (target, spell, range)) in _pendingCaptures.ToArray())
         {
-            if (_world.Get(netId) is not { Alive: true } hero || !target.Alive || !CaptureStartAllowed(hero))
+            if (_world.Get(netId) is not { Alive: true } hero || !target.Alive || !CaptureStartAllowed(hero, target))
             {
                 _pendingCaptures.Remove(netId);
                 continue;
@@ -121,7 +139,7 @@ internal sealed class ProductionGameplayDispatcher
         // Batch 494: a use channel's stop cools the use slot down (BBSetUseSlotSpellCooldownTime: 3 s after a capture, 4 s after a relic). The
         // client refuses its own clicks then (GetCanUseObjectReason, reason 1); the server refuses the use the same way.
         if (_spells.UseSlotCoolingDown(hero)) return false;
-        if (!CaptureStartAllowed(hero)) return false;
+        if (!CaptureStartAllowed(hero, used)) return false;
         var range = _spells.Data.Spell(spell).CastRange;
         _windupQueued.Remove(hero.NetId);
         _pendingCaptures.Remove(hero.NetId);
@@ -170,7 +188,7 @@ internal sealed class ProductionGameplayDispatcher
         if (_mapId != GameMaps.CrystalScar || guardian is not { ChampionName: "OdinNeutralGuardian", Alive: true } || !hero.Alive) return false;
         if (InCaptureRange(hero.Position, guardian.Position))
         {
-            if (!CaptureStartAllowed(hero)) return false;
+            if (!CaptureStartAllowed(hero, guardian)) return false;
             _pendingCaptures.Remove(hero.NetId);
             _spells.CancelOrder(hero);
             return _spells.BeginCaptureChannel(hero, guardian);
@@ -183,9 +201,16 @@ internal sealed class ProductionGameplayDispatcher
     /// <summary>
     /// Batch 461: the gates a capture start passes, the direct order's and the walk's alike (the order handler refuses an order in these states
     /// before it reaches the capture): no dash or displacement, no uncancellable windup, no action lock (stun, suppression), no root.
+    /// Batch 687 (community report, 4 November 2026: a team was let into a capture of its own damaged point, which the channel then rejected):
+    /// the hero may use the unit (<see cref="HeroUseSpell"/>, the client's IsAllowedToUse). The client refuses the use of an
+    /// allied guardian (its record sets no Useable*AllyCanUse), and its right-click then falls through to ATTACKTO on that ally, because the
+    /// guardian's wire health 0 (batch 503) passes the client (the client: an ally at or below 0.0 of its health,
+    /// The client). The order and the bots' capture took any guardian, so the shipped channel started and ended itself as a success at its
+    /// first update (OdinCaptureChannel ChannelingUpdateStats: MyTeam equals TargetTeam), with the 3 s use cooldown.
     /// </summary>
-    private static bool CaptureStartAllowed(Entity hero) =>
-        hero.ForcedMove is null && !SpellWindup.IsWindingUp(hero) && !IsActionLocked(hero) && !IsRooted(hero);
+    private bool CaptureStartAllowed(Entity hero, Entity used) =>
+        hero.ForcedMove is null && !SpellWindup.IsWindingUp(hero) && !IsActionLocked(hero) && !IsRooted(hero) &&
+        HeroUseSpell(hero, used) is not null;
 
     public ProductionGameplayDispatcher(MovementSystem movement, CombatService combat,
         SpellSystem spells, HeroStatsService heroStats, ItemService items, WorldState world,
@@ -229,6 +254,7 @@ internal sealed class ProductionGameplayDispatcher
                 var destination = new Position2(x, z);
                 var actor = context.Actor ?? context.Hero;
                 var targetNetId = BinaryPrimitives.ReadUInt32LittleEndian(payload[18..]);
+                if (order is 2 or 3 && Locked(MovementLock)) return false;
 
                 // Ordinary hero clicks are also mirrored by the client as
                 // plain pet-actor orders. Only the distinct Pet.lua hard
@@ -328,7 +354,7 @@ internal sealed class ProductionGameplayDispatcher
                 {
                     if (InCaptureRange(context.Hero.Position, guardian.Position))
                     {
-                        if (CaptureStartAllowed(context.Hero) && _spells.BeginCaptureChannel(context.Hero, guardian)) return true;
+                        if (CaptureStartAllowed(context.Hero, guardian) && _spells.BeginCaptureChannel(context.Hero, guardian)) return true;
                     }
                     // The walk below goes to the order's point: only a walk that ends at the guardian closes in on it.
                     else if (InCaptureRange(destination, guardian.Position)) _pendingCaptures[context.Hero.NetId] =
@@ -434,13 +460,18 @@ internal sealed class ProductionGameplayDispatcher
             case DuelSession.UseObjectOpcode:
                 return payload.Length >= 9 && context.Target is { } useTarget && UseObject(context.Hero, useTarget);
             case 0x3E:
-                if (payload.Length < 6 || !_spells.RankUp(context.Hero, payload[5]))
+                if (payload.Length < 6 || Locked(AbilitiesLock) || !_spells.RankUp(context.Hero, payload[5]))
                     return false;
                 _heroStats.Refresh(context.Hero, push: true);
                 return true;
             case 0xA2:
                 var request = SpellSystem.ParseCastRequest(payload);
                 if (request is null) return false;
+                // Batch 691b: a summoner spell or a champion spell under the script's lock (InputLocks).
+                if (request.Value.IsSummoner
+                        ? request.Value.Slot < SpellSystem.SummonerSlots.Length && Locked(SummonerLock)
+                        : request.Value.Slot < SpellSystem.ChampionSlotCount && Locked(AbilitiesLock))
+                    return false;
                 // Batch 461: a cast, Recall or an item use replaces a walk toward a capture guardian, as it replaces any order.
                 _pendingCaptures.Remove(context.Hero.NetId);
                 if (request.Value.Slot >= SpellSystem.ChampionSlotCount &&
@@ -512,9 +543,14 @@ internal sealed class ProductionGameplayDispatcher
         }
     }
 
-    private static bool CanEmote(Entity hero) =>
+    // Batch 689 (community report, 4 November 2026: emotes ended channels): a channelling hero does not emote. The stock client's 0x48
+    // handler issues AI_HOLD on the hero (the client(1,...)), an order that ends a cancellable channel on the client and
+    // returns to the server as a hold, so an answered emote ends the channel either way; the request
+    // is left unanswered. Reconstruction: the retail server's refusal is native; Recall (its windup too) and every script channel count.
+    private bool CanEmote(Entity hero) =>
         hero.Alive && hero.ForcedMove is null &&
-        !IsActionLocked(hero) && !IsRooted(hero);
+        !IsActionLocked(hero) && !IsRooted(hero) &&
+        hero.ActiveScriptChannels == 0 && _spells.RecallRemaining(hero) <= 0.0;
 
     private void ForgetEmote(uint netId)
     {

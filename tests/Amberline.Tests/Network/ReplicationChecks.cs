@@ -310,6 +310,46 @@ public static class ReplicationChecks
         TestAssert.False(chaosObserver.View.Effects.Contains(0x9002), "for every team");
     }
 
+    // Batch 690 (community report: "zilean bomb not visible when lost vision of target"): an effect bound to a unit reaches the effect's own
+    // fog-of-war team (FOWTeam / FOWTeamOverrideVar: Time Bomb names the caster's team) when that team holds the unit but cannot see it. The stock
+    // client keeps such an effect hidden until the unit is in sight (the emitter's Draw), and its FX create
+    // routine moves a target it holds but cannot see to the packet's position, so retail sent these. An effect on no bind (drawn at its point
+    // whatever its target) and an effect with no own team still need sight of their unit.
+    [Check("replication.bound-effect-reaches-its-own-fow-team-while-the-unit-is-fogged")]
+    public static void BoundEffectReachesItsOwnFowTeamWhileTheUnitIsFogged()
+    {
+        var clock = new GameClock();
+        clock.SetVirtual(100);
+        var world = new WorldState(clock);
+        var zilean = world.Register(new Entity(1, EntityKind.Hero, UnitType.Hero, Team.Order, new(3000, 3000)) { ChampionName = "Zilean" });
+        var foe = world.Register(new Entity(2, EntityKind.Hero, UnitType.Hero, Team.Chaos, new(3300, 3000)) { ChampionName = "Annie" });
+        var delivery = new ReplicationDelivery(world, Services(), new OpenVisionEnvironment(),
+            _ => Array.Empty<VisionProvider>(), (_, _) => false);
+        var orderObserver = new ReplicationObserver(1, Team.Order, zilean.NetId, new CaptureReplicationTransport());
+        var chaosObserver = new ReplicationObserver(2, Team.Chaos, foe.NetId, new CaptureReplicationTransport());
+        delivery.AddObserver(orderObserver);
+        delivery.AddObserver(chaosObserver);
+        delivery.Flush();
+        TestAssert.True(orderObserver.View.Visible.Contains(foe.NetId), "the foe starts in sight");
+        foe.Position = new Position2(11000, 11000);
+        delivery.Flush();
+        TestAssert.True(orderObserver.View.Known.Contains(foe.NetId) && !orderObserver.View.Visible.Contains(foe.NetId),
+            "the foe is held but fogged for Zilean's team");
+        PlaintextPacket Fx(uint id, uint bind) => FxPackets.CreateGroup(1, id, foe.Position, new NavigationBounds(0, 0, 0, 0), (_, _) => 0,
+            targetNetId: foe.NetId, bindNetId: bind);
+        delivery.Enqueue(new EffectCreateReplicationMessage(Fx(0x9101, foe.NetId), 0x9101, foe.Position, BindNetId: foe.NetId, FowTeam: Team.Order));
+        delivery.Enqueue(new EffectCreateReplicationMessage(Fx(0x9102, foe.NetId), 0x9102, foe.Position, BindNetId: foe.NetId));
+        delivery.Enqueue(new EffectCreateReplicationMessage(Fx(0x9103, 0), 0x9103, foe.Position, FowTeam: Team.Order));
+        delivery.Enqueue(new EffectCreateReplicationMessage(Fx(0x9104, foe.NetId), 0x9104, foe.Position, BindNetId: foe.NetId, FowTeam: Team.Chaos));
+        delivery.Flush();
+        TestAssert.True(orderObserver.View.Effects.Contains(0x9101), "the bomb reaches its own team while its carrier is fogged");
+        TestAssert.False(orderObserver.View.Effects.Contains(0x9102), "an effect with no own team needs sight of its unit");
+        TestAssert.False(orderObserver.View.Effects.Contains(0x9103), "an effect on no bind is drawn at its point: it still needs sight of its target");
+        TestAssert.False(orderObserver.View.Effects.Contains(0x9104), "another team's effect needs sight of its unit");
+        TestAssert.True(new uint[] { 0x9101, 0x9102, 0x9103, 0x9104 }.All(chaosObserver.View.Effects.Contains), "the foe's own team sees its unit");
+        TestAssert.False(orderObserver.View.Visible.Contains(foe.NetId), "the effect reveals nothing");
+    }
+
     // Batch 306 (owner decision, 26 October 2026; batch 264's open question 1): a script unit (BBSpawnMinion, EntityKind.Monster) without a
     // VisibilitySize sees its own perception bubble, (percent + 1) * CharacterData PerceptionBubbleRadius + flat, the bubble the client's
     // shared minion creation handler makes for it. Before: no sight.

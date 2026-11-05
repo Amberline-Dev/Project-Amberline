@@ -278,6 +278,17 @@ public sealed partial class LevelScriptHost : IEndOfGameScript
     /// </summary>
     public IEndOfGameEngine? EndOfGameEngine { get; set; }
 
+    /// <summary>
+    /// Batch 691: the client input-locking flags (<see cref="AiGlobals.InputLockMask"/> bits) this state's scripts hold, as their
+    /// <c>SetInputLockingFlag</c> (0x89) and <c>ToggleInputLockingFlag</c> (0xA3) natives sent them to the clients. The server refuses
+    /// the client commands they cover (ProductionGameplayDispatcher.InputLocks, the shop's buy and sell), and a returning client is sent
+    /// them again (DuelSession.ScriptInputLocks).
+    /// </summary>
+    public uint InputLocks { get; private set; }
+
+    /// <summary>The bit of one <c>INPUT_*</c> id (300-307), or 0 for any other value (an unset global reads 0).</summary>
+    private static uint InputLockBit(double id) => id is >= 300 and <= 307 ? AiGlobals.InputLockMask(id) : 0u;
+
     /// <summary>Character and spell preload requests, in the order the script raised them.</summary>
     public IReadOnlyList<(string Kind, string Name)> Preloads => _preloads.ToArray();
 
@@ -1017,7 +1028,10 @@ public sealed partial class LevelScriptHost : IEndOfGameScript
         });
         _state.Register("SetInputLockingFlag", (_, args) =>
         {
-            EndOfGameEngine?.SetInputLockingFlag(Number(args, 0), args.Length > 1 && args[1].Truthy);
+            var locked = args.Length > 1 && args[1].Truthy;
+            EndOfGameEngine?.SetInputLockingFlag(Number(args, 0), locked);
+            var flag = InputLockBit(Number(args, 0));
+            InputLocks = locked ? InputLocks | flag : InputLocks & ~flag;
             return Array.Empty<LuaValue>();
         });
         _state.Register("DisableHUDForEndOfGame", (_, _) =>

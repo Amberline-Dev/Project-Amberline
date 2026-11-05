@@ -147,6 +147,7 @@ public static class PacketCatalogChecks
         yield return new("CombatPackets.ShowHealthBar", CombatPackets.ShowHealthBar(A, false));
         yield return new("CombatPackets.BuildingDie", CombatPackets.BuildingDie(A, B));
         yield return new("CombatPackets.HeroMultiKill", CombatPackets.HeroMultiKill(A, B, 2));
+        yield return new("CombatPackets.ChampionDie", CombatPackets.ChampionDie(A, B, 300.0f, []));
         yield return new("CombatPackets.OnEventWorld", CombatPackets.OnEventWorld(79, A, B, 1));
         yield return new("CombatPackets.HeroReincarnate", CombatPackets.HeroReincarnate(A, P3));
         yield return new("CombatPackets.MoveCameraToPoint", CombatPackets.MoveCameraToPoint(A, P3));

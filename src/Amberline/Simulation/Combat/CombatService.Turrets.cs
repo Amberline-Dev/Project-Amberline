@@ -9,15 +9,21 @@ namespace Amberline.Simulation.Combat;
 public sealed partial class CombatService
 {
     /// <summary>
-    /// <c>TurnOnAutoAttack</c>/<c>TurnOffAutoAttack</c>: the flag the turret's swing gate reads.
+    /// <c>TurnOnAutoAttack</c>/<c>TurnOffAutoAttack</c>: the attack the turret's swing gate reads, on the object TurnOn was given.
     /// TurnOn also re-affirms its swing target (the script always passes <c>GetTarget()</c>);
     /// TurnOff retires the client's target display without touching the id the script kept.
+    /// Batch 693 (Reconstruction: the native is the server's, and the 126 client holds no AI native): the attack stays on the
+    /// object TurnOnAutoAttack named, so a <c>SetTarget</c> to another one (OnTargetLost's replacement, OnCallForHelp's aggressor,
+    /// OnTauntBegin's taunter) is shot from the next TimerFindEnemies, whose ATTACKING/TAUNTED gate calls
+    /// <c>TurnOnAutoAttack(GetTarget())</c>, as a target the HARDIDLE scan took is. Turret.luaobj's shape reads that way: the native
+    /// takes the object, the three callbacks only SetTarget, and the scan re-arms on every tick. Before, the attack followed any
+    /// SetTarget at once, so after a switch the turret fired on the switch's own step (up to 0.15 s before the script's scan).
     /// </summary>
     public void SetTurretAutoAttack(Entity turret, Entity? target, bool enabled)
     {
         ArgumentNullException.ThrowIfNull(turret);
-        // The flag first: a Crystal Scar shrine's laser follows it (PublishTurretDisplay).
-        if (enabled) _turretAutoAttack.Add(turret.NetId);
+        // The attack first: a Crystal Scar shrine's laser follows it (PublishTurretDisplay).
+        if (enabled && (target?.NetId ?? turret.AttackTarget) is uint armed) _turretAutoAttack[turret.NetId] = armed;
         // TurnOnAutoAttack's argument is the swing target; Turret.luaobj always passes GetTarget(),
         // so this only ever re-affirms what SetTarget already set.
         if (enabled && target is not null) SetTurretTarget(turret, target);
@@ -71,7 +77,8 @@ public sealed partial class CombatService
         // The band's SetTarget and MOVING-stop cycle therefore sends nothing, and the laser starts and ends with the shots.
         // Summoner's Rift turrets have equal reaches and keep the script-call display.
         if (targetNetId is uint candidateId && TurretRules.IsCrystalScarShrine(turret) &&
-            (!_turretAutoAttack.Contains(turret.NetId) || _world.Get(candidateId) is not { } candidate || !CanAttack(turret, candidate)))
+            (!_turretAutoAttack.TryGetValue(turret.NetId, out var armed) || armed != candidateId ||
+             _world.Get(candidateId) is not { } candidate || !CanAttack(turret, candidate)))
             targetNetId = null;
         var known = _turretDisplay.TryGetValue(turret.NetId, out var shown);
         if (known ? shown == targetNetId : targetNetId is null) return;

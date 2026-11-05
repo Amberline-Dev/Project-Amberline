@@ -14,8 +14,8 @@ namespace Amberline.Simulation.BehaviorTrees;
 /// AttackRange 0, AcquisitionRange 950, Spell1 OdinGuardianSpellAttackCast, CastRange 1000, Cooldown 1; batch 466 read it the same way):
 /// <list type="bullet">
 /// <item>FindTargetInAcR: the turret ladder (<c>CombatService.AcquireTurretTarget</c>: summoned units, then minions, then the rest, the nearest
-/// of each) over the units it may attack, within its AcquisitionRange (950);</item>
-/// <item>TargetInAttackRange: within its Spell1's cast range (1000), centre to centre (the spell has no bounding-box range);</item>
+/// of each) over the units it may attack, within its <see cref="Reach"/> (batch 687: the OdinTower tree's 600; batch 662 took the record's 950);</item>
+/// <item>TargetInAttackRange: within the same <see cref="Reach"/>, centre to centre (batch 662 took its Spell1's cast range, 1000);</item>
 /// <item>TurnOnAutoAttack: it casts its Spell1 at the target on every step the attack is on and the target is valid and in that range; the
 /// cast is refused while the slot cools down, so it fires once a second.</item>
 /// </list>
@@ -70,10 +70,22 @@ internal sealed class GuardianTurretAi : ILuaAiTurretScriptEngine
     // The turret's loss test (CombatLuaAiEngine): died, untargetable or changed side; leaving range is not a loss.
     public bool TargetStillValid(Entity unit, Entity target) => target.Alive && _hooks.Attackable?.Invoke(unit, target) == true;
 
-    public bool TargetInAttackRange(Entity unit, Entity? target) =>
-        target is not null && _hooks.CastRange?.Invoke(unit, 0) is { } range &&
-        (unit.Position.X - target.Position.X) * (unit.Position.X - target.Position.X) +
-        (unit.Position.Z - target.Position.Z) * (unit.Position.Z - target.Position.Z) <= range * range;
+    public bool TargetInAttackRange(Entity unit, Entity? target) => target is not null && InReach(unit, target);
+
+    /// <summary>
+    /// Batch 687 (community report, 4 November 2026: "Shrines on Dominion have way too big range"; replaces batch 662's 950 and 1000). The
+    /// guardian's reach, to acquire and to keep its target, centre to centre: the shipped OdinTower tree's <c>AcquisitionRange</c> and
+    /// <c>AttackRadius</c>, both 600 (<c>LEVELS/Map8/Scripts/OdinTowerBehaviorTrees.xml:32-41</c>; it acquires with GetUnitsInTargetArea over
+    /// that radius and drops a target past it, :150-170). That tree is the one tower AI the designers wrote for these units. The record holds no
+    /// attack range (AttackRange 0); its AcquisitionRange 950 and its attack spell's CastRange 1000 are wider bounds than its tower AI's, as an
+    /// SR turret's basic attack spell has CastRange 400 under its 750 range. Reconstruction: the AI_Entity <c>OdinGuardian</c> that ran on
+    /// retail's guardians did not ship.
+    /// </summary>
+    internal const double Reach = 600.0;
+
+    internal static bool InReach(Entity guardian, Entity target) =>
+        (guardian.Position.X - target.Position.X) * (guardian.Position.X - target.Position.X) +
+        (guardian.Position.Z - target.Position.Z) * (guardian.Position.Z - target.Position.Z) <= Reach * Reach;
 
     public void TurnOnAutoAttack(Entity unit, Entity? target)
     {
