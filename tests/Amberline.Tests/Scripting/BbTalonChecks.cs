@@ -150,6 +150,8 @@ public static class BbTalonChecks
     /// Batch 433 (owner native 28 October, Talon W: "disappear when coming back"): the third blade's missile end takes <c>TalonRakeMissileOne</c> off
     /// Talon before it puts <c>TalonRakeMarker</c> on its placemarker, so the buff's deactivation (the return loop) passed that placemarker over and
     /// its blade never came back. Every placemarker's marker must be taken back, so every blade returns.
+    /// Batch 709: the loop ends each placemarker it visits with the cube's own 50000 hit (after the marker is off), which the engine refused until
+    /// then, so the three cubes stayed for the rest of the match. A cube the loop skipped would keep its marker and its life: all three must die.
     /// </summary>
     [Check("scripting.bb-talon-rake-every-blade-returns")]
     public static void RakeEveryBladeReturns()
@@ -157,12 +159,20 @@ public static class BbTalonChecks
         using var match = Arena();
         match.Advance(1.0);
         TestAssert.True(match.Cast(1), "Rake is cast");
-        match.Advance(2.5);
-        var cubes = match.Runtime.World.Entities.Values.Where(unit => unit.Name == "TestCube" && unit.Team == match.Hero.Team).ToArray();
-        TestAssert.Equal(3, cubes.Length, "the three blades end as three placemarkers");
+        var cubes = new System.Collections.Generic.HashSet<Entity>();
+        for (var step = 0; step < 50; step++)
+        {
+            match.Advance(0.05);
+            foreach (var unit in match.Runtime.World.Entities.Values)
+                if (unit.Name == "TestCube" && unit.Placemarker && unit.Team == match.Hero.Team) cubes.Add(unit);
+        }
+        TestAssert.Equal(3, cubes.Count, "the three blades end as three placemarkers");
         TestAssert.True(cubes.All(cube => !Has(cube, "TalonRakeMarker")),
             "every placemarker's marker is taken back, so every blade returns; still marked: " +
             string.Join(",", cubes.Where(cube => Has(cube, "TalonRakeMarker")).Select(cube => cube.NetId)));
+        TestAssert.True(cubes.All(cube => !cube.Alive),
+            "the loop ends every placemarker with its own 50000 hit; still alive: " +
+            string.Join(",", cubes.Where(cube => cube.Alive).Select(cube => cube.NetId)));
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));
     }
 

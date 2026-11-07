@@ -405,6 +405,9 @@ public static partial class ChampionLiveRegressionChecks
             "the flight leaves the ball");
         TestAssert.True(At(e.GetProperty("end_point"), ally.Position), "and heads for the unit she shielded");
         TestAssert.True(At(e.GetProperty("unit_position"), castAt), "while the packet's unit position keeps her where she stands");
+        // Batch 707: the tracking line meets the ally it tracks on arrival (BbLineMissile.Track), not 80 + his radius before him, so the ball's
+        // 806 units at 1850 take 0.44 s, past the 0.4 s above: a few more ticks let it arrive.
+        for (var tick = 0; tick < 6; tick++) match.Runtime.Tick(1.0 / 30.0);
         TestAssert.True(Retired(match.Captures[0]).Contains(eId), "the return flight is retired when the ball arrives");
     }
 

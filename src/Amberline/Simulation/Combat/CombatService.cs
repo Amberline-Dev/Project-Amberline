@@ -392,8 +392,14 @@ public sealed partial class CombatService : IEndOfGameEngine
         // A unit's own InternalRaw hit is its own end (ExpirationTimer's 9999 on the helper a script spawned, a ward's expiry). Batch 246: it
         // passes the engine's Protected flag (a placemarker is Protected to keep it out of target selection) as it passes invulnerability
         // below, so the helper dies by the ordinary kill, the retail route of BBApplyDamage. Every other hit on a Protected unit is refused.
+        // Batch 709: a placemarker's own hit of any source passes the flag too. The flag is the engine's stand-in for keeping it out of target
+        // selection, and a self hit selects nobody; Talon's return loops (TalonRakeMissileOne, TalonShadowAssaultMisOne) end each blade's cube
+        // with 50000 DAMAGESOURCE_DEFAULT physical from the cube to itself, after SetInvulnerable false and SetTargetable true, and every W left
+        // three cubes and every R eight. Invulnerability below still refuses such a hit (TrundleDesecrate's 9999 on its still invulnerable
+        // cube). Reconstruction: retail's damage gate is server-only; every shipped end of a placemarker by damage is the unit's own hit.
         var ownKill = sourceKind == DamageSourceKind.InternalRaw && sourceNetId == targetNetId;
-        if (target is null || !target.Alive || target.Health <= 0.0 || target.Protected && !ownKill) return false;
+        var placemarkerOwnHit = sourceNetId == targetNetId && target is { Placemarker: true };
+        if (target is null || !target.Alive || target.Health <= 0.0 || target.Protected && !ownKill && !placemarkerOwnHit) return false;
         // Batch 227, narrowed in batch 230 (owner rule: the evidence is the shrine's, so the rule is the shrine's). Only the fountain shrine's own
         // DAMAGESOURCE_INTERNALRAW hit ignores resistances, immunities, pre-damage hooks and shields (patch V1.0.0.108: "Shrine (spawn) turrets now
         // ignore all resistances and immunities"; OrderTurretShrineBasicAttack and ChaosTurretShrineBasicAttack deal it that way). It reaches a

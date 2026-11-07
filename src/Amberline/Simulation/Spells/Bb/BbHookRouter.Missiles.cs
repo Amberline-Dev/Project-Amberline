@@ -81,7 +81,7 @@ internal sealed partial class BbHookRouter
     private BbScope MissileSpellScope(BbMissileFlight flight, Entity? target)
     {
         var scope = NewScope(flight.Caster, flight.Caster, target, flight.Caster, flight.Rank);
-        scope.SpellVars = SpellVars(flight.Caster, flight.Slot, flight.Script);
+        scope.SpellVars = SpellVars(flight.Script);
         return scope;
     }
 

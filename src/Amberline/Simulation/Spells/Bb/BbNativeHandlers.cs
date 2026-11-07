@@ -270,7 +270,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         // buffs and bleeds; refusing the call (the M2 rule that stood here) stopped that hook at the call, so the bleed never landed.
         if (percent != 1.0 && percent <= 0.0 && call.Value("PercentOfAttackVar") is null) return;
         // ExpirationTimer ends the helpers a script spawned (Janna's TestCube) with 9999 InternalRaw damage to itself: the ordinary hit below, whose
-        // own InternalRaw kill passes the placemarker's Protected flag and its invulnerability (CombatService.ApplyHit, batch 246).
+        // own InternalRaw kill passes the placemarker's Protected flag and its invulnerability (CombatService.ApplyHit, batch 246). A placemarker's
+        // own hit of another source (Talon's 50000 DAMAGESOURCE_DEFAULT on each blade cube) passes the flag but not invulnerability (batch 709).
         var type = call.Value("DamageType") is double typeNumber ? (BbDamageType)(int)typeNumber : BbDamageType.PHYSICAL_DAMAGE;
         // The damage native reads DamageType and SourceDamageType as optional integers whose default is 0 (PHYSICAL_DAMAGE, DAMAGESOURCE_RAW); every
         // shipped call names both.

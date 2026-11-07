@@ -28,7 +28,6 @@ internal sealed partial class BbHookRouter : IBbHookSink
     // Batch 159 step 2: the non-champion units this router runs a character script for (a turret's CharScript), bound one
     // unit at a time by BbUnitCharacterModule. A champion module's router holds none of these.
     private readonly Dictionary<Entity, BbScript> _unitCharacters = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<(Entity, int), BbTable> _spellVars = new();
     private readonly List<BbScriptFailure> _failures = new();
 
     public BbHookRouter(BbSpellHost host, BbScriptSet scripts)
@@ -89,33 +88,36 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// </summary>
     private BbTable CharInstanceVars(Entity hero) =>
         _charInstanceVars.TryGetValue(hero, out var table) ? table : _charInstanceVars[hero] = new BbTable();
-    private BbTable SpellVars(Entity hero, int slot) =>
-        _spellVars.TryGetValue((hero, slot), out var table) ? table : _spellVars[(hero, slot)] = new BbTable();
-
     /// <summary>
-    /// The per-spell table of a hero's slot, with the casting spell script's plain globals (<c>DoesntTriggerSpellCasts</c>,
-    /// <c>CastingBreaksStealth</c>, <c>DoesntBreakShields</c> ...) copied in. The shipped buff scripts read exactly those three names
-    /// from <c>SpellVars</c> (37, 19 and 8 uses). Not every spell script defines them: <c>SpellShield.luaobj</c> sets the global
-    /// <c>DoesntTriggerSpellCasts</c>, while <c>UdyrPhoenixAttack.luaobj</c> defines only its <c>TargetExecuteBuildingBlocks</c> and
-    /// <c>PreLoadBuildingBlocks</c>.
+    /// The <c>SpellVars</c> of one hook run: a fresh table with the casting spell script's plain globals (<c>DoesntTriggerSpellCasts</c>,
+    /// <c>CastingBreaksStealth</c>, <c>DoesntBreakShields</c> ...) and nothing else; a spell with no script gives an empty one. The shipped
+    /// scripts read exactly those three names from <c>SpellVars</c> (38, 19 and 8 reads in 38 files) and write none, so the table holds no
+    /// state between casts. Not every spell script defines them: <c>SpellShield.luaobj</c> sets <c>DoesntTriggerSpellCasts</c>, Yorick's
+    /// four slot spells set none, and a global a spell does not define reads nil.
+    /// <para>
+    /// Batch 708: the table used to be one per (hero, slot number) per router, refilled over the last spell's globals. A Health Potion
+    /// drunk from inventory slot 0 (<c>RegenerationPotion.luaobj</c>, <c>DoesntTriggerSpellCasts = true</c>) left its <c>true</c> in the
+    /// item module's slot-0 table, and Yorick's Omen of War read it there: Tear of the Goddess (<c>TearOfTheGoddessTrack</c>'s
+    /// <c>BuffOnSpellCast</c>) and Sheen's <c>ItemOnSpellCast</c> ignored his Q for the rest of the game. Annie's and Ryze's spells set
+    /// the global to <c>false</c> themselves, which overwrote it and hid the leak.
+    /// </para>
     /// </summary>
-    private BbTable SpellVars(Entity hero, int slot, BbScript spell)
+    private static BbTable SpellVars(BbScript? spell)
     {
-        var table = SpellVars(hero, slot);
-        BbSpellContext.Fill(table, spell);
+        var table = new BbTable();
+        if (spell is not null) BbSpellContext.Fill(table, spell);
         return table;
     }
 
     /// <summary>
     /// The same <c>SpellVars</c> for a cast hook this router does not run itself: the item module's
     /// <c>ItemOnSpellCast</c> builds its own scope beside the cast hooks and reads the cast spell's flags
-    /// (<c>DoesntTriggerSpellCasts</c> ...) from the table they write. The cast spell is looked up the way
+    /// (<c>DoesntTriggerSpellCasts</c> ...) from it. The cast spell is looked up the way
     /// <see cref="RunSpellCast"/>'s buff hooks resolve a spell outside the closure
-    /// (<see cref="BbScriptSet.FindOrShipped"/>); a name no shipped script carries leaves the bare per-slot table.
+    /// (<see cref="BbScriptSet.FindOrShipped"/>); a name no shipped script carries gives an empty table.
     /// </summary>
-    internal BbTable CastSpellVars(Entity hero, int slot, string? spellName) =>
-        spellName is not null && _scripts.FindOrShipped(spellName) is { } spell
-            ? SpellVars(hero, slot, spell) : SpellVars(hero, slot);
+    internal BbTable CastSpellVars(string? spellName) =>
+        SpellVars(spellName is null ? null : _scripts.FindOrShipped(spellName));
 
     // ------------------------------------------------------------------------------------------------------------
     // Scopes and execution
@@ -371,7 +373,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
         // Target is the unit the cast was aimed at, the caster itself for a self cast: the shipped self spells add their buffs to
         // "Target" (BurningAgony, Defile, FlashFrost, LuxPrismaticWave) and stop its channel (SummonerFlash).
         var scope = NewScope(hero, hero, target ?? hero, hero, rank, binding: binding);
-        scope.SpellVars = SpellVars(hero, slot, script);
+        scope.SpellVars = SpellVars(script);
         // The client's windup cast stays active until its FinishCast: a BBSetSpell on this slot from the cast frame retires it first (WindupCastFrame).
         var windup = hero.UnitType == UnitType.Hero && _host.Spells.Data.HasSpell(script.Name) && !_host.Spells.Data.Spell(script.Name, 5).IsInstant;
         var outerFrame = WindupCastFrame;
@@ -427,7 +429,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
         BbLoadoutBinding? binding = null, bool itemActive = false, int itemId = 0)
     {
         var scope = NewScope(hero, hero, target, hero, rank, binding: binding);
-        scope.SpellVars = SpellVars(hero, slot, script);
+        scope.SpellVars = SpellVars(script);
         // The spell a BuffOnPreAttack cast in place of a swing (Xin Zhao's Three Talon Strike) reads that swing's roll as HitResult, once (Entity.ReplacedSwing).
         if (hero.ReplacedSwing is { } replaced && string.Equals(hero.SwingReplacedBy, script.Name, StringComparison.Ordinal))
         {
@@ -579,7 +581,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
     {
         if (script.Event("CanCast") is null) return true;
         var scope = NewScope(hero, hero, null, hero, rank >= 1 ? rank : null, binding: binding);
-        scope.SpellVars = SpellVars(hero, slot, script);
+        scope.SpellVars = SpellVars(script);
         var position = new Position3(hero.Position.X, 0.0, hero.Position.Z);
         Run(script, "CanCast", scope, SpellFrame("CanCast", script, hero, slot, rank, manaCost, position, position));
         return scope.ReturnValue is not false;
@@ -598,7 +600,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
     {
         if (script.Event("AdjustCooldown") is null) return null;
         var scope = NewScope(hero, hero, hero, hero, rank >= 1 ? rank : null, binding: binding);
-        scope.SpellVars = SpellVars(hero, slot, script);
+        scope.SpellVars = SpellVars(script);
         var position = new Position3(hero.Position.X, 0.0, hero.Position.Z);
         Run(script, "AdjustCooldown", scope, SpellFrame("AdjustCooldown", script, hero, slot, rank, 0.0, position, position));
         return scope.ReturnValue is double adjusted && double.IsFinite(adjusted) ? Math.Max(0.0, adjusted) : null;
@@ -613,7 +615,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
     {
         if (script.Event("AdjustCastInfo") is null) return null;
         var scope = NewScope(hero, hero, hero, hero, rank >= 1 ? rank : null, binding: binding);
-        scope.SpellVars = SpellVars(hero, slot, script);
+        scope.SpellVars = SpellVars(script);
         var position = new Position3(hero.Position.X, 0.0, hero.Position.Z);
         var frame = SpellFrame("AdjustCastInfo", script, hero, slot, rank, 0.0, position, position);
         Run(script, "AdjustCastInfo", scope, frame);
@@ -1496,7 +1498,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
         if (CharacterOf(hero) is { } script && script.Event("CharOnSpellCast") is not null && Owns(hero))
         {
             var scope = NewScope(hero, hero, CastTarget, hero, rank >= 1 ? rank : null, CharInstanceVars(hero));
-            scope.SpellVars = spell is null ? SpellVars(hero, slot) : SpellVars(hero, slot, spell);
+            scope.SpellVars = SpellVars(spell);
             Run(script, "CharOnSpellCast", scope, new BbHookFrame("CharOnSpellCast", script.Name, hero)
             {
                 Caster = hero, SpellSlot = slot, SpellRank = rank, SpellName = spellName, CastPosition = CastPoint,
@@ -1507,7 +1509,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
         {
             // Caster is the buff's caster, as in every other buff hook: Kassadin's Force Pulse sits on every hero in range and reads CharVars through it.
             var scope = NewScope(hero, hero, CastTarget, _host.Spells.World.Get(instance.CasterNetId) ?? hero, rank >= 1 ? rank : null, instance.InstanceVars);
-            scope.SpellVars = spell is null ? SpellVars(hero, slot) : SpellVars(hero, slot, spell);
+            scope.SpellVars = SpellVars(spell);
             Run(instance.Script, "BuffOnSpellCast", scope, new BbHookFrame("BuffOnSpellCast", instance.Name, hero)
             {
                 Caster = hero, SpellSlot = slot, SpellRank = rank, SpellName = spellName, Buff = instance, CastPosition = CastPoint,

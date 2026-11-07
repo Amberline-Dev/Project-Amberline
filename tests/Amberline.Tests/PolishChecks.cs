@@ -427,6 +427,53 @@ public static class PolishChecks
         TestAssert.True(caster.Buffs.Any(b => b.Name == "Sheen"), "an unflagged spell arms Sheen as before");
     }
 
+    // Batch 708 (owner, 7 November 2026: "Tear stacking ... not working on Yorick"): a Health Potion drunk from inventory slot 0 is
+    // flagged DoesntTriggerSpellCasts (Spells/RegenerationPotion.luaobj). The item module's router kept one SpellVars table per
+    // (hero, slot number) and only copied a spell's globals over it, so the potion's true stayed in slot 0's table; Yorick's Omen of
+    // War (YorickSpectral.luaobj, no such global) then read it, and TearOfTheGoddessTrack's BuffOnSpellCast and Items/3057's
+    // ItemOnSpellCast ignored the cast. Annie's and Ryze's spells set the global to false themselves, which hid it there.
+    [Check("polish.tear-and-sheen-hear-a-spell-cast-after-a-potion-from-its-slot")]
+    public static void TearAndSheenHearASpellAfterAPotionFromItsSlot()
+    {
+        var m = new Match("Yorick"); var hero = m.Hero(0);
+        hero.Inventory = [new(2003), new(3070), new(3057), null, null, null];
+        m.Runtime.HeroStats.Refresh(hero);
+        // Items/3070 adds TearOfTheGoddessTrack after 0.95 s; its reservoir then fills to two charges (one per 3 s).
+        m.Runtime.Tick(5);
+        hero.Health = hero.MaxHealth * 0.5;
+        TestAssert.True(m.Cast(4, hero), "the Health Potion in inventory slot 0 is drunk");
+        TestAssert.True(hero.Buffs.Any(b => b.Name == "RegenerationPotion"), "the potion's buff is on");
+        m.Runtime.Tick(1);
+        var before = hero.MaxMana;
+        hero.Mana = hero.MaxMana;
+        TestAssert.True(m.Cast(0, m.Hero(1)), "Omen of War (slot 0) is cast");
+        m.Runtime.Tick(0.5);
+        TestAssert.Near(before + 4.0, hero.MaxMana, 1e-6, "Tear adds 4 maximum mana for Omen of War");
+        TestAssert.True(hero.Buffs.Any(b => b.Name == "Sheen"), "Omen of War arms Sheen");
+    }
+
+    // Batch 708: the same leak through the summoner slots. A summoner cast crosses every router's cast hooks with its own slot number
+    // (0 for D, 1 for F), so Flash (SummonerFlash.luaobj, DoesntTriggerSpellCasts = true) left its true in slot 0's table of the item
+    // module's router and Heal in slot 1's: Yorick's Q and W stopped feeding Tear for the rest of the game.
+    [Check("polish.tear-hears-a-spell-cast-after-a-summoner-spell-of-the-same-slot-number")]
+    public static void TearHearsASpellAfterASummonerOfTheSameSlotNumber()
+    {
+        var m = new Match("Yorick"); var hero = m.Hero(0);
+        hero.Inventory = [new(3070), null, null, null, null, null];
+        m.Runtime.HeroStats.Refresh(hero);
+        m.Runtime.Tick(5);
+        TestAssert.True(m.Cast(0, m.Hero(1), summoner: true), "Flash (summoner slot 0) is cast");
+        hero.Health = hero.MaxHealth * 0.5;
+        TestAssert.True(m.Cast(1, hero, summoner: true), "Heal (summoner slot 1) is cast");
+        m.Runtime.Tick(1);
+        var before = hero.MaxMana;
+        hero.Mana = hero.MaxMana;
+        TestAssert.True(m.Cast(0, m.Hero(1)), "Omen of War (slot 0) is cast");
+        TestAssert.True(m.Cast(1, m.Hero(1)), "Omen of Pestilence (slot 1) is cast");
+        m.Runtime.Tick(1);
+        TestAssert.Near(before + 8.0, hero.MaxMana, 1e-6, "Tear adds 4 maximum mana for each of the two casts");
+    }
+
     [Check("polish.guardian-angel-leaves-non-dispellable-elixirs-and-oracle")]
     public static void GuardianAngelKeepsElixirsAndOracleBuffs()
     {

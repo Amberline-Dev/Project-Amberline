@@ -245,7 +245,19 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         Advance(system, distance <= 1e-9 ? _position : _position + new Position2(_direction.X * step, _direction.Z * step), step);
         // A script that destroyed the line ends it here; reaching the unit ends it with the unit as the end hook's target, as a homing missile's.
         if (_flight.Destroyed) return Finish(system);
-        if (distance - step <= 1e-9) return Finish(system, _tracked);
+        if (distance - step <= 1e-9)
+        {
+            // Batch 707 (owner, 7 November 2026, Talon: "W VFX disappears when coming back; R VFX disappears too quickly when coming back (should
+            // fly into talon)"): the tracked unit is met here, on arrival, and not by the sweep (Advance). The shared update
+            // aims a tracking line at its first target's position every update and,
+            // when the line reaches that point with no bounce or destroy delay left, hands the target alone to OnMissileCollide and ends. The
+            // return blades (TalonRakeMissileTwo, TalonShadowAssaultMisTwo: AffectFriends, no NotAffectSelf) track Talon himself and their
+            // TargetExecute destroys them on him; the sweep met him at LineWidth plus his radius (140 and 315 units out), so the 0x5D removed
+            // each blade that far from him (obj_SpellMissile's DestroyClientMissile handler flags it at once). Reconstruction: whether retail's
+            // server-only sweep also skipped the tracked unit is not in the client; the arrival collide and the scripts' Target == Owner branch are.
+            if (_tracked.Alive && !_hit.Contains(_tracked.NetId) && Admissible(system, _tracked)) Strike(system, _tracked);
+            return Finish(system, _tracked);
+        }
         ChampionSpellSupport.RefreshMissile(system, Caster, _castInfo, _origin, _position, goal, _speed, casterProjection: _projection);
         return true;
     }
@@ -287,9 +299,9 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         // first step and its 0x5D left in the flush of its 0x41, so no arrow flew. The owner's retail look: the arrows fly from one champion to the
         // other. Retail's contact geometry is server-only; narrower lines keep the round end.
         var square = _width >= _range;
+        // A tracking line meets the unit it tracks on arrival only (Track, batch 707).
         var hits = system.World.Entities.Values
-            .Where(unit => !_hit.Contains(unit.NetId) && BbSpellTargeting.Admits(Caster, unit, _flags) &&
-                           system.Combat.IsTargetable(unit, null) && ChampionSpellSupport.ScriptCollisionAllows(system, Caster, unit))
+            .Where(unit => !_hit.Contains(unit.NetId) && !ReferenceEquals(unit, _tracked) && Admissible(system, unit))
             .Select(unit => (Unit: unit, Contact: square
                 ? Geometry.SweptHeadContact(old, next, unit.Position, _width + unit.CombatRadius, unit.CombatRadius)
                 : Geometry.SweptContact(old, next, unit.Position, _width + unit.CombatRadius)))
@@ -302,19 +314,28 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         {
             // A script that destroyed the missile (its update hook, or the hit before: Rocket Grab, Mystic Shot) takes no further unit.
             if (!unit.Alive || _flight.Destroyed) continue;
-            _hit.Add(unit.NetId);
-            // A line cast by a placemarker (Janna's wave from the cube) reveals the hero that owns it, not the cube.
-            var revealed = _projection is { } owner ? system.World.Get(owner.OwnerNetId) ?? Caster : Caster;
-            system.RevealMissileHit(revealed, _spellName, unit);
-            // Batch 591 (owner decision, 1 November 2026): LineMissileHitList names the unit before its hit runs, so it reaches the client ahead
-            // of the hit's 0x5D (the handler skips a missile that is over; SpellPackets.LineMissileHitList). One packet per unit: a script that destroys
-            // the line on this hit (Mystic Shot, Thundering Shuriken) keeps the next unit of the step unhit. Reconstruction: retail's grouping is not in
-            // the client, which takes any count.
-            system.Effects.SendLineMissileHitList(_missileNetId, [unit.NetId]);
-            var at = new Position3(unit.Position.X, system.Movement.Navigation.HeightAt(unit.Position), unit.Position.Z);
-            _host.Router.RunTargetExecute(_script, Caster, _slot, _rank, 0.0, at, at, unit, targetsHit: _hits++, missileNetId: _missileNetId,
-                itemId: _itemId);
+            Strike(system, unit);
         }
+    }
+
+    private bool Admissible(SpellSystem system, Entity unit) =>
+        BbSpellTargeting.Admits(Caster, unit, _flags) && system.Combat.IsTargetable(unit, null) &&
+        ChampionSpellSupport.ScriptCollisionAllows(system, Caster, unit);
+
+    private void Strike(SpellSystem system, Entity unit)
+    {
+        _hit.Add(unit.NetId);
+        // A line cast by a placemarker (Janna's wave from the cube) reveals the hero that owns it, not the cube.
+        var revealed = _projection is { } owner ? system.World.Get(owner.OwnerNetId) ?? Caster : Caster;
+        system.RevealMissileHit(revealed, _spellName, unit);
+        // Batch 591 (owner decision, 1 November 2026): LineMissileHitList names the unit before its hit runs, so it reaches the client ahead
+        // of the hit's 0x5D (the handler skips a missile that is over; SpellPackets.LineMissileHitList). One packet per unit: a script that destroys
+        // the line on this hit (Mystic Shot, Thundering Shuriken) keeps the next unit of the step unhit. Reconstruction: retail's grouping is not in
+        // the client, which takes any count.
+        system.Effects.SendLineMissileHitList(_missileNetId, [unit.NetId]);
+        var at = new Position3(unit.Position.X, system.Movement.Navigation.HeightAt(unit.Position), unit.Position.Z);
+        _host.Router.RunTargetExecute(_script, Caster, _slot, _rank, 0.0, at, at, unit, targetsHit: _hits++, missileNetId: _missileNetId,
+            itemId: _itemId);
     }
 
     private bool Finish(SpellSystem system, Entity? reached = null)

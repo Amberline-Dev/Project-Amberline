@@ -918,7 +918,7 @@ public sealed class BbItemModule
         {
             if (owner.Item(index) is not { Active: true } binding || binding.Script.Event("ItemOnSpellCast") is null) continue;
             var scope = ScopeOf(caster, caster, RouterOrThrow.CastTarget, caster, binding);
-            scope.SpellVars = RouterOrThrow.CastSpellVars(caster, slot, spellName);
+            scope.SpellVars = RouterOrThrow.CastSpellVars(spellName);
             RouterOrThrow.Run(binding.Script, "ItemOnSpellCast", scope, new BbHookFrame("ItemOnSpellCast", binding.Script.Name, caster)
             {
                 Caster = caster, SpellSlot = slot, SpellName = spellName, ItemId = binding.Id,

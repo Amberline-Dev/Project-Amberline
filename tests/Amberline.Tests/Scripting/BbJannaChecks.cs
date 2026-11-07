@@ -241,8 +241,10 @@ public static class BbJannaChecks
         TestAssert.True(cube.Protected && cube.Alive, "the TestCube is a live Protected placemarker");
         TestAssert.False(match.Runtime.Combat.ApplyHit(match.Hero.NetId, cube.NetId, 9999.0, DamageType.True, DamageSourceKind.InternalRaw),
             "another unit's InternalRaw hit on the Protected cube is refused");
+        // Batch 709: a placemarker's own hit of any source passes the Protected flag (Talon's cubes end by their own 50000 DAMAGESOURCE_DEFAULT
+        // hit); this cube was spawned Invulnerable (HowlingGale's flags), and only an InternalRaw hit of its own passes that.
         TestAssert.False(match.Runtime.Combat.ApplyHit(cube.NetId, cube.NetId, 9999.0, DamageType.True, DamageSourceKind.Spell),
-            "the cube's own hit of another source is refused");
+            "the cube's own hit of another source is refused by its invulnerability");
         TestAssert.True(cube.Alive, "the refused hits leave the cube alive");
         match.Advance(5.0);
         TestAssert.False(cube.Alive, "ExpirationTimer ends the cube");

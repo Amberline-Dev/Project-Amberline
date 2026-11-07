@@ -24,7 +24,7 @@ internal sealed partial class BbHookRouter
         if (channel.Script.Event(hook) is null) return;
         var caster = channel.Caster;
         var scope = NewScope(caster, caster, channel.Target ?? caster, caster, channel.Rank, channel.InstanceVars);
-        scope.SpellVars = SpellVars(caster, channel.Slot, channel.Script);
+        scope.SpellVars = SpellVars(channel.Script);
         scope.Vars["AccumTime"] = channel.Elapsed;
         scope.Vars["CastPosition"] = channel.InstanceVars["CastPosition"];
         var frame = SpellFrame(hook, channel.Script, caster, channel.Slot, channel.Rank, channel.ManaCost, channel.At, channel.End);
