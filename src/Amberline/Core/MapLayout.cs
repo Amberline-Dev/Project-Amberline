@@ -105,9 +105,10 @@ public sealed record MapLayout(
     /// is <c>Constants.var bar_MaxHP</c>, the figure the client's dampener bar reads (the owner's Summoner's Rift rule, 25 October 2026);</item>
     /// <item>the attack radii are the bounds of the skin each building's ObjectCFG section names (<c>SkinName1</c>, <see cref="GameData.SkinHalfWidth"/>;
     /// every map names OrderNexus/ChaosNexus/OrderInhibitor/ChaosInhibitor);</item>
-    /// <item>the spawns are <c>__Spawn_T1</c> / <c>__Spawn_T2</c>; the shops are the scene's <c>orderShop01</c> / <c>chaosShop01</c> meshes
-    /// under their own spelling (Map4 ships <c>OrderShop01</c>). Reconstruction: the shop's netid is the CRC of that spelling
-    /// (<see cref="MapDefinitions.BuildingNetId"/>); whether the client hashes the exact case is not proven.</item>
+    /// <item>the spawns are <c>__Spawn_T1</c> / <c>__Spawn_T2</c>; the shops are the scene's <c>orderShop01</c> / <c>chaosShop01</c> meshes.
+    /// Every scene object is named as its mesh names itself (<see cref="SceneMesh.Name"/>), the exact spelling the client hashes into the
+    /// netid (<see cref="MapDefinitions.BuildingNetId"/>; batch 704): Map4's shops are <c>OrderShop01</c> and <c>chaosShop01</c>, the latter
+    /// shipped as ChaosShop01.SCB.</item>
     /// <item>batch 556: the lanes are the ones both teams have a <c>Barracks_T{1,2}_{L,C,R}1</c> mesh on (Map4: L and R). A lane's spine
     /// is the Order barracks' <c>__P_Order_Spawn_Barracks__&lt;lane&gt;01</c> marker, the scene's <c>__NAV_&lt;lane&gt;0&lt;n&gt;</c> markers
     /// from n = 2 while the scene has one, and the Chaos barracks' marker: the marker's name ends in 01 where the __NAV list starts at 02,
@@ -274,7 +275,10 @@ public sealed record MapLayout(
         .. inhibitors.Select(inhibitor => new NavigationStamp(inhibitor.Name, inhibitor.Position, inhibitor.Radius)),
     ];
 
-    /// <summary>A map's <c>Scene</c> folder: its mesh files under their own spelling, looked up case-insensitively.</summary>
+    /// <summary>
+    /// A map's <c>Scene</c> folder: its mesh files, looked up case-insensitively, each named as the mesh names itself (<see cref="SceneMesh.Name"/>,
+    /// the client's object name and so its netid; batch 704: Map4's ChaosShop01.SCB is <c>chaosShop01</c>).
+    /// </summary>
     private sealed class SceneFiles
     {
         private readonly string _folder;
@@ -288,7 +292,9 @@ public sealed record MapLayout(
             _meshes = CaseInsensitivePaths.EnumerateFiles(_folder, "*.SCB").Select(path => Path.GetFileNameWithoutExtension(path)).ToArray();
         }
 
-        public string? Mesh(string name) => _meshes.FirstOrDefault(mesh => string.Equals(mesh, name, StringComparison.OrdinalIgnoreCase));
+        public string? Mesh(string name) => _meshes.FirstOrDefault(mesh => string.Equals(mesh, name, StringComparison.OrdinalIgnoreCase)) is { } file
+            ? SceneMesh.Name(CaseInsensitivePaths.Resolve(Path.Combine(_folder, file + ".SCB")))
+            : null;
 
         public string Required(string name) => Mesh(name) ?? throw new FileNotFoundException($"{_map} ships no {name}.SCB", _folder);
 

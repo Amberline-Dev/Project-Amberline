@@ -100,6 +100,10 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
             probe.EffectsRan = true;
         }
         if (ExecuteMovement(call) || ExecuteSpawn(call) || ExecuteMissile(call) || ExecuteVision(call) || ExecuteUnits(call) || ExecuteWave2(call) || ExecuteWave7(call)) return;
+        // A buff found by name or type sees the adds the same run made before it (BbBuffRuntime.LandHeldAdds, batch 703).
+        if (call.Function is "BBSpellBuffRemove" or "BBSpellBuffClear" or "BBSpellBuffRemoveType" or "BBDispellNegativeBuffs"
+            or "BBGetBuffRemainingDuration" or "BBGetBuffStartTime")
+            _host.Buffs.LandHeldAdds();
         switch (call.Function)
         {
             case "BBPreloadSpell" or "BBPreloadParticle" or "BBPreloadCharacter":

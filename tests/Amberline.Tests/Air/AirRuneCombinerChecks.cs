@@ -202,11 +202,11 @@ public static class AirRuneCombinerChecks
         Directory.CreateDirectory(root);
         var account = new PlatformAccount(1, 1_000_001, "combiner", "Combiner", "", "",
             new MatchPlayer("Combiner", "Annie", Team.Order),
-            RunePages: pages ??
-            [
-                new PlatformRunePage(1, "Default", true, new Dictionary<int, int>(), DateTime.UnixEpoch),
-                new PlatformRunePage(2, "Page 2", false, new Dictionary<int, int>(), DateTime.UnixEpoch),
-            ],
+            // Batch 706: a full account's book is written whole (every page up to the cap), so a refused read writes nothing.
+            RunePages: pages ?? Enumerable.Range(1, legacy || allUnlocked ? 10 : 2)
+                .Select(id => new PlatformRunePage(id, id == 1 ? "Default" : $"Page {id}", id == 1,
+                    new Dictionary<int, int>(), DateTime.UnixEpoch))
+                .ToArray(),
             Economy: legacy ? null : new PlatformEconomyData(allUnlocked, 0, 0, 0, 1,
                 [], [], owned.ToDictionary(pair => pair.Key, pair => pair.Value), [], []));
         var state = new PlatformAccounts.State(2, [account], [], []);

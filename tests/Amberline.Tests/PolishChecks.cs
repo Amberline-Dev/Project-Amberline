@@ -680,6 +680,41 @@ public static class PolishChecks
         TestAssert.False(hero.Buffs.Any(b => b.Name == "Potion_Internal"), "and the healing buff has left");
     }
 
+    [Check("items-live-potion-drunk-as-the-last-one-expires-runs-its-full-window")]
+    public static void PotionDrunkAsTheLastOneExpiresRunsItsFullWindow()
+    {
+        // Batch 703 (community report, 7 November 2026: "Consuming a pot right as one expires just makes it disapear"). The second
+        // potion is drunk one step before the first one's 20 s window ends, in the step it ends, and one step after. Either way
+        // the potion is used up and its window runs its whole 20 s: Spells/RegenerationPotion.luaobj stacks it onto the live row
+        // (BUFF_STACKS_AND_CONTINUE) and the row's OnBuffDeactivate re-adds CharVars.countHealthPotion - 1 stacks for 20 s, or
+        // TargetExecute adds a fresh row when none is left; Potion_Internal heals 10 a second while a RegenerationPotion row is up
+        // (5 mana for FlaskOfCrystalWater). The lost potion was TargetExecute's count read before its own adds had landed (batch 703).
+        foreach (var (item, name) in new[] { (2003, "RegenerationPotion"), (2004, "FlaskOfCrystalWater") })
+        foreach (var stepsLeft in new[] { 2, 1, 0 })
+        {
+            var m = new Match(); var hero = m.Hero(0);
+            hero.Inventory = [new(item, count: 5), null, null, null, null, null];
+            hero.MaxHealth = 5000; hero.Health = 500; hero.Mana = 10;
+            double Restored() => item == 2003 ? hero.Health : hero.Mana;
+            var label = $"{name}, {stepsLeft} steps left";
+            hero.ItemCooldowns[0] = 0; TestAssert.True(m.Cast(4, hero), $"{label}: the first potion is drunk");
+            BuffState? Row() => hero.Buffs.FirstOrDefault(b => b.Name == name);
+            while (Row() is { } row && row.ExpiresAt > stepsLeft * 0.25 + 1e-9) m.Runtime.Tick(0.25);
+            TestAssert.True(stepsLeft == 0 ? Row() is null : Row() is not null, $"{label}: the first window is where it should be");
+            var count = hero.Inventory[0]!.Count;
+            hero.ItemCooldowns[0] = 0; TestAssert.True(m.Cast(4, hero), $"{label}: the second potion is drunk");
+            TestAssert.Equal(count - 1, hero.Inventory[0]!.Count, $"{label}: the second potion is used up");
+            var before = Restored();
+            for (var i = 0; i < 78; i++) m.Runtime.Tick(0.25); // 19.5 s
+            TestAssert.True(Row() is not null, $"{label}: the second potion's window is still up 19.5 s later");
+            TestAssert.True(hero.Buffs.Any(b => b.Name == "Potion_Internal"), $"{label}: and so is Potion_Internal");
+            var perSecond = item == 2003 ? 10.0 : 5.0;
+            TestAssert.True(Restored() - before >= 18 * perSecond, $"{label}: Potion_Internal restored {perSecond} a second ({Restored() - before:0.0})");
+            for (var i = 0; i < 8; i++) m.Runtime.Tick(0.25); // 21.5 s
+            TestAssert.True(Row() is null, $"{label}: one potion is one window");
+        }
+    }
+
     [Check("polish.ionic-spark-counter-counts-every-hit-and-overshoots-on-structures")]
     public static void IonicSparkCounterOvershootsOnAStructureHit()
     {

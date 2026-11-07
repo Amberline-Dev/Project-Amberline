@@ -274,11 +274,16 @@ internal sealed class BbSpellHost : IBbHost
     // IBbBuffHost
     // ------------------------------------------------------------------------------------------------------------
 
-    public bool HasBuffOfType(object? unit, double? buffType) =>
-        buffType is { } type && UnitOrSelf(unit).Buffs.Any(buff => buff.Type == BbBuffRuntime.ServerBuffType(type));
+    // The buff-table reads land the running hook's held adds first (BbBuffRuntime.LandHeldAdds, batch 703).
+    public bool HasBuffOfType(object? unit, double? buffType)
+    {
+        Buffs.LandHeldAdds();
+        return buffType is { } type && UnitOrSelf(unit).Buffs.Any(buff => buff.Type == BbBuffRuntime.ServerBuffType(type));
+    }
 
     public double SpellBuffCount(object? unit, string? buffName, object? caster)
     {
+        Buffs.LandHeldAdds();
         var casterId = UnitOrNull(caster)?.NetId;
         var entity = UnitOrSelf(unit);
         double count = entity.Buffs
@@ -323,12 +328,14 @@ internal sealed class BbSpellHost : IBbHost
     public void SpellBuffRemove(object? target, string? buffName, object? attacker)
     {
         NoProbe();
+        Buffs.LandHeldAdds();
         Buffs.Remove(UnitOrSelf(target), buffName, UnitOrNull(attacker));
     }
 
     public void SpellBuffRemoveStacks(object? target, string? buffName, object? attacker, double count)
     {
         NoProbe();
+        Buffs.LandHeldAdds();
         Buffs.RemoveStacks(UnitOrSelf(target), buffName, UnitOrNull(attacker), (int)Math.Ceiling(Math.Min(count, 1000.0)));
     }
 

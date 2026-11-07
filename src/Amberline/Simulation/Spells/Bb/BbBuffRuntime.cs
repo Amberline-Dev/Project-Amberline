@@ -717,6 +717,8 @@ internal sealed class BbBuffRuntime
         var effects = frame.HeldEffects;
         var markers = frame.HeldMarkers;
         if (held is not { Count: > 0 } && effects is not { Count: > 0 } && markers is not { Count: > 0 }) return;
+        // A run can place its held work in parts (LandHeldAdds): a part that was declined keeps the run declined.
+        var deniedEarlier = frame.GroupDenied;
         frame.HeldAdds = null;
         frame.HeldEffects = null;
         frame.HeldMarkers = null;
@@ -771,7 +773,7 @@ internal sealed class BbBuffRuntime
             // a single add takes after its own activation (Add below), so a hook gated on a sibling of the same cast sees it.
             foreach (var state in landed)
                 if (_instances.TryGetValue(state, out var placed)) Resample(placed);
-            frame.GroupDenied = denied;
+            frame.GroupDenied = deniedEarlier || denied;
             if (markers is not null)
                 foreach (var marker in markers)
                     if (!skipped.Contains(marker.Target))
@@ -780,6 +782,22 @@ internal sealed class BbBuffRuntime
             foreach (var create in effects) create();
         }
         finally { frame.CommittingAdds = false; }
+    }
+
+    /// <summary>
+    /// Batch 703: the running hook's held adds land before a block of the same run reads or changes the buff table (a buff count,
+    /// a has-buff test, a removal, a duration read; see <see cref="BbSpellHost.SpellBuffCount"/> and <c>BbNativeHandlers.Execute</c>).
+    /// <c>BBSpellBuffAdd</c> places its buff when the block runs, so the script's next block sees it: Spells/RegenerationPotion.luaobj's
+    /// TargetExecute adds its stack and Potion_Internal and then stores <c>BBGetBuffCountFromAll</c> in CharVars.countHealthPotion, the count
+    /// its OnBuffDeactivate re-adds the queued potions from (>= 2). With the adds held to the end of the run the count was the one before the
+    /// drink, so a potion drunk less than a second (Potion_Internal's recount period) before the running one ended was used up and lost
+    /// (community report, 7 November 2026). The group admission stays: what the run adds before the read is admitted as one group,
+    /// what it adds after it as the next. Reconstruction: only the run's own adds are placed, not those an outer run still holds.
+    /// ponytail: the buff natives only; a stat read (BBGetStat) after a held add still sees the stats without it.
+    /// </summary>
+    internal void LandHeldAdds()
+    {
+        if (_host.HasFrame) CommitProcAdds(_host.Frame);
     }
 
     /// <summary>

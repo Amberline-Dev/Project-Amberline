@@ -46,7 +46,10 @@ public sealed record MinionStatsSnapshot(
     float CurrentMana = 0.0f,
     float MaxMana = 0.0f,
     float ParRegen = 0.0f,
-    uint TargetableToTeam = 1);
+    uint TargetableToTeam = 1,
+    // mHP (LOCAL1 bit 0); null writes Hp, the maximum (mMaxHP, bit 2), for a unit at full health. Batch 701: a block for an injured unit
+    // that wrote its maximum there drew the client's bar full (Tormented Soil's shred on a minion).
+    float? CurrentHp = null);
 
 public sealed record TurretStatsSnapshot(
     float Hp,
@@ -511,7 +514,7 @@ public static class CombatPackets
         writer.Write((byte)0xCC);
         writer.Write(0u);
         WriteReplicationPrefix(writer, syncId, netId, 0x0A, 0x1FFFFF);
-        writer.Write(stats.Hp);
+        writer.Write(stats.CurrentHp ?? stats.Hp);
         writer.Write(stats.CurrentMana);
         writer.Write(stats.Hp);
         writer.Write(stats.MaxMana);
@@ -558,8 +561,7 @@ public static class CombatPackets
 
     /// <summary>
     /// The narrow combat block of a minion whose script changed a combat status: ActionState (map 1 property bit 4) with MagicImmune,
-    /// Invulnerable and Targetable (bits 5 to 7) in one block. No HP is written, so an injured unit keeps its current HP (a full
-    /// <see cref="MinionStats"/> block writes its max HP into both HP slots).
+    /// Invulnerable and Targetable (bits 5 to 7) in one block. No HP is written.
     /// Reconstruction (batch 359): the retail server's block for these flags is not recovered; the bits follow the minion registration order
     /// (map 1, property bits 4 to 7), the same order the full block uses.
     /// </summary>

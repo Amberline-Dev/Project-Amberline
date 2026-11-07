@@ -9,6 +9,23 @@ namespace Amberline.Data;
 public static class SceneMesh
 {
     /// <summary>
+    /// The mesh's own name (the header's 128-byte field after the magic and version): the name the client gives the scene object and
+    /// hashes into its network id (ObjectManager_RegisterNetworkWorld). It is not
+    /// always the file's spelling: Map4's ChaosShop01.SCB holds <c>chaosShop01</c> (batch 704).
+    /// </summary>
+    public static string Name(string path)
+    {
+        var header = new byte[140];
+        using (var file = File.OpenRead(path))
+            file.ReadExactly(header);
+        if (Encoding.ASCII.GetString(header, 0, 8) != "r3d2Mesh")
+            throw new InvalidDataException($"{path} is not an r3d2Mesh file");
+        var name = header.AsSpan(12);
+        var end = name.IndexOf((byte)0);
+        return Encoding.ASCII.GetString(end < 0 ? name : name[..end]);
+    }
+
+    /// <summary>
     /// The CentralPoint of a static mesh (r3d2Mesh .SCB, versions 2.2 and 3.2): after the 152-byte header (name, counts, flags), the
     /// 24-byte bounding box, the optional 4-byte vertex type of 3.2, the vertices (and per-vertex colours when the type is 1), three floats.
     /// </summary>

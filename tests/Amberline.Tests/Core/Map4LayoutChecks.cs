@@ -1,8 +1,10 @@
 using Amberline.Core;
 using Amberline.Data;
 using Amberline.Network.Protocol;
+using Amberline.Network.Sessions;
 using Amberline.Simulation.Ai;
 using Amberline.Simulation.Combat;
+using Amberline.Simulation.Items;
 using Amberline.Simulation.Neutral;
 
 namespace Amberline.Tests;
@@ -97,13 +99,15 @@ public static class Map4LayoutChecks
         TestAssert.Near(352.7778, layout.StructureStamps[0].Radius, 1e-9, "HQ_T1 stamp radius");
         TestAssert.Near(185.4683, layout.StructureStamps[3].Radius, 1e-9, "Barracks_T1_R1 stamp radius");
 
-        // Spawns and shops: __Spawn_T1/T2, and the shops under the scene's own spelling (capital O and C on Map4).
+        // Spawns and shops: __Spawn_T1/T2, and the shops under the names their meshes carry. Batch 704: the files are OrderShop01.SCB and
+        // ChaosShop01.SCB, but the chaos mesh (and room.dsc) names itself chaosShop01, the client's object name and netid; the batch-545
+        // expectation of the file's spelling, ChaosShop01, left the purple shop unclickable.
         Near(27.8138, 6360.8398, layout.TeamSpawn(Team.Order), "__Spawn_T1");
         Near(13388.1895, 6397.7666, layout.TeamSpawn(Team.Chaos), "__Spawn_T2");
         TestAssert.Equal("OrderShop01", layout.ShopName(Team.Order), "Map4's order shop mesh name");
-        TestAssert.Equal("ChaosShop01", layout.ShopName(Team.Chaos), "Map4's chaos shop mesh name");
+        TestAssert.Equal("chaosShop01", layout.ShopName(Team.Chaos), "Map4's chaos shop mesh name");
         Near(-216.8174, 7039.1987, layout.ShopPosition(Team.Order), "OrderShop01");
-        Near(13585.3057, 7066.0640, layout.ShopPosition(Team.Chaos), "ChaosShop01");
+        Near(13585.3057, 7066.0640, layout.ShopPosition(Team.Chaos), "chaosShop01");
 
         // H7: GetTurret answers from the map's own rows. HQ_TOWER2 (4) is T?_C_01 on Map4, nothing is HQ_TOWER1 (5) or a centre tower.
         var rows = MapScriptData.TurretsFor(map4);
@@ -300,6 +304,82 @@ public static class Map4LayoutChecks
             if (rows.Any(row => row.Name == "Worm"))
                 TestAssert.True(rift.MembersForCamp(12)[0].Home.Y < -70.0, $"map {mapId}: Baron Nashor stands on his pit floor, not 96.6 above it");
         }
+    }
+
+    /// <summary>
+    /// Batch 704 (community report, 7 November 2026: the red side shopkeeper on Twisted Treeline cannot be clicked). The client names a
+    /// scene object after its mesh's own name (GameObject load) and keys it by CRC32(name) | 0xFF000000
+    /// (ObjectManager_RegisterNetworkWorld); the shop is pickable only once a C2 for that id marked it entered (obj_Shop ->
+    ///). Map4 ships Scene/ChaosShop01.SCB, but the mesh inside is named <c>chaosShop01</c> (so is its room.dsc line): the purple
+    /// player stands in its shop's range at the fountain and the map-ready burst reveals 0xFFA6170E, CRC32("chaosShop01"), at the shop.
+    /// </summary>
+    [Check("map4.purple-shop-is-revealed-under-the-client-name", Serial = true)] // Serial: the match reads the process's map.
+    public static void TwistedTreelinePurpleShopIsRevealedUnderTheClientName()
+    {
+        var map4 = GameDataPaths.Default.ForMap(GameMaps.TwistedTreeline);
+        GameData.ConfigureDefault(map4);
+        try
+        {
+            var roster = new List<SessionParticipantDefinition>
+            {
+                new(1, 0, "Order", "Annie", Team.Order), new(2, 1, "Chaos", "Annie", Team.Chaos),
+            };
+            using var runtime = MatchRuntime.CreateProduction(NavigationGrid.Load(map4), GameData.Default,
+                readySettleSeconds: 0.0, roster: roster, mapId: GameMaps.TwistedTreeline);
+            runtime.World.Clock.SetVirtual(0.0);
+            runtime.Session.CreateWorld();
+            for (var id = 1; id <= roster.Count; id++)
+            {
+                TestAssert.True(runtime.Session.Authenticate(id, runtime.Session.BuildKeyCheck((ulong)id)) is not null, "authenticate");
+                _ = runtime.Session.Spawn(id);
+                TestAssert.True(runtime.Session.MarkReady(id), "ready");
+            }
+            var purple = runtime.Session.Participants.Single(participant => participant.Team == Team.Chaos).Hero!;
+            var shop = new ShopService(runtime.World, new ItemCatalog(map4), runtime.HeroStats,
+                new DominionMapLeftoverChecks.NullShopTransport());
+            TestAssert.True(shop.InShopRange(purple), "the purple champion at its fountain is in its shop's range");
+
+            const uint purpleShop = 0xFFA6170E; // CRC32("chaosShop01") | 0xFF000000 (zlib), the id the client gives Map4's purple shop
+            TestAssert.Equal("chaosShop01", MapDefinitions.ShopName(Team.Chaos), "Map4's purple shop is named as its mesh names itself");
+            TestAssert.Equal(purpleShop, MapDefinitions.BuildingNetId(MapDefinitions.ShopName(Team.Chaos)), "the purple shop's netid");
+            var reveals = runtime.Session.BuildMapReadyPackets(2).Select(packet => packet.Plaintext.ToArray())
+                .Where(bytes => bytes[0] == VisionPackets.EnterVisibilityOpcode && BitConverter.ToUInt32(bytes, 1) == purpleShop).ToArray();
+            TestAssert.Equal(1, reveals.Length, "the purple player's map-ready burst reveals the purple shop under the client's id once");
+            var at = MapDefinitions.ShopPosition(Team.Chaos);
+            TestAssert.True(ContainsFloat(reveals[0], (float)at.X) && ContainsFloat(reveals[0], (float)at.Z), "the reveal is at the purple shop");
+        }
+        finally
+        {
+            GameData.ConfigureDefault(GameDataPaths.Default);
+        }
+    }
+
+    /// <summary>
+    /// Batch 704: on every shipped map, each building the server keys by the CRC of its name (the shops, nexuses and inhibitors,
+    /// <see cref="MapDefinitions.BuildingNetId"/>) carries the client's exact spelling: the line of the map's Scene/room.dsc, the scene list
+    /// the client loads (Map4's purple shop is <c>chaosShop01</c> there, its file ChaosShop01.SCB).
+    /// </summary>
+    [Check("map4.building-names-are-the-client-spelling-on-every-map")]
+    public static void BuildingNamesAreTheClientSpellingOnEveryMap()
+    {
+        foreach (var mapId in new[] { GameMaps.Normal, GameMaps.Harrowing, GameMaps.Tutorial, GameMaps.TwistedTreeline, GameMaps.CrystalScar })
+        {
+            var paths = GameDataPaths.Default.ForMap(mapId);
+            var listed = File.ReadAllLines(paths.Under("LEVELS", paths.MapName, "Scene", "room.dsc"))
+                .Where(line => line.Trim().Length > 0).Select(line => Path.GetFileNameWithoutExtension(line.Trim().Split(' ')[0]))
+                .ToHashSet(StringComparer.Ordinal);
+            var layout = MapLayout.For(paths);
+            foreach (var name in new[] { layout.ShopName(Team.Order), layout.ShopName(Team.Chaos) }
+                         .Concat(layout.Nexuses.Select(nexus => nexus.Name)).Concat(layout.Inhibitors.Select(inhibitor => inhibitor.Name)))
+                TestAssert.True(listed.Contains(name), $"map {mapId}: {name} is the client's spelling (room.dsc)");
+        }
+    }
+
+    private static bool ContainsFloat(byte[] bytes, float value)
+    {
+        for (var offset = 0; offset + 4 <= bytes.Length; offset++)
+            if (BitConverter.ToSingle(bytes, offset) == value) return true;
+        return false;
     }
 
     private static void Near(double x, double z, Position2 actual, string label, double tolerance = 1e-3)

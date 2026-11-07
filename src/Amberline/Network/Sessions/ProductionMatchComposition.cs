@@ -224,6 +224,8 @@ internal static class ProductionMatchComposition
         buffs.AiScripts = combat.AiHost;
         minions.DecisionObserver = collisionTrace.NoteDecision;
         combat.TargetLost = minions.NotifyTargetLost;
+        // Batch 702: a turret also takes what its team sees (CombatService.TurretSeesTarget), the sight the minions above acquire on.
+        combat.TeamSight = TeamSight;
         // Map1's shipped LevelScript.luaobj owns the wave schedule: what a wave is made of, when
         // the next one is due and how its members are staggered. Its failures go to the session
         // log the way the BuildingBlocks spells and Turret.luaobj already do.

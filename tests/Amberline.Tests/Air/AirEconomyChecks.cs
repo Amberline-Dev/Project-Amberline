@@ -254,7 +254,8 @@ public static class AirEconomyChecks
                 reopened.GrantCurrency(maxed.Id, 0, 2_600, Guid.NewGuid());
                 TestAssert.Throws<InvalidOperationException>(() => reopened.Purchase(maxed.Id,
                     PlatformStoreCatalog.RunePageBundleId, "RP", Guid.NewGuid()));
-                TestAssert.Equal(2, PlatformAccounts.RunePagesFor(reopened.Get(maxed.Id)).Length);
+                // Batch 706: a full account carries every rune page up to the host's cap (twelve in this root), not two.
+                TestAssert.Equal(12, PlatformAccounts.RunePagesFor(reopened.Get(maxed.Id)).Length);
             }
 
             // A sparse legacy account proves that allocation uses the first holes, while the

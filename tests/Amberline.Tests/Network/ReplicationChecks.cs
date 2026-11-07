@@ -868,8 +868,11 @@ public static class ReplicationChecks
             packet.Plaintext.Length == 111 && packet.Plaintext.Span[0] == 0xCC);
         TestAssert.Equal(111, initial.Plaintext.Length,
             "first minion reveal uses the complete creation stats template");
-        TestAssert.Equal(500.0f, BitConverter.ToSingle(initial.Plaintext.Span[19..23]),
-            "creation CC current HP uses the max-health template");
+        // Batch 701: the creation block's mHP is the unit's own health, as retail's first replication flush sends every field's value
+        // ("Delta replication"). It was the maximum, which every mid-life push of the same
+        // block reused and drew an injured unit's bar full (Tormented Soil's shred on a minion).
+        TestAssert.Equal(100.0f, BitConverter.ToSingle(initial.Plaintext.Span[19..23]),
+            "creation CC current HP is the injured value");
         TestAssert.Equal(500.0f, BitConverter.ToSingle(initial.Plaintext.Span[27..31]),
             "creation CC max HP uses the max-health template");
         var firstRevealIndex = transport.Packets.ToList().FindIndex(packet =>

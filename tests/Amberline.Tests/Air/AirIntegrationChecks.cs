@@ -36,7 +36,7 @@ public static class AirIntegrationChecks
         TestAssert.Equal(true, decoded["clientHeartBeatEnabled"]);
         var all = (AsObject)decoded["allSummonerData"];
         var book = (AsObject)all["spellBook"];
-        TestAssert.Equal(2, ((ArrayCollection)book["spellBookPages"]).Count);
+        TestAssert.Equal(10, ((ArrayCollection)book["spellBookPages"]).Count); // Batch 706: a full account carries every page.
         var page = (AsObject)((ArrayCollection)book["spellBookPages"])[0];
         var slots = ((ArrayCollection)page["slotEntries"]).Cast<AsObject>().ToDictionary(x => (int)x["runeSlotId"], x => (int)x["runeId"]);
         TestAssert.Equal(yellow, slots[10]);

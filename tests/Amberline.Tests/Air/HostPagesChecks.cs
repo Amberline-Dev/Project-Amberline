@@ -385,7 +385,10 @@ public static class HostPagesChecks
         Is(levels[0] == 1 && levels.Zip(levels.Skip(1)).All(pair => pair.Second <= pair.First + 1), "headings in order: " + string.Join(",", levels));
 
         // Landmarks and the skip link, first on the page.
-        Is(Count("header") == 1 && Count("main") == 1 && Count("footer") == 1 && Count("nav") <= 1, "header, main, footer once each");
+        // Owner, 7 November 2026: the sign-up pages (their own stylesheet) have the Amberline wordmark above the panel and no footer.
+        Is(style is null
+            ? Count("header") == 1 && Count("main") == 1 && Count("footer") == 1 && Count("nav") <= 1
+            : Count("header") == 1 && Count("main") == 1 && Count("footer") == 0 && Count("nav") == 0, "header, main, footer once each (sign-up: no footer)");
         Is(tags.First(tag => tag.Name == "a").Attributes == " class=skip href=#main" && page.Contains("<main id=main tabindex=-1>", StringComparison.Ordinal),
             "a skip link to the main content comes first");
         Is(page.Contains($"<link rel=stylesheet href=\"{style ?? HostPages.StyleHref}\">", StringComparison.Ordinal), "the stylesheet file, at its versioned address");

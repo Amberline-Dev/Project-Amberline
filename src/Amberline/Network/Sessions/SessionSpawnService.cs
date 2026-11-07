@@ -504,7 +504,8 @@ public sealed class SessionSpawnService
             ClassicHeroStatsSnapshot.PublicValues(hero, schema));
     }
 
-    // The scene's own shop names (orderShop01 on Summoner's Rift, OrderShop01 on Map4: MapLayout.FromScene, whose netid note applies).
+    // The shops under their meshes' own names, the client's netids (orderShop01 on Summoner's Rift; OrderShop01 and chaosShop01 on Map4:
+    // MapLayout.FromScene). The C2 marks the client's obj_Shop entered, which its picking needs (batch 704: a wrong id left it unclickable).
     private static IReadOnlyList<PlaintextPacket> BuildShopVisibility() =>
         [.. new[] { Team.Order, Team.Chaos }.Select(team => VisionPackets.EnterVisibilityClient(
             MapDefinitions.BuildingNetId(MapDefinitions.ShopName(team)), MapDefinitions.ShopName(team), 0, 0.0f, 0.0f,

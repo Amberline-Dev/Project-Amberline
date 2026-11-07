@@ -93,7 +93,11 @@ public sealed record LevelWaveInfo(
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
 
-    /// <summary>The wave's members in the order the script lists them: melee, archer, caster, super.</summary>
+    /// <summary>
+    /// The wave's members in spawn order: melee, archer (the ranged minion, our Caster), caster (the cannon, our Siege), super.
+    /// The script's table carries counts only; the order is the stock 1.0.0.126 barracks pick (the client,
+    /// The client, lines 876306-876323). Kept at the October 2011 order by batch 705 (check minions.wave-spawn-order-2011).
+    /// </summary>
     public IReadOnlyList<MinionType> Members
     {
         get

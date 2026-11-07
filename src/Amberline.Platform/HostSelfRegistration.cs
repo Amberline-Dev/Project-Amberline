@@ -69,7 +69,7 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
         app.MapGet(PlayFilePath, (HttpContext context) => !Serves(context) ? Results.NotFound()
             : Saved() is { PublicHost: { } host } saved && HostInvite.PlayFile(loop, host, remotePort, certificateSha256, Name(saved)) is { } file ? file
             : HostPages.PublicPage("<h1>The Play file is not ready</h1><p>Ask the host for it.</p>", StatusCodes.Status404NotFound));
-        app.MapGet(HostPages.PublicStylePath, (HttpContext context) => Serves(context) ? HostPages.Stylesheet(context) : Results.NotFound());
+        app.MapGet(HostPages.PublicStylePath, (HttpContext context) => Serves(context) ? HostPages.PublicStylesheet(context) : Results.NotFound());
     }
 
     /// <summary>GET <c>/register</c> on the friends' port.</summary>
@@ -119,7 +119,7 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
         (string? Text, string? Field)[] shown = [.. problems.Select(HostPages.LoginProblem)];
         string? At(string id) => shown.FirstOrDefault(problem => problem.Field == id).Text;
         return $$"""
-            <h1>Create your login for {{WebUtility.HtmlEncode(Name(Saved()))}}</h1>
+            <h1>Create your login</h1>
             {{HostPages.Errors(shown)}}
             <form method=post action={{PagePath}} novalidate>{{token}}
             {{HostPages.Field("username", "Username", "3 to 24 letters (a to z), digits or _.", At("username"),
@@ -130,6 +130,7 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
                 "type=password required minlength=10 maxlength=128 autocomplete=new-password")}}
             {{HostSteps.StartChoice("Start at", mode, At("mode"))}}
             <div class=actions><button type=submit>Create your login</button></div></form>
+            <p class=already>Already have a login?</p><p><a class=button href={{PlayFilePath}} download>Download the Play file</a></p>
             """;
     }
 

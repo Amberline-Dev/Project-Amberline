@@ -26,8 +26,8 @@ public static class HostSelfRegistrationChecks
     private const string Switch = "/host/settings/register";
     private const string Warning = "Their browser warns that the connection is not private. They choose Advanced, then Continue.";
     private static readonly string[] SignUpPaths = ["/register", "/register/Play.cmd", "/register/style.css"];
-    /// <summary>The sign-up page's stylesheet: the host pages' sheet at an address of the sign-up's own, with the same version.</summary>
-    private static readonly string Style = "/register/style.css" + HostPages.StyleHref[HostPages.StylePath.Length..];
+    /// <summary>The sign-up pages' own stylesheet (batch 706): the AIR client's look, at the address the sign-up pages link.</summary>
+    private static readonly string Style = HostPages.PublicStyleHref;
 
     [Check("server.host-self-registration", TimeoutSeconds = 300)]
     public static void PeopleRegisterThemselvesOnTheFriendsPortOnlyWhileTheSwitchIsOn() => SelfRegistrationAsync().GetAwaiter().GetResult();
@@ -56,6 +56,7 @@ public static class HostSelfRegistrationChecks
             // Off, as on every existing install: no sign-up on the friends' port, the switch off in Settings, no link on Invite.
             await NotFoundAsync(person, "with the switch off");
             var settings = await browser.GetStringAsync(HostSettingsPage.PagePath);
+            TestAssert.True(settings.Contains($"href=\"{HostPages.StyleHref}\"", StringComparison.Ordinal), "the host pages keep the host stylesheet");
             TestAssert.True(settings.Contains("Let people register themselves", StringComparison.Ordinal) &&
                 !settings.Contains("name=on value=on checked", StringComparison.Ordinal) && !settings.Contains(link, StringComparison.Ordinal), settings);
             TestAssert.False((await browser.GetStringAsync(HostInvite.InvitePath)).Contains(link, StringComparison.Ordinal), "Invite has no link while it is off");
@@ -81,15 +82,21 @@ public static class HostSelfRegistrationChecks
                 TestAssert.Equal(HostPages.Policy, policy, "the host pages' policy: script-src 'self', nothing inline");
                 Public(form, "GET /register", policy);
             }
-            TestAssert.True(form.Contains("<h1>Create your login for Test Server</h1>", StringComparison.Ordinal) &&
+            TestAssert.True(form.Contains("<h1>Create your login</h1>", StringComparison.Ordinal) &&
                 form.Contains("name=username", StringComparison.Ordinal) && form.Contains("name=summoner", StringComparison.Ordinal) &&
                 form.Contains("name=password type=password", StringComparison.Ordinal) && form.Contains("name=mode value=maxed checked", StringComparison.Ordinal) &&
-                form.Contains("name=mode value=fresh>", StringComparison.Ordinal) && form.Contains("<form method=post action=/register novalidate>", StringComparison.Ordinal), form);
+                form.Contains("name=mode value=fresh>", StringComparison.Ordinal) && form.Contains("<form method=post action=/register novalidate>", StringComparison.Ordinal) &&
+                form.Contains($"href=\"{HostPages.PublicStyleHref}\"", StringComparison.Ordinal) &&
+                form.Contains("<p class=already>Already have a login?</p><p><a class=button href=/register/Play.cmd download>Download the Play file</a></p>", StringComparison.Ordinal) &&
+                // Owner, 7 November 2026: the Amberline wordmark above the panel, no footer.
+                form.Contains("<header><p class=wordmark>Amberline</p></header>", StringComparison.Ordinal) && !form.Contains("<footer>", StringComparison.Ordinal), form);
             using (var sheet = await person.GetAsync(Style))
             {
                 TestAssert.Equal(HttpStatusCode.OK, sheet.StatusCode, "the sign-up page's stylesheet");
                 TestAssert.Equal("text/css", sheet.Content.Headers.ContentType?.MediaType);
-                TestAssert.Equal(await browser.GetStringAsync(HostPages.StyleHref), await sheet.Content.ReadAsStringAsync(), "the host pages' own stylesheet");
+                var own = await sheet.Content.ReadAsStringAsync();
+                TestAssert.False(own == await browser.GetStringAsync(HostPages.StyleHref), "the sign-up pages have their own stylesheet");
+                TestAssert.True(own.Contains("color-scheme:dark", StringComparison.Ordinal), "the sign-up stylesheet is the AIR look");
             }
 
             // Every problem at once (batch 650's list), each beside its field; a name already taken; an expired page. Never the password back.
@@ -114,7 +121,7 @@ public static class HostSelfRegistrationChecks
                 ("username", "Self1"), ("summoner", ""), ("password", Password), ("mode", "fresh"));
             TestAssert.True(ready.Contains("<h1>Your login is ready</h1>", StringComparison.Ordinal) && ready.Contains("<b>self1</b>", StringComparison.Ordinal) &&
                 ready.Contains("<a class=button href=/register/Play.cmd download>Download the Play file</a>", StringComparison.Ordinal) &&
-                !ready.Contains(Password, StringComparison.Ordinal), ready);
+                ready.Contains($"href=\"{HostPages.PublicStyleHref}\"", StringComparison.Ordinal) && !ready.Contains(Password, StringComparison.Ordinal), ready);
             Public(ready, "POST /register (ready)", HostPages.Policy);
             using (var login = JsonDocument.Parse(await LoginAsync(browser, "self1", Password, HttpStatusCode.OK)))
                 TestAssert.Equal("Self1", login.RootElement.GetProperty("summoner").GetString(), "an empty summoner name is the username as typed");

@@ -212,6 +212,119 @@ public static partial class ChampionLiveRegressionChecks
         }
     }
 
+    /// <summary>
+    /// Batch 701 (community report, 7 November 2026: "While using Morgana's W on enemy non-champion units, they healthbar fills up to full but only
+    /// visually"). <c>TormentedSoilDebuff</c>'s OnBuffActivate and OnBuffDeactivate shred the target with <c>BBIncPermanentStat
+    /// IncPermanentFlatSpellBlockMod</c>; on a unit that is not a hero the engine pushes that unit's full stat block (BbSpellHost.PermanentOnPet), and the
+    /// full minion block wrote the maximum health into the current-health slot (LOCAL1 bit 0) as well, so every stack drew a lane minion's and a camp
+    /// monster's bar full until the next damage block. Each client's bar is read here as the stock client keeps it: mHP and mMaxHP from every 0xCC block
+    /// its sync gate lets through (LOCAL1 bits 0 and 2 of a minion, MAP bits 0 and 2 of a hero) and from EnterLocalVisibility (0xB5).
+    /// </summary>
+    [Check("scripting.bb-morgana-tormented-soil-keeps-a-non-champions-health-bar-at-its-health")]
+    public static void MorganaTormentedSoilKeepsHealthBars()
+    {
+        foreach (var team in new[] { Team.Order, Team.Chaos })
+        {
+            using var match = new Match("Morgana", team);
+            var morgana = match.Hero(0);
+            var enemy = match.Hero(1);
+            MorganaLearn(morgana);
+            morgana.SpellRanks[1] = 1; // the least damage, so the injured minion lives through several stacks
+            morgana.Position = new Position2(7000, 7000);
+            enemy.Position = new Position2(7550, 7150);
+            var minion = match.Runtime.Waves!.SpawnFixture(enemy.Team, MinionType.Melee, 0, "C", 0, 0);
+            minion.Position = new Position2(7500, 7000);
+            var monster = match.Runtime.World.Register(new Entity(match.Runtime.World.Allocate(UnitType.Monster), EntityKind.Neutral,
+                UnitType.Monster, Team.Neutral, new Position2(7450, 6880)) { Name = "Wolf", Health = 1200, MaxHealth = 1200, Radius = 50 });
+            match.Runtime.Minions!.HaltAI(minion);
+            MorganaSettle(match, enemy);
+            minion.Position = new Position2(7500, 7000);
+            var units = new[] { minion, monster, enemy };
+            TestAssert.True(minion.Created && monster.Created, $"{team}: the minion and the monster are on the clients");
+            // Half their health off through the damage pipeline, so each client holds an injured bar.
+            foreach (var unit in units)
+                TestAssert.True(match.Runtime.Combat.ApplyHit(morgana.NetId, unit.NetId, unit.MaxHealth * 0.5, DamageType.True, DamageSourceKind.Spell),
+                    $"{team}: {unit.Name} took the opening hit");
+            match.Runtime.Delivery.Flush();
+            var heroes = match.Runtime.World.Entities.Values.Where(unit => unit.UnitType == UnitType.Hero).Select(unit => unit.NetId).ToHashSet();
+            var bars = match.Captures.Select(_ => new Dictionary<uint, (float Hp, float Max)>()).ToArray();
+            var synced = match.Captures.Select(_ => new Dictionary<(uint, int), uint>()).ToArray();
+            var read = new int[match.Captures.Count];
+            void Read()
+            {
+                for (var seat = 0; seat < match.Captures.Count; seat++)
+                {
+                    var packets = match.Captures[seat].Packets;
+                    for (; read[seat] < packets.Count; read[seat]++) MorganaReadBar(packets[read[seat]].Plaintext.Span, heroes, bars[seat], synced[seat]);
+                }
+            }
+            Read();
+            var healthBefore = units.Select(unit => unit.Health).ToArray();
+            TestAssert.True(match.TryCastGround(0, 1, new Position2(7500, 7000)), $"{team}: Tormented Soil is accepted");
+            var stacks = new int[units.Length];
+            for (var tick = 0; tick < 30 * 7; tick++)
+            {
+                minion.Position = new Position2(7500, 7000); // the lane minion walks on; it is held in the zone
+                match.Runtime.Tick(1.0 / 30.0);
+                Read();
+                for (var index = 0; index < units.Length; index++)
+                {
+                    var unit = units[index];
+                    stacks[index] = Math.Max(stacks[index], MorganaStacks(unit, "TormentedSoilDebuff"));
+                    for (var seat = 0; seat < bars.Length; seat++)
+                        if (bars[seat].TryGetValue(unit.NetId, out var bar))
+                            TestAssert.True(bar.Hp <= unit.Health + 0.02 * unit.MaxHealth,
+                                $"{team}: seat {seat}'s bar of {unit.Name} at {tick} ticks holds {bar.Hp} of {bar.Max} while the unit has {unit.Health:0.0} of {unit.MaxHealth:0.0}");
+                }
+            }
+            for (var index = 0; index < units.Length; index++)
+            {
+                var unit = units[index];
+                TestAssert.True(stacks[index] >= 2, $"{team}: {unit.Name} took the shred more than once ({stacks[index]} stacks)");
+                TestAssert.True(unit.Health < healthBefore[index] - 20.0, $"{team}: {unit.Name} took the zone's damage");
+                for (var seat = 0; seat < bars.Length; seat++)
+                    if (bars[seat].TryGetValue(unit.NetId, out var bar))
+                        TestAssert.Near(unit.MaxHealth, bar.Max, 1.0, $"{team}: seat {seat}'s bar of {unit.Name} keeps the maximum");
+            }
+            TestAssert.True(bars.All(bar => bar.ContainsKey(minion.NetId) && bar.ContainsKey(monster.NetId)), $"{team}: both clients drew the minion and the monster");
+        }
+    }
+
+    // One packet's writes to the client's health bars (see MorganaTormentedSoilKeepsHealthBars): 0xB5 is opcode, net id, mMaxHP, mHP; a 0xCC block
+    // writes a registry only past the sync id the client stored for it.
+    private static void MorganaReadBar(ReadOnlySpan<byte> bytes, HashSet<uint> heroes, Dictionary<uint, (float Hp, float Max)> bars,
+        Dictionary<(uint, int), uint> synced)
+    {
+        if (bytes.Length >= 13 && bytes[0] == 0xB5)
+        {
+            bars[System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(bytes[1..])] =
+                (System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(bytes[9..]), System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(bytes[5..]));
+            return;
+        }
+        Span<uint> masks = stackalloc uint[5];
+        if (!CombatPackets.TryReadReplicationBlock(bytes, out var syncId, out var unit, masks)) return;
+        var health = heroes.Contains(unit) ? 3 : 1;
+        var offset = 15;
+        for (var map = 0; map < 5; map++)
+        {
+            if ((bytes[10] & (1 << map)) == 0) continue;
+            offset += 4;
+            var applies = map == health && (!synced.TryGetValue((unit, map), out var stored) || stored < syncId);
+            if (applies) synced[(unit, map)] = syncId;
+            for (var bit = 0; bit < 32; bit++)
+            {
+                if ((masks[map] & (1u << bit)) == 0) continue;
+                if (applies && bit is 0 or 2)
+                {
+                    var value = System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(bytes[offset..]);
+                    var bar = bars.TryGetValue(unit, out var held) ? held : (0f, 0f);
+                    bars[unit] = bit == 0 ? (value, bar.Item2) : (bar.Item1, value);
+                }
+                offset += 4;
+            }
+        }
+    }
+
     [Check("scripting.bb-morgana-black-shield-absorbs-magic-damage-only")]
     public static void MorganaBlackShieldAbsorbsMagic()
     {

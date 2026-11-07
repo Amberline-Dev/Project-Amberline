@@ -114,7 +114,10 @@ public static class MapDefinitions
     /// </summary>
     public static Position2 ShopPosition(Team team) => Layout.ShopPosition(team);
 
-    /// <summary>The team's shop object's name: its scene mesh's own spelling (<c>orderShop01</c> on Summoner's Rift, <c>OrderShop01</c> on Map4).</summary>
+    /// <summary>
+    /// The team's shop object's name: the name its scene mesh carries, the client's object name and netid (<c>orderShop01</c> on Summoner's
+    /// Rift; <c>OrderShop01</c> and <c>chaosShop01</c> on Map4, batch 704).
+    /// </summary>
     public static string ShopName(Team team) => Layout.ShopName(team);
 
     /// <summary>

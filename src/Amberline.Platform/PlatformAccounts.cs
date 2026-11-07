@@ -136,7 +136,8 @@ public sealed partial class PlatformAccounts : IDisposable
                 SummonerLevel: maxed ? 30 : 1);
             var account = new PlatformAccount(id, checked(1_000_000 + id), username, summoner,
                 Convert.ToHexString(salt), Convert.ToHexString(hash), loadout,
-                RunePages: SeedRunePages(loadout), Economy: maxed ? null :
+                // Batch 706: a full account gets every rune page up to the host's cap; an economy account starts with two.
+                RunePages: SeedRunePages(loadout, maxed ? EconomyRules.MaximumRunePages : 2), Economy: maxed ? null :
                     new PlatformEconomyData(false, 0, 0, 0, 1, [], [], new Dictionary<int, int>(), [], []));
             Save(_state with { NextId = checked(id + 1), Accounts = [.. _state.Accounts, account] });
             return account;
@@ -194,12 +195,12 @@ public sealed partial class PlatformAccounts : IDisposable
 
     public PlatformAccount Get(long id)
     {
-        lock (_gate) return _state.Accounts.FirstOrDefault(a => a.Id == id) ?? throw new ArgumentException("Account does not exist.");
+        lock (_gate) return Completed(_state.Accounts.FirstOrDefault(a => a.Id == id)) ?? throw new ArgumentException("Account does not exist.");
     }
 
     public PlatformAccount? Find(long id)
     {
-        lock (_gate) return _state.Accounts.FirstOrDefault(a => a.Id == id);
+        lock (_gate) return Completed(_state.Accounts.FirstOrDefault(a => a.Id == id));
     }
 
     /// <summary>An account with no games, for stats reads of an id that does not exist; never stored.</summary>
@@ -207,12 +208,12 @@ public sealed partial class PlatformAccounts : IDisposable
 
     public PlatformAccount? FindSummoner(long id)
     {
-        lock (_gate) return _state.Accounts.FirstOrDefault(a => a.SummonerId == id);
+        lock (_gate) return Completed(_state.Accounts.FirstOrDefault(a => a.SummonerId == id));
     }
 
     public PlatformAccount? FindName(string name)
     {
-        lock (_gate) return _state.Accounts.FirstOrDefault(a => a.Summoner.Equals(name, StringComparison.OrdinalIgnoreCase));
+        lock (_gate) return Completed(_state.Accounts.FirstOrDefault(a => a.Summoner.Equals(name, StringComparison.OrdinalIgnoreCase)));
     }
 
     public PlatformAccount? FindInternalName(string name) => name.StartsWith("sum", StringComparison.Ordinal) &&
@@ -223,7 +224,7 @@ public sealed partial class PlatformAccounts : IDisposable
     {
         lock (_gate)
         {
-            var account = _state.Accounts.FirstOrDefault(a => a.Id == accountId)
+            var account = Completed(_state.Accounts.FirstOrDefault(a => a.Id == accountId))
                 ?? throw new ArgumentException("Account does not exist.", nameof(accountId));
             return RunePagesFor(account);
         }
@@ -258,7 +259,7 @@ public sealed partial class PlatformAccounts : IDisposable
     {
         lock (_gate)
         {
-            var account = _state.Accounts.FirstOrDefault(a => a.Id == id)
+            var account = Completed(_state.Accounts.FirstOrDefault(a => a.Id == id))
                 ?? throw new ArgumentException("Account does not exist.", nameof(id));
             if (loadout.SummonerLevel != account.Loadout.SummonerLevel)
                 throw new ArgumentException("The client cannot change the server-owned summoner level.", nameof(loadout));
@@ -439,17 +440,7 @@ public sealed partial class PlatformAccounts : IDisposable
                         .ToArray();
                     if (freePageIds.Length != PlatformStoreCatalog.RunePageBundleSize)
                         throw new InvalidOperationException("The account needs room for all seven rune pages.");
-                    var usedPageNames = pages.Select(page => page.Name)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    string NewPageName(int candidate)
-                    {
-                        var name = $"Page {candidate}";
-                        for (var suffix = 2; !usedPageNames.Add(name); suffix++)
-                            name = $"Page {candidate} ({suffix})";
-                        return name;
-                    }
-                    pages = [.. pages, .. freePageIds.Select(candidate =>
-                        new PlatformRunePage(candidate, NewPageName(candidate), false, [], now.UtcDateTime))];
+                    pages = [.. pages, .. NewRunePages(pages, freePageIds, now.UtcDateTime)];
                     break;
                 }
                 case "BOOST":
@@ -778,8 +769,41 @@ public sealed partial class PlatformAccounts : IDisposable
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)));
 
     private PlatformAccount RequireAccount(long accountId) =>
-        _state.Accounts.FirstOrDefault(account => account.Id == accountId)
+        Completed(_state.Accounts.FirstOrDefault(account => account.Id == accountId))
         ?? throw new ArgumentException("Account does not exist.", nameof(accountId));
+
+    /// <summary>
+    /// NOT RETAIL: the host's rule (owner, 7 November 2026, batch 706): a full account (no economy, or every regular rune unlocked) carries every rune page up to
+    /// the host's cap. One stored with fewer gets the missing empty pages, on ids not in use, the first time it is read or saved, and
+    /// the store keeps them. Its own pages stay as they are, and an account above a lowered cap keeps its pages. An economy account
+    /// is unchanged.
+    /// </summary>
+    private PlatformAccount? Completed(PlatformAccount? account)
+    {
+        if (account is null || (account.Economy is not null && !account.Economy.AllUnlocked)) return account;
+        var existing = RunePagesFor(account);
+        var missing = EconomyRules.MaximumRunePages - existing.Length;
+        if (missing <= 0) return account;
+        var added = NewRunePages(existing, Enumerable.Range(1, EconomyRules.MaximumRunePages)
+            .Where(id => existing.All(page => page.PageId != id)).Take(missing), DateTime.UtcNow);
+        var completed = account with { RunePages = existing.Concat(added).OrderBy(page => page.PageId).ToArray() };
+        Save(_state with { Accounts = _state.Accounts.Select(a => a.Id == account.Id ? completed : a).ToArray() });
+        return completed;
+    }
+
+    /// <summary>Batch 706: empty pages on the given ids, named Page N (with a suffix where the book already uses the name).</summary>
+    private static PlatformRunePage[] NewRunePages(IReadOnlyList<PlatformRunePage> existing, IEnumerable<int> ids, DateTime createdAt)
+    {
+        var usedNames = existing.Select(page => page.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string NewPageName(int candidate)
+        {
+            var name = $"Page {candidate}";
+            for (var suffix = 2; !usedNames.Add(name); suffix++)
+                name = $"Page {candidate} ({suffix})";
+            return name;
+        }
+        return ids.Select(candidate => new PlatformRunePage(candidate, NewPageName(candidate), false, [], createdAt)).ToArray();
+    }
 
     private void ValidateEconomyData(PlatformEconomyData data)
     {
@@ -971,14 +995,13 @@ public sealed partial class PlatformAccounts : IDisposable
     private static Dictionary<int, int> CopySlots(IReadOnlyDictionary<int, int>? slots) =>
         slots is null ? [] : slots.ToDictionary(pair => pair.Key, pair => pair.Value);
 
-    private static PlatformRunePage[] SeedRunePages(MatchPlayer loadout)
+    /// <summary>Batch 706: the book a new account starts with: pages 1 to <paramref name="count"/>, page 1 current, the rest empty.</summary>
+    private static PlatformRunePage[] SeedRunePages(MatchPlayer loadout, int count)
     {
         var createdAt = DateTime.UtcNow;
-        return
-        [
-            new PlatformRunePage(FirstRunePageId, DefaultRunePageName, true, SlotsFromLoadout(loadout), createdAt),
-            new PlatformRunePage(SecondRunePageId, SecondRunePageName, false, [], createdAt),
-        ];
+        return Enumerable.Range(1, count).Select(id => id == FirstRunePageId
+            ? new PlatformRunePage(id, DefaultRunePageName, true, SlotsFromLoadout(loadout), createdAt)
+            : new PlatformRunePage(id, $"Page {id}", false, [], createdAt)).ToArray();
     }
 
     private static PlatformRunePage[] VirtualRunePages(MatchPlayer loadout) =>

@@ -367,7 +367,7 @@ login, and Settings shows the link, `https://<your address>:<the friends' port>/
 like; Invite shows it too.
 
 - The page asks for a username, a summoner name (empty means the username), a password of at least 10 characters and the start
-  level. It lists every problem at once. When it works, it offers **Download the Play file**, the same file Invite gives.
+  level. It lists every problem at once. When it works, it offers **Download the Play file**, the same file Invite gives. Under **Already have a login?** it offers that file too.
 - Their browser warns that the connection is not private: Amberline's own certificate is not one the browser knows. They choose
   **Advanced**, then the button that goes on (Chrome: **Proceed to ... (unsafe)**, Edge: **Continue to ... (unsafe)**, Firefox:
   **Accept the Risk and Continue**). Another PC or browser warns again; it is the same certificate the Play file checks.

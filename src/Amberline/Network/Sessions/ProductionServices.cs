@@ -186,9 +186,7 @@ internal sealed class ProductionServices
             return [CombatPackets.HeroStats(stats.Snapshot(entity), _sync.Next(entity.NetId))];
         // Public neutral registration can make a camp known before its first
         // visible reveal. Restore the complete template on every neutral
-        // reveal, then append the narrow current-HP delta below: MinionStats
-        // writes max health into both HP slots, while the delta preserves an
-        // injured camp's current value.
+        // reveal, then append the narrow current-HP delta below.
         if (!initialReveal && entity.Kind == EntityKind.Neutral)
         {
             var packets = new List<PlaintextPacket>(
@@ -261,7 +259,9 @@ internal sealed class ProductionServices
                 // Batch 493e: the guardian's pool as it is; the client maps a neutral point's half to an empty ring itself.
                 CurrentMana: ReplicatesPar(entity) ? Float(entity.Mana) : 0.0f,
                 MaxMana: ReplicatesPar(entity) ? Float(entity.MaxMana) : 0.0f,
-                TargetableToTeam: CombatPackets.MinionTargetableToTeam(entity)), _sync.Next(entity.NetId))];
+                TargetableToTeam: CombatPackets.MinionTargetableToTeam(entity),
+                // Batch 701: the block every mid-life push sends (a script's permanent stat or render status) carries the unit's own health.
+                CurrentHp: Float(Math.Min(entity.Health, entity.MaxHealth))), _sync.Next(entity.NetId))];
         }
         return [];
     }

@@ -260,6 +260,7 @@ internal sealed class BbScriptMoves
         unit.AttackTarget = null;
         unit.AnchorPath = [landing];
         unit.LastAnchorTime = spells.CurrentTime;
+        spells.Movement.Teleported(unit);
         var staging = spells.ShortTeleportStaging(unit, launch, landing);
         unit.TeleportId = unchecked((byte)(unit.TeleportId + (staging is null ? 1 : 2)));
         if (spells.Effects.IsReferenceReady(unit))

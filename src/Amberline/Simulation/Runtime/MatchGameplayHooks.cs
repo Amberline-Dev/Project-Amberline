@@ -877,6 +877,7 @@ public sealed partial class MatchGameplayHooks : ICombatHooks, IHeroStatsHooks, 
         unit.AnchorPath = [unit.Position];
         unit.LastAnchorTime = Combat.CurrentTime;
         if (!respawn) return;
+        Spells.Movement.Teleported(unit);
         unit.TeleportId++;
         if (!Effects.IsReferenceReady(unit)) return;
         Effects.SendStopAttack(unit);

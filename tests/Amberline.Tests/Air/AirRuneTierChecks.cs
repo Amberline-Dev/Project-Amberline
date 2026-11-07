@@ -71,17 +71,17 @@ public static class AirRuneTierChecks
             var pages = accounts.GetRunePages(maxed.Id);
             TestAssert.Equal(RuneColor.Red, Catalog.Value.Get(8001)!.Color);
             TestAssert.Throws<ArgumentException>(() => accounts.SaveRunePages(maxed.Id, maxed.SummonerId,
-                [pages[0] with { Slots = new Dictionary<int, int> { [1] = 8001 } }, pages[1]]));
+                AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = 8001 } })));
             TestAssert.Throws<ArgumentException>(() => accounts.SaveRunePages(maxed.Id, maxed.SummonerId,
-                [pages[0] with { Slots = new Dictionary<int, int> { [1] = 10001 } }, pages[1]]));
+                AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = 10001 } })));
             TestAssert.Throws<ArgumentException>(() => accounts.SaveRunePages(maxed.Id, maxed.SummonerId,
-                [pages[0] with { Slots = new Dictionary<int, int> { [28] = 5378 } }, pages[1]]));
+                AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [28] = 5378 } })));
             TestAssert.Throws<ArgumentException>(() => accounts.SaveLoadout(maxed.Id,
                 accounts.Get(maxed.Id).Loadout with { RedRunes = [8001] }));
             TestAssert.True(accounts.Get(maxed.Id).Loadout.RedRunes is null or { Length: 0 }, "a refused save changes nothing");
             // A regular rune is still fine.
             accounts.SaveRunePages(maxed.Id, maxed.SummonerId,
-                [pages[0] with { Slots = new Dictionary<int, int> { [1] = Rune(RuneTier.Three) } }, pages[1]]);
+                AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = Rune(RuneTier.Three) } }));
         }
         finally { DeleteDirectory(root); }
     }
@@ -174,14 +174,14 @@ public static class AirRuneTierChecks
             TestAssert.Equal(1, Convert.ToInt32(owned["quantity"]));
             var pages = accounts.GetRunePages(buyer);
             accounts.SaveRunePages(buyer, accounts.Get(buyer).SummonerId,
-                [pages[0] with { Slots = new Dictionary<int, int> { [28] = 8013 } }, pages[1]]);
+                AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [28] = 8013 } }));
             TestAssert.Equal(8013, accounts.Get(buyer).Loadout.BlackRunes![0]);
             var history = PlatformStore.RenderPurchases(SessionFor(accounts.Get(buyer)), accounts);
             TestAssert.True(history.Contains("Quintessence of the Headless Horseman", StringComparison.Ordinal));
             TestAssert.False(history.Contains("Catalog item unavailable", StringComparison.Ordinal));
             // A rune the account never bought cannot be equipped, in or out of the window.
             TestAssert.Throws<ArgumentException>(() => accounts.SaveRunePages(buyer, accounts.Get(buyer).SummonerId,
-                [pages[0] with { Slots = new Dictionary<int, int> { [28] = 8014 } }, pages[1]]));
+                AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [28] = 8014 } })));
         }
         finally { DeleteDirectory(root); }
     }
@@ -198,7 +198,7 @@ public static class AirRuneTierChecks
             var maxed = accounts.RegisterPublic("harrowmaxed", "testing-password", "Harrow Maxed");
             accounts.GrantCurrency(maxed.Id, 100_000, 0, Guid.NewGuid());
             var pages = accounts.GetRunePages(maxed.Id);
-            PlatformRunePage[] WithHarrowing() => [pages[0] with { Slots = new Dictionary<int, int> { [28] = 8013 } }, pages[1]];
+            PlatformRunePage[] WithHarrowing() => AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [28] = 8013 } });
 
             // The ownership shortcut of a fully unlocked account covers the 374 regular runes only.
             TestAssert.Equal(374, ((ArrayCollection)AirDtos.RuneInventory(accounts.Get(maxed.Id))["summonerRunes"]).Count);
@@ -264,7 +264,7 @@ public static class AirRuneTierChecks
                 accounts.Purchase(id, "rune:" + tierTwo, "IP", Guid.NewGuid());
                 var pages = accounts.GetRunePages(id);
                 accounts.SaveRunePages(id, accounts.Get(id).SummonerId,
-                    [pages[0] with { Slots = new Dictionary<int, int> { [1] = tierTwo } }, pages[1]]);
+                    AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = tierTwo } }));
                 TestAssert.Equal(tierTwo, accounts.Get(id).Loadout.RedRunes![0]);
             }
         }
@@ -289,9 +289,9 @@ public static class AirRuneTierChecks
                 accounts.Purchase(id, "rune:" + tierTwo, "IP", Guid.NewGuid());
                 var pages = accounts.GetRunePages(id);
                 accounts.SaveRunePages(id, accounts.Get(id).SummonerId,
-                    [pages[0] with { Slots = new Dictionary<int, int> { [1] = tierTwo } }, pages[1]]);
+                    AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = tierTwo } }));
                 TestAssert.Throws<ArgumentException>(() => accounts.SaveRunePages(id, accounts.Get(id).SummonerId,
-                    [pages[0] with { Slots = new Dictionary<int, int> { [1] = tierThree } }, pages[1]]));
+                    AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = tierThree } })));
             }
 
             SetLevel(root, id, 20);
@@ -300,7 +300,7 @@ public static class AirRuneTierChecks
                 accounts.Purchase(id, "rune:" + tierThree, "IP", Guid.NewGuid());
                 var pages = accounts.GetRunePages(id);
                 accounts.SaveRunePages(id, accounts.Get(id).SummonerId,
-                    [pages[0] with { Slots = new Dictionary<int, int> { [1] = tierThree } }, pages[1]]);
+                    AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = tierThree } }));
                 TestAssert.Equal(tierThree, accounts.Get(id).Loadout.RedRunes![0]);
             }
         }
@@ -329,7 +329,7 @@ public static class AirRuneTierChecks
                 var before = JsonSerializer.Serialize(accounts.GetRunePages(id), MatchRoster.JsonOptions);
                 TestAssert.Throws<ArgumentException>(() => accounts.SaveRunePages(id, account.SummonerId, pages));
                 TestAssert.Throws<ArgumentException>(() => accounts.SaveRunePages(id, account.SummonerId,
-                    [pages[0] with { Name = "renamed" }, pages[1] with { Slots = new Dictionary<int, int> { [1] = tierTwo } }]));
+                    AirRuneAccountChecks.Book(pages, pages[0] with { Name = "renamed" }, pages[1] with { Slots = new Dictionary<int, int> { [1] = tierTwo } })));
                 TestAssert.Equal(before, JsonSerializer.Serialize(accounts.GetRunePages(id), MatchRoster.JsonOptions));
 
                 // A loadout save that changes the runes to it is refused too; one that leaves the runes alone is not.
@@ -339,7 +339,7 @@ public static class AirRuneTierChecks
 
                 // Taking it off the page (and equipping a tier 1 rune) is allowed, and so is switching pages afterwards.
                 accounts.SaveRunePages(id, account.SummonerId,
-                    [pages[0] with { Slots = new Dictionary<int, int> { [1] = tierOne } }, pages[1]]);
+                    AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = tierOne } }));
                 TestAssert.Equal(tierOne, accounts.Get(id).Loadout.RedRunes![0]);
                 TestAssert.Equal(1, PlatformEconomy.For(accounts.Get(id)).OwnedRunes![tierTwo], "still owned");
             }
@@ -362,7 +362,7 @@ public static class AirRuneTierChecks
             {
                 var pages = accounts.GetRunePages(id);
                 accounts.SaveRunePages(id, accounts.Get(id).SummonerId,
-                    [pages[0] with { Slots = new Dictionary<int, int> { [1] = tierTwo } }, pages[1]]);
+                    AirRuneAccountChecks.Book(pages, pages[0] with { Slots = new Dictionary<int, int> { [1] = tierTwo } }));
                 TestAssert.Equal(tierTwo, accounts.Get(id).Loadout.RedRunes![0]);
             }
         }

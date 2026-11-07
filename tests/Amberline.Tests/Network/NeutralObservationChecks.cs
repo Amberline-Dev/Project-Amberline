@@ -426,9 +426,11 @@ public static class NeutralObservationChecks
         // are its last eight bytes (they sat at 111 and 115 in the former 119-byte block).
         TestAssert.Equal(0x04u, BinaryPrimitives.ReadUInt32LittleEndian(fullBytes[^8..]),
             $"{phase} full stats selects the movement-speed property");
-        TestAssert.Near(expectedMaxHealth,
+        // Batch 701: the full block's mHP is the unit's own health (it was the maximum, which drew an injured unit's bar full on every
+        // mid-life push of the same block: Tormented Soil's shred).
+        TestAssert.Near(expectedHealth,
             BinaryPrimitives.ReadSingleLittleEndian(fullBytes[19..]), 1e-4,
-            $"{phase} full stats current-health template");
+            $"{phase} full stats current health");
         TestAssert.Near(expectedMaxHealth,
             BinaryPrimitives.ReadSingleLittleEndian(fullBytes[27..]), 1e-4,
             $"{phase} full stats max health");

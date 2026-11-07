@@ -141,6 +141,17 @@ public sealed partial class MovementSystem
         if (entity.UnitType == UnitType.Hero) PublishAutomaticHeroRoute(entity, stop, "force-stop-server");
         else ServerStopPublished?.Invoke(entity, stop);
     }
+
+    /// <summary>
+    /// Batch 699: the server put <paramref name="unit"/> somewhere at once (a script teleport, a respawn, a pet's teleport) and publishes it as a
+    /// one-point path. The client installs that path on receipt (HandleWaypoint the client -> ClientFollowServerPath the client: stopped and
+    /// seated on the point), which replaces whatever path it was on, a used-up one included; so the unit's next frame here is that stop's arrival,
+    /// as for a published force stop (<see cref="HelperForceStopServer"/>). Without it a teleport in the frame after an arrival ran the used-up
+    /// path's top branch, whose arrival seats the actor on that path's end (<see cref="ArrivalTopBranch"/>): Shunpo's Katarina was put
+    /// back where her last walk ended, and her next route started there. Reconstruction: the helper's client update also keeps re-arriving a
+    /// displaced actor on its used-up path every frame (the port does it once), which widens that window in production.
+    /// </summary>
+    internal void Teleported(Entity unit) => _following.Add(unit.NetId);
 }
 
 /// <summary>

@@ -129,6 +129,12 @@ public sealed partial class CombatService
     // to 1431 and first passed at 1399, the tick of its laser.
     // Reconstruction: another unit that shares this ladder (a neutral script other than Leashed) has no turret test; it keeps the
     // fog's unit-vision test from its own position (batch 211).
+    // Batch 702 (community report, 7 November 2026: a champion beside a lane wall, well inside the turret's range, is not shot):
+    // a target the turret's team sees is a legal target too. Reconstruction: FindTargetInAcR is native and unrecovered, but the
+    // turret test above is the client, which the shared code calls from the client (whether
+    // a unit sees the turret, not what the turret may shoot), and a wall between the champion and the turret refused him even while
+    // the turret's team (its minions, champions, wards) had him on screen. Minions and heroes already acquire on their team's sight
+    // (ProductionMatchComposition's TeamSight); the turret's own test stays as its eye, so no target it took before is lost.
     private bool TurretSeesTarget(Entity turret, Entity candidate)
     {
         if (turret.UnitType != UnitType.Turret)
@@ -136,8 +142,11 @@ public sealed partial class CombatService
         if (TurretRules.IsShrineTurret(turret)) return true;
         var (selection, gameplay) = Amberline.Network.Replication.VisibilityRules.TurretBody(turret);
         return SightGrid.TurretLineOfSightTest(candidate.Position, candidate.SelectionRadius, null, turret.Position, selection,
-            gameplay);
+            gameplay) || TeamSight?.Invoke(turret.Team, candidate) == true;
     }
+
+    /// <summary>Whether a team sees a unit: the match's fog (VisibilityRules.RevealsEntity over the team's providers); null outside a match.</summary>
+    public Func<Team, Entity, bool>? TeamSight { get; set; }
 
     public void EngageProtection()
     {

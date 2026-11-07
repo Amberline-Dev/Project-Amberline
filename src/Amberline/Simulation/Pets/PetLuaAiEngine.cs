@@ -811,6 +811,7 @@ public sealed class PetLuaAiEngine : ILuaAiPetEngine
         // The teleport is followed by a one-point path, whose install stops the pet and seats it on
         // the path's point, its lattice anchor, at once.
         var stop = _movement.InstallStop(unit);
+        _movement.Teleported(unit);
         unit.AttackTarget = null;
         pet.Retained = null;
         pet.Goal = null;

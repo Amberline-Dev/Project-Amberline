@@ -201,7 +201,7 @@ public static class DominionMapLeftoverChecks
         public void Send(PlaintextPacket packet) => Packets.Add(packet);
     }
 
-    private sealed class NullShopTransport : IShopTransport
+    internal sealed class NullShopTransport : IShopTransport
     {
         public void SendRemoveItem(Entity hero, int slot, int remainingCount) { }
         public void SendBuyItem(Entity hero, int slot, int itemId, int count) { }

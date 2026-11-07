@@ -70,12 +70,14 @@ internal sealed class ProductionMinionPacketSink : IMinionPacketSink
     {
         var combat = CharacterState.ScriptedCombatOf(minion, minion.Kind is EntityKind.ShacoBox or EntityKind.NidaleeTrap ? 0u : 7u);
         _delivery.Enqueue(CombatPackets.MinionStats(
-            minion.NetId, new MinionStatsSnapshot((float)minion.Health, (float)minion.AttackDamage,
+            minion.NetId, new MinionStatsSnapshot((float)minion.MaxHealth, (float)minion.AttackDamage,
                 (float)minion.Speed, (float)minion.Armor, (float)minion.SpellBlock,
                 (float)minion.AttackSpeedMod, (float)minion.HealthRegen,
                 ActionState: combat.ActionState, MagicImmune: combat.MagicImmune,
                 Invulnerable: combat.Invulnerable, Targetable: combat.Targetable,
-                TargetableToTeam: CombatPackets.MinionTargetableToTeam(minion)), _sync.Next(minion.NetId)));
+                TargetableToTeam: CombatPackets.MinionTargetableToTeam(minion),
+                // Batch 701: the maximum and the current health each in its own slot (this block wrote the current health into both).
+                CurrentHp: (float)Math.Min(minion.Health, minion.MaxHealth)), _sync.Next(minion.NetId)));
     }
     // Reconstruction: retail server waypoint scheduling is unknown. We queue per-entity
     // reliable waypoint packets and flush them with the 30 Hz simulation/visibility

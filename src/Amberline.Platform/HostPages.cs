@@ -20,7 +20,7 @@ public static class HostPages
     /// The stylesheet's address on the pages: <see cref="StylePath"/> with its content's hash. The browser keeps it (batch 643), so the
     /// pages shown as Amberline restarts or stops, whose listener may already be closed, still have it; a changed stylesheet is a new address.
     /// </summary>
-    public static readonly string StyleHref = StylePath + "?v=" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Css)))[..12].ToLowerInvariant();
+    public static readonly string StyleHref = Versioned(StylePath, Css);
 
     /// <summary>The script every shelled page loads (<see cref="Script"/>): the dashboard's status, Copy, and the wait feedback (batch 652).</summary>
     public const string ScriptPath = "/host/page.js";
@@ -83,13 +83,22 @@ public static class HostPages
     /// version, outside <c>/host</c>, which that port never serves.
     /// </summary>
     public const string PublicStylePath = "/register/style.css";
-    public static readonly string PublicStyleHref = PublicStylePath + StyleHref[StylePath.Length..];
+    public static readonly string PublicStyleHref = Versioned(PublicStylePath, PublicCss);
 
-    /// <summary>The stylesheet, at <see cref="StylePath"/> and <see cref="PublicStylePath"/>; the browser keeps it (see <see cref="StyleHref"/>).</summary>
-    internal static IResult Stylesheet(HttpContext context)
+    /// <summary>The stylesheet's address: its path with the first twelve hex digits of its content hash (the browser keeps it).</summary>
+    private static string Versioned(string path, string css) =>
+        path + "?v=" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(css)))[..12].ToLowerInvariant();
+
+    /// <summary>The host pages' stylesheet, at <see cref="StylePath"/>; the browser keeps it (see <see cref="StyleHref"/>).</summary>
+    internal static IResult Stylesheet(HttpContext context) => Sheet(context, Css);
+
+    /// <summary>Batch 706: the sign-up pages' own stylesheet, at <see cref="PublicStylePath"/> (served on the friends' port only).</summary>
+    internal static IResult PublicStylesheet(HttpContext context) => Sheet(context, PublicCss);
+
+    private static IResult Sheet(HttpContext context, string css)
     {
         context.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
-        return Results.Text(Css, "text/css; charset=utf-8");
+        return Results.Text(css, "text/css; charset=utf-8");
     }
 
     /// <summary>
@@ -130,9 +139,9 @@ public static class HostPages
                 <!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
                 {{(Refresh is null ? "" : $"<meta http-equiv=refresh content=\"5;url={Refresh}\">")}}<title>{{title}}</title><link rel=stylesheet href="{{(Public ? PublicStyleHref : StyleHref)}}"></head>
                 <body><a class=skip href=#main>Skip to the main content</a>
-                <header><p class=brand>{{name}}Amberline</p>{{menu}}</header>
+                {{(Public ? "<header><p class=wordmark>Amberline</p></header>" : $"<header><p class=brand>{name}Amberline</p>{menu}</header>")}}
                 <main id=main tabindex=-1>{{step}}{{Code.Replace(Content, "<span class=code>$0</span>")}}</main>
-                <footer><p>Amberline{{(Public ? "" : " " + shell?.Version)}}</p></footer>{{(Public || Status == StatusCodes.Status403Forbidden ? "" : $"<script src={ScriptPath} defer></script>")}}</body></html>
+                {{(Public ? "" : $"<footer><p>Amberline {shell?.Version}</p></footer>")}}{{(Public || Status == StatusCodes.Status403Forbidden ? "" : $"<script src={ScriptPath} defer></script>")}}</body></html>
                 """;
         }
 
@@ -192,6 +201,82 @@ public static class HostPages
     /// The one stylesheet. Light and dark through <c>prefers-color-scheme</c>; every text colour is at least 4.5:1 on its background
     /// (borders and focus at least 3:1); buttons are at least 44 px high; one column that fits 360 px and 200% zoom.
     /// </summary>
+    /// <summary>Batch 706: the sign-up pages' stylesheet (CSS only): the AIR client's dark navy frame and gold trim, system fonts.</summary>
+    private const string PublicCss = """
+        :root{color-scheme:dark;--top:#13233a;--bottom:#03060c;--panel:#0b1728;--inner:#060e1a;--gold:#c9ab6f;--gold-dim:#6f5a31;
+        --gold-hi:#f3e2b3;--text:#e9e2d0;--muted:#a3a9b5;--field:#040a13;--line:#4d5d73;--focus:#f2d98e;--bad:#f2978b;--bad-bg:#2b1414;
+        --ok:#a6dcae;--ok-bg:#122418}
+        *,*::before,*::after{box-sizing:border-box}
+        [hidden]{display:none!important}
+        html{-webkit-text-size-adjust:100%;text-size-adjust:100%;background:var(--bottom)}
+        body{margin:0;padding:48px 16px;min-height:100vh;color:var(--text);background:radial-gradient(120% 70% at 50% 0%,var(--top),var(--bottom) 75%);
+        font:1rem/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+        main{max-width:30rem;margin:0 auto;padding:28px 24px 30px;border:1px solid var(--gold-dim);border-radius:4px;overflow-wrap:anywhere;
+        text-align:center;background:linear-gradient(180deg,var(--panel),var(--inner));box-shadow:inset 0 0 0 1px rgba(201,171,111,.14),0 16px 40px rgba(0,0,0,.55)}
+        main:focus{outline:none}
+        form{text-align:left}
+        header{margin:0 0 26px;text-align:center}
+        .wordmark{position:relative;display:inline-block;margin:0 -.3em 0 0;padding:0 0 20px;color:var(--gold);letter-spacing:.3em;text-transform:uppercase;
+        font:600 clamp(1.9rem,8.5vw,2.75rem)/1.1 "Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;
+        background:linear-gradient(105deg,transparent 42%,rgba(255,248,224,.95) 50%,transparent 58%) 160% 0/250% 100% no-repeat,
+        linear-gradient(180deg,#fff4d2 0%,#f1d48c 30%,#c99c4c 52%,#8b6327 58%,#d7b36a 78%,#f7e6b0 100%);
+        -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+        filter:drop-shadow(0 0 12px rgba(201,171,111,.35)) drop-shadow(0 2px 0 rgba(0,0,0,.9));animation:sheen 7s ease-in-out 1s infinite}
+        .wordmark::before,.wordmark::after{content:"";position:absolute;left:50%}
+        .wordmark::before{bottom:3px;width:9px;height:9px;background:var(--gold-hi);box-shadow:0 0 10px var(--gold);transform:translateX(calc(-50% - .15em)) rotate(45deg)}
+        .wordmark::after{bottom:7px;width:115%;height:1px;transform:translateX(calc(-50% - .15em));
+        background:linear-gradient(90deg,transparent,var(--gold) 22%,var(--gold) 44%,transparent 46.5%,transparent 53.5%,var(--gold) 56%,var(--gold) 78%,transparent)}
+        @keyframes sheen{0%,55%{background-position:160% 0,0 0}100%{background-position:-60% 0,0 0}}
+        @media (prefers-reduced-motion:reduce){.wordmark{animation:none}}
+        .skip{position:absolute;top:-100px;left:16px;z-index:1;padding:8px 12px;background:var(--panel);color:var(--gold);font-weight:600}
+        .skip:focus{top:8px}
+        :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+        h1{margin:0 0 22px;color:var(--gold);font-size:1.125rem;line-height:1.35;font-weight:600;letter-spacing:.16em;text-align:center;text-transform:uppercase}
+        h2{margin:0 0 8px;color:var(--gold);font-size:.9375rem;letter-spacing:.12em;text-transform:uppercase}
+        p,ul,ol,pre{max-width:65ch;margin:0 0 14px}
+        a{color:var(--gold)}
+        a:hover{color:var(--gold-hi)}
+        .tip,.hint,.saved,.already{color:var(--muted)}
+        .code{color:var(--muted);font-size:.8125rem;white-space:nowrap}
+        .step{margin:0 0 6px;color:var(--muted);font-size:.8125rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase}
+        .vh{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+        form{margin:0}
+        label{display:block;margin:18px 0 6px;font-weight:600;letter-spacing:.02em}
+        .req{font-weight:400;color:var(--muted)}
+        .hint{margin:0 0 6px;font-size:.9375rem}
+        input:not([type=radio]):not([type=checkbox]),select{display:block;width:100%;min-height:44px;padding:8px 10px;border:1px solid var(--line);
+        border-radius:2px;background:var(--field);color:var(--text);font:inherit;box-shadow:inset 0 1px 3px rgba(0,0,0,.6)}
+        input:not([type=radio]):not([type=checkbox]):focus,select:focus{border-color:var(--gold);outline:none;box-shadow:inset 0 1px 3px rgba(0,0,0,.6),0 0 0 1px var(--gold)}
+        input[aria-invalid=true]:not([type=radio]):not([type=checkbox]){border-color:var(--bad);box-shadow:inset 0 1px 3px rgba(0,0,0,.6),0 0 0 1px var(--bad)}
+        ::placeholder{color:var(--muted);opacity:.85}
+        fieldset{margin:22px 0 0;padding:0;border:0}
+        legend{margin:0 0 6px;padding:0;font-weight:600}
+        .choice{display:flex;gap:10px;align-items:flex-start;margin:10px 0 4px;font-weight:400}
+        .choice input{flex:none;width:22px;height:22px;margin:2px 0 0;accent-color:var(--gold)}
+        button,.button{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 22px;border:1px solid var(--gold);
+        border-radius:2px;background:linear-gradient(180deg,#1d2e45,#0a1322);color:var(--gold-hi);font:inherit;font-weight:600;letter-spacing:.12em;
+        line-height:1.3;text-align:center;text-transform:uppercase;text-decoration:none;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 0 #3b2c13}
+        button:hover,.button:hover{color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 3px 0 #3b2c13,0 0 16px rgba(201,171,111,.5)}
+        button:active,.button:active{transform:translateY(2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 1px 0 #3b2c13}
+        button:disabled{cursor:progress;opacity:.7}
+        .actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:center;margin-top:26px;padding-top:18px;border-top:1px solid var(--gold-dim)}
+        .already{margin:22px 0 10px}
+        .notice,.problem,.error-summary{position:relative;max-width:none;margin:0 0 22px;padding:12px 16px 12px 46px;border:1px solid;border-radius:2px;text-align:left}
+        .notice{border-color:var(--ok);background:var(--ok-bg)}
+        .problem,.error-summary{border-color:var(--bad);background:var(--bad-bg)}
+        .notice::before,.problem::before,.error-summary::before{position:absolute;left:14px;top:13px;width:20px;height:20px;border:1px solid;border-radius:50%;
+        font:700 .75rem/18px system-ui,sans-serif;text-align:center}
+        .notice::before{content:"\2713";color:var(--ok)}
+        .problem::before,.error-summary::before{content:"\2717";color:var(--bad)}
+        .error-summary h2{margin:0 0 2px;color:var(--bad);font-size:.875rem}
+        .error-summary ul{margin:0;padding:0;list-style:none}
+        .error-summary a{color:var(--text);text-decoration-color:var(--bad)}
+        .field-error{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+        @media (max-width:23rem){main{padding-left:16px;padding-right:16px}h1{font-size:1rem}}
+        @media (forced-colors:active){button,.button{border-color:ButtonText}.problem,.notice,.error-summary{border-color:CanvasText}
+        .wordmark{background:none;-webkit-text-fill-color:CanvasText;filter:none}}
+        """;
+
     private const string Css = """
         :root{color-scheme:light dark;--bg:#f7f5f1;--surface:#fff;--text:#1f1f1f;--muted:#575757;--line:#6b6b6b;--soft:#dcd7cd;
         --accent:#8a4f0e;--on-accent:#fff;--link:#1a5fb4;--focus:#1a5fb4;--bad:#b3261e;--bad-bg:#fbe9e7;--ok:#1e6b2e;--ok-bg:#e6f2e8;
