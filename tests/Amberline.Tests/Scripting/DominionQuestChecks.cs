@@ -34,6 +34,9 @@ public static class DominionQuestChecks
         Hold(runtime, quests, 5, Team.Chaos);
         RunTo(runtime, 299.0);
         TestAssert.True(captures.All(capture => capture.Quests.Count == 0 && capture.Events.Count == 0), "no quest goes out before 5:00");
+        // Batch 711: the waves neutralise an undefended point before 5:00 (see Retake); each team takes its point back the tree's way.
+        Retake(runtime, quests, 1, Team.Order);
+        Retake(runtime, quests, 5, Team.Chaos);
         RunTo(runtime, 300.5);
 
         var order = Issued(runtime, quests, captures[0], Team.Order);
@@ -52,6 +55,10 @@ public static class DominionQuestChecks
     {
         Hold(runtime, quests, 1, Team.Order);
         Hold(runtime, quests, 5, Team.Chaos);
+        RunTo(runtime, 299.0);
+        // Batch 711: the waves neutralise an undefended point before 5:00 (see Retake); each team takes its point back the tree's way.
+        Retake(runtime, quests, 1, Team.Order);
+        Retake(runtime, quests, 5, Team.Chaos);
         RunTo(runtime, 300.5);
         var order = Issued(runtime, quests, captures[0], Team.Order);
         var chaos = Issued(runtime, quests, captures[1], Team.Chaos);
@@ -90,6 +97,8 @@ public static class DominionQuestChecks
         Hold(runtime, quests, 4, Team.Chaos);
         RunTo(runtime, done + 299.0);
         TestAssert.True(captures.All(capture => capture.Quests.Count == 0), "no new quest in the 5 minutes after the completion");
+        Retake(runtime, quests, 1, Team.Order);
+        Retake(runtime, quests, 4, Team.Chaos);
         RunTo(runtime, done + 300.5);
         TestAssert.True(captures.All(capture => capture.Quests.Count(Add) == 2), "a new set goes to each team 5 minutes after the completion");
         TestAssert.True(failures.Records.Count == 0, "no quest script raised: " + string.Join("; ", failures.Records));
@@ -108,6 +117,10 @@ public static class DominionQuestChecks
     {
         Hold(runtime, quests, 1, Team.Order);
         Hold(runtime, quests, 5, Team.Chaos);
+        RunTo(runtime, 299.0);
+        // Batch 711: the waves neutralise an undefended point before 5:00 (see Retake); each team takes its point back the tree's way.
+        Retake(runtime, quests, 1, Team.Order);
+        Retake(runtime, quests, 5, Team.Chaos);
         RunTo(runtime, 300.5);
         var order = Issued(runtime, quests, captures[0], Team.Order);
         Issued(runtime, quests, captures[1], Team.Chaos);
@@ -221,6 +234,24 @@ public static class DominionQuestChecks
         quests.Captures[point - 1].SetVariable("CurrentPointOwner", team);
         quests.Captures[point - 1].SetVariable("CaptureProgress", team == Team.Order ? 100.0 : -100.0);
         Guardian(runtime, quests, point).Team = team;
+    }
+
+    /// <summary>
+    /// Batch 711: a point nobody defends does not stay held for five minutes. The other team's waves assault it (OdinMinionSpellAttack: 2 % of
+    /// the pool a hit on an enemy point, and OdinGuardianBuff's regen waits while the guardian holds the hit), and in this two-seat match
+    /// Chaos's E1 waves neutralise Order's A at about 3:50 (A 100 at 3:40, 35 at 3:50, neutral at 4:00; the A2 and E1 waves meet between A
+    /// and E until then). Before batch 711 the point's prototype tree consumed every arriving wave minion for +-9 and the regen undid it, so
+    /// the points held. A set needs a point each team holds (BehaviorTreeQuestHost.ServeQuests), so before the quest time the team takes its
+    /// point back. DIAGNOSTICS: test seam, the shipped capture tree's own "Order Capture" / "Chaos Capture" branch (neutral past +-99), which
+    /// changes the guardian's team through the host as a champion's capture does.
+    /// </summary>
+    private static void Retake(MatchRuntime runtime, BehaviorTreeQuestHost quests, int point, Team team)
+    {
+        if (quests.CapturePointOwners.GetValueOrDefault(point) == team) return;
+        quests.Captures[point - 1].SetVariable("CurrentPointOwner", Team.Neutral);
+        quests.Captures[point - 1].SetVariable("CaptureProgress", team == Team.Order ? 100.0 : -100.0);
+        for (var tick = 0; tick < 3; tick++) runtime.Tick(Step);
+        TestAssert.True(quests.CapturePointOwners[point] == team, $"{team} takes point {Letter(point)} back before the quest time");
     }
 
     private static void RunTo(MatchRuntime runtime, double seconds)

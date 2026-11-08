@@ -229,6 +229,12 @@ public sealed partial class MinionAiSystem : IDisposable
     internal Action<Entity>? TargetDecisionObserver { get; set; }
 
     /// <summary>
+    /// Batch 711: the cast of a useable unit's <c>MinionUseSpell</c> by a minion at it (minion, used unit, spell), the production unit-character
+    /// module's use cast (BbUnitCharacterModule.CastUseSpell). Null leaves a minion standing at the use range (a check harness with no script engine).
+    /// </summary>
+    public Action<Entity, Entity, string>? UseObject { get; set; }
+
+    /// <summary>
     /// Test-only observation seam for an actual return-to-lane decision.  The
     /// callback is invoked at the source branch, before the target and route
     /// fields are cleared; production leaves it null and pays no work here.

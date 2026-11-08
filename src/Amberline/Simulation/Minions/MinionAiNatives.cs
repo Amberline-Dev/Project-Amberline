@@ -264,11 +264,12 @@ public sealed partial class MinionAiSystem
     /// <c>TurnOffAutoAttack(STOPREASON_MOVING)</c> from every scan while the object stays in range, and from the taunt hooks in place of
     /// closing on the taunter. The minion leaves its lane (its rest is kept, as an acquisition keeps it) and walks to the object.
     /// <para>
-    /// Reconstruction: the use itself, the object's <c>MinionUseSpell</c> cast from its <c>CastRange</c> (OdinMinionSpellAttack, 400: its
-    /// TargetExecute moves a neutral guardian's PAR by 1 % of its pool toward the minion's team, 1.5 % for a superminion, drains an enemy one by
-    /// 2 % or 3 %, and a neutral guardian returns 25 % of the minion's health as true damage), is not cast. The point's own tree consumes every
-    /// squad minion inside its 600 capture radius (EvaluateCapturePoint's KillProximalMinions and friendly branch, OdinScriptBehaviorTrees.xml:708-757,
-    /// :922-964) before it can stand at 400, so a wave minion never reaches the cast; within range the minion only stops.
+    /// Batch 711: within the object's use range the minion stops and casts the object's <c>MinionUseSpell</c> at it (<see cref="UseObject"/>):
+    /// OdinMinionSpellAttack, CastRange 400, Cooldown 0.8 (a cooling cast is refused, so the scans that keep calling UseTarget hit once per
+    /// cooldown). Its TargetExecute moves a neutral guardian's pool 1 % toward the minion's team (1.5 % for a superminion), drains an enemy one
+    /// by 2 % (3 %), and on a neutral point returns 25 % of the minion's maximum health as true damage. Reconstruction: the native did not ship;
+    /// the scripts call UseTarget on every scan while the guardian taunts them (MinionOdin proto 0.2, AI_TAUNTED), so the use is one cast per call.
+    /// Before batch 711 the point's tree consumed the minion at 600 and the cast was never made (BehaviorLeaves.KillUnit).
     /// </para>
     /// </summary>
     internal void NativeUseTarget(Entity minion, Entity? other)
@@ -285,10 +286,11 @@ public sealed partial class MinionAiSystem
             minion.AttackPoint = null;
             minion.Target = null;
         }
-        var range = other.MinionUse!.Value.Range;
+        var (spell, range, _, _) = other.MinionUse!.Value;
         if (DistanceSquared(minion.Position, other.Position) <= range * range)
         {
             if (minion.Waypoints.Count > 0) ClearMovement(minion, "use-object");
+            UseObject?.Invoke(minion, other, spell);
             return;
         }
         IssueMove(minion, other.Position, "use-object");

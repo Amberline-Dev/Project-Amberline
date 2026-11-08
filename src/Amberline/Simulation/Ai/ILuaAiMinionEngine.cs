@@ -46,7 +46,7 @@ public interface ILuaAiMinionEngine : ILuaAiEngine
 
     /// <summary>
     /// <c>UseTarget(object)</c> (MinionOdin.luaobj protos 0.0 to 0.3): the unit goes to use the object. Batch 499: it walks to the use spell's
-    /// range; the cast is Reconstruction (Minions.MinionAiSystem.NativeUseTarget: the capture tree consumes the minion first).
+    /// range; batch 711: there it casts the object's MinionUseSpell once per its cooldown (Minions.MinionAiSystem.NativeUseTarget).
     /// </summary>
     void UseTarget(Entity unit, Entity? other);
 

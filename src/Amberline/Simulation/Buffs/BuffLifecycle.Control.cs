@@ -167,10 +167,17 @@ public sealed partial class BuffLifecycle
     /// The unit's own position is deliberately left where it stands: it is the geometry a displacement of the same script step reads
     /// (<c>BBMoveAway</c> lands from the exact position its control buff's add found), and seating the body on the lattice first moved
     /// Monsoon's wall-crossing landing by 28 units (batch 158).
+    /// Batch 710 (Reconstruction, owner, 7 November 2026: the capture bar flashed and vanished, the pose ended and the champion stood until
+    /// the charge): a unit that runs a script channel gets none. It stands: the client's cast stopped its actor (Client_DoCastSpell's StopActor),
+    /// and the channel's Move rule ends the channel on any step (BbScriptChannels.TickChannels); a stun that ends the channel publishes the
+    /// channel's own seat with its stop (BbScriptChannels.Stop). The one shipped channel that roots its own caster, OdinCaptureChannel
+    /// (ChannelingStart: OdinCaptureImmobile, SetCanMove false), began at the cast frame from batch 678, so this waypoint reached the
+    /// capturer's client inside its SpellCaster (0xC1: ClientFollowServerPath and a new-path event on the unit's state machine), the only
+    /// packet of that window the scripts do not send. Retail's server half of a root is not shipped.
     /// </summary>
     private void SendControlStop(Entity unit)
     {
-        if (!_services.Effects.IsWireReady(unit)) return;
+        if (!_services.Effects.IsWireReady(unit) || unit.ActiveScriptChannels > 0) return;
         _services.Effects.SendWaypoints(unit);
     }
 

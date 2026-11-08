@@ -41,6 +41,7 @@ public static partial class BehaviorLeaves
         // period is shipped. Reconstruction (batch 450): the reference tick is ReferenceTickSeconds; the node gives the step its share of a
         // per-tick value. One champion's 0.85 then fills 100 in 100 / 0.85 * 0.1 = 11.8 s, inside the wiki's 10 s band (Capture point page).
         // Batch 550: inside CapturePointMath the champions' rate also takes Priscilla's Blessing (CaptureRateScale, BehaviorLeaves.Capture).
+        // Batch 711: inside EvaluateCapturePoint the regen pauses while the guardian holds OdinGuardianSuppression or OdinMinionSpellAttack.
         ["NormalizeFloatToTickRate"] = call =>
             Set(call, call.Number("LeftHandSide") * CaptureRateScale(call) * call.TickSeconds / ReferenceTickSeconds),
 

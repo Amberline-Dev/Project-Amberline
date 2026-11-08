@@ -1,4 +1,5 @@
 using Amberline.Core;
+using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Sessions;
 using Amberline.Scripting.BuildingBlocks.Runtime;
@@ -341,6 +342,253 @@ public static class AttackCadenceChecks
     }
 
     /// <summary>
+    /// Batch 712 (owner, 7 November 2026: "towers still shoot too fast, when it switches from one target to another the delay isn't always
+    /// applied"). Every way the front Chaos lane turret's target changes, on maps 1 and 4, against Turret.luaobj's rule: a new target is shot
+    /// only after the scan that calls TurnOnAutoAttack(GetTarget()) on it (TimerFindEnemies, 0.15 s; the HARDIDLE scan that takes a target
+    /// does not; OnTargetLost, OnCallForHelp and OnTauntBegin only SetTarget), and never before the turret's attack timer has run out.
+    /// Most switches are made right after a scan, so the rule's scan is a whole scan away; the call for help is also made one to three steps
+    /// later, which shows the script's own spread (a switch on the step before a scan is shot on the laser's step). A row per switch: from the
+    /// switch to the laser, the first 0x0D at the new target, and the client's shot leaving; "expected" is the rule's step. Every row held on
+    /// the engine of master 3d24accdc: no path shoots a new target before its scan or before its attack timer runs out (batch 712 record).
+    /// </summary>
+    [Check("combat.turret-every-target-switch-waits-for-the-scan-that-turns-its-attack-on", Serial = true, TimeoutSeconds = 600)]
+    public static void TurretEveryTargetSwitchWaitsForTheScanThatTurnsItsAttackOn()
+    {
+        var failures = new List<string>();
+        try
+        {
+            foreach (var mapId in new[] { GameMaps.Normal, GameMaps.TwistedTreeline })
+                foreach (var (label, scenario) in SwitchScenarios)
+                {
+                    try
+                    {
+                        using var scene = new TurretScene(mapId);
+                        MeasureSwitch(scene, $"map {mapId} {label}", scenario(scene));
+                    }
+                    catch (Exception failure) { failures.Add(failure.Message); }
+                }
+        }
+        finally
+        {
+            GameData.ConfigureDefault(GameDataPaths.Default);
+        }
+        TestAssert.True(failures.Count == 0, string.Join(" | ", failures));
+    }
+
+    /// <summary>
+    /// One switch: when it was made, the unit the turret must shoot next (null: it must keep its target and shoot no <paramref name="Watched"/>),
+    /// which scan after the switch turns the attack on (1: the next), the attack timer left at the switch, and a unit it must not shoot after it.
+    /// </summary>
+    private sealed record TurretSwitchCase(double Switched, Entity? NewTarget, int Scan, double Cooldown, Entity? Watched = null);
+
+    private static readonly (string Label, Func<TurretScene, TurretSwitchCase> Make)[] SwitchScenarios =
+    [
+        ("acquisition from idle (a champion walks in)", scene =>
+        {
+            scene.Diver.Position = scene.Toward(1400.0);
+            scene.Advance(1.0);
+            scene.AfterScan();
+            scene.Turret.AttackCooldown = 0.0;
+            var switched = scene.Now;
+            scene.Diver.Position = scene.Toward(450.0);
+            // The scan that sees him takes him (laser), the next one turns the attack on.
+            return new(switched, scene.Diver, 2, 0.0);
+        }),
+        ("its target dies (dead, not yet removed)", scene =>
+        {
+            var minion = scene.Minion(450.0);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(minion);
+            scene.AfterScan();
+            scene.Turret.AttackCooldown = 0.0;
+            var switched = scene.Now;
+            minion.Alive = false;
+            return new(switched, scene.Diver, 1, 0.0);
+        }),
+        ("its target leaves attack range (walks out, recalls, teleports)", scene =>
+        {
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(scene.Diver);
+            var minion = scene.Minion(450.0);
+            scene.AfterScan();
+            scene.Turret.AttackCooldown = 0.0;
+            var switched = scene.Now;
+            scene.Diver.Position = scene.Toward(3000.0);
+            // Scan 1: out of range, HARDIDLE and TurnOffAutoAttack(MOVING); scan 2 takes the minion; scan 3 turns the attack on.
+            return new(switched, minion, 3, 0.0);
+        }),
+        ("its target becomes untargetable", scene =>
+        {
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(scene.Diver);
+            var minion = scene.Minion(450.0);
+            scene.AfterScan();
+            scene.Turret.AttackCooldown = 0.0;
+            var switched = scene.Now;
+            scene.Runtime.Buffs.AddBuff(scene.Diver, "B712Untargetable", BuffType.Internal, 5.0, scene.Diver.NetId,
+                new BuffPayload { Untargetable = true }, canMitigateDuration: false);
+            return new(switched, minion, 1, 0.0);
+        }),
+        ("its target stealths in its 800-unit true sight (no switch)", scene =>
+        {
+            // Every lane turret's TurretBonusHealth adds a perception bubble with RevealSteath (800 units): the turret keeps seeing him.
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(scene.Diver);
+            var minion = scene.Minion(450.0);
+            scene.AfterScan();
+            var switched = scene.Now;
+            scene.Runtime.Buffs.AddBuff(scene.Diver, "B712Stealth", BuffType.Invisibility, 5.0, scene.Diver.NetId,
+                new BuffPayload { Stealthed = true }, canMitigateDuration: false);
+            return new(switched, null, 0, 0.0, minion);
+        }),
+        ("its own shot kills its target", scene =>
+        {
+            var minion = scene.Minion(450.0);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(minion);
+            minion.Health = 1.0;
+            for (var tick = 0; tick < (int)Math.Round(3.0 / Step) && minion.Alive; tick++) scene.Tick();
+            TestAssert.True(!minion.Alive, $"{scene.Turret.Name}'s shot kills {minion.Name}");
+            // The kill landed inside the last step: the switch is that step's start, and a scan on that step is the next one.
+            var switched = scene.Now - Step;
+            return new(switched, scene.Diver, 1, scene.Turret.AttackCooldown + Step);
+        }),
+        ("a champion hits a champion (call for help) right after a scan", CallForHelpAfterScan(0)),
+        // The same switch one, two and three steps later in the scan's 0.15 s: the wait for the scan shrinks with it (the script's own
+        // spread, 0 to 0.15 s), and a switch on the step before the scan is shot on the laser's own step.
+        ("a champion hits a champion, 1 step after a scan", CallForHelpAfterScan(1)),
+        ("a champion hits a champion, 2 steps after a scan", CallForHelpAfterScan(2)),
+        ("a champion hits a champion, 3 steps after a scan", CallForHelpAfterScan(3)),
+        ("a champion hits the turret's minion (no call to a turret)", scene =>
+        {
+            var minion = scene.Minion(450.0);
+            var ally = scene.Minion(-100.0, Team.Chaos);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(minion);
+            scene.AfterScan();
+            var switched = scene.Now;
+            scene.Runtime.Combat.ApplyHit(scene.Diver.NetId, ally.NetId, 1.0, DamageType.True, DamageSourceKind.Basic);
+            return new(switched, null, 0, 0.0, scene.Diver);
+        }),
+        ("a champion taunts it", scene =>
+        {
+            var minion = scene.Minion(450.0);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(minion);
+            scene.AfterScan();
+            scene.Turret.AttackCooldown = 0.0;
+            var switched = scene.Now;
+            scene.Runtime.Buffs.AddBuff(scene.Turret, "B712Taunt", BuffType.Taunt, 1.5, scene.Diver.NetId, canMitigateDuration: false);
+            return new(switched, scene.Diver, 1, 0.0);
+        }),
+        ("a champion walks in while it shoots a minion (no switch)", scene =>
+        {
+            var minion = scene.Minion(450.0);
+            scene.Engage(minion);
+            scene.AfterScan();
+            var switched = scene.Now;
+            scene.Diver.Position = scene.Toward(450.0);
+            return new(switched, null, 0, 0.0, scene.Diver);
+        }),
+        ("two switches inside one scan (its target dies, then a call for help)", scene =>
+        {
+            var first = scene.Minion(400.0);
+            var second = scene.Minion(500.0);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(first);
+            scene.AfterScan();
+            scene.Turret.AttackCooldown = 0.0;
+            var switched = scene.Now;
+            first.Alive = false;
+            scene.Tick();
+            TestAssert.Equal(second.NetId, scene.Turret.AttackTarget ?? 0u, $"{scene.Turret.Name}: OnTargetLost takes the second minion");
+            scene.CallForHelp();
+            return new(switched, scene.Diver, 1, 0.0, second);
+        }),
+        ("a call for help during its wind-up at a minion", scene =>
+        {
+            var minion = scene.Minion(450.0);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(minion);
+            scene.NextSwing(minion);
+            var switched = scene.Now;
+            var cooldown = scene.Turret.AttackCooldown;
+            scene.CallForHelp();
+            return new(switched, scene.Diver, 1, cooldown);
+        }),
+        ("its target dies during its wind-up", scene =>
+        {
+            var minion = scene.Minion(450.0);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(minion);
+            scene.NextSwing(minion);
+            var switched = scene.Now;
+            var cooldown = scene.Turret.AttackCooldown;
+            // The champion beside the turret last-hits it.
+            scene.Runtime.Combat.ApplyHit(scene.Ally.NetId, minion.NetId, 2e7, DamageType.True, DamageSourceKind.Basic);
+            TestAssert.True(!minion.Alive, $"{scene.Ally.Name} kills {minion.Name}");
+            return new(switched, scene.Diver, 1, cooldown);
+        }),
+        ("a call for help right after a shot (its missile in flight)", scene =>
+        {
+            var minion = scene.Minion(450.0);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.Engage(minion);
+            scene.NextSwing(minion);
+            scene.Advance(5 * Step);
+            var switched = scene.Now;
+            var cooldown = scene.Turret.AttackCooldown;
+            scene.CallForHelp();
+            return new(switched, scene.Diver, 1, cooldown);
+        }),
+    ];
+
+    private static Func<TurretScene, TurretSwitchCase> CallForHelpAfterScan(int steps) => scene =>
+    {
+        var minion = scene.Minion(450.0);
+        scene.Diver.Position = scene.Toward(450.0);
+        scene.Engage(minion);
+        scene.AfterScan();
+        scene.Advance(steps * Step);
+        scene.Turret.AttackCooldown = 0.0;
+        var switched = scene.Now;
+        scene.CallForHelp();
+        return new(switched, scene.Diver, 1, 0.0);
+    };
+
+    private static void MeasureSwitch(TurretScene scene, string label, TurretSwitchCase switchCase)
+    {
+        scene.Advance(2.0);
+        var switched = switchCase.Switched;
+        if (switchCase.NewTarget is not { } target)
+        {
+            var stray = scene.Sent(0x0D, switchCase.Watched!, switched).Select(shot => shot.At - switched).ToList();
+            Console.WriteLine($"{label} {scene.Turret.Name}: 0x0D at the champion in 2 s: {stray.Count}");
+            TestAssert.True(stray.Count == 0, $"{label}: the turret keeps its target and shoots no {switchCase.Watched!.Name} " +
+                                              $"(0x0D at +{string.Join(", +", stray.Select(at => at.ToString("0.000")))} s)");
+            return;
+        }
+        var scans = scene.ScanTimes.Where(time => time > switched + 1e-9).ToList();
+        var armed = scans[switchCase.Scan - 1];
+        // The attack timer counts down by whole steps and fires on the step it reaches zero (batch 670).
+        var timerOut = switched + Math.Ceiling(switchCase.Cooldown / Step - 1e-6) * Step;
+        var expected = Math.Max(armed, timerOut);
+        var shots = scene.Sent(0x0D, target, switched).ToList();
+        var laser = scene.Sent(0x6D, target, switched).Select(item => item.At - switched).DefaultIfEmpty(double.NaN).First();
+        var first = shots.Count > 0 ? shots[0].At - switched : double.NaN;
+        var leaves = shots.Count > 0 ? scene.ClientLaunch(shots[0]) - switched : double.NaN;
+        var stolen = switchCase.Watched is { } watched ? scene.Sent(0x0D, watched, switched).Count() : 0;
+        Console.WriteLine($"{label} {scene.Turret.Name}: laser +{laser:0.000} s, first 0x0D +{first:0.000} s, expected +{expected - switched:0.000} s " +
+                          $"(scan {switchCase.Scan} +{armed - switched:0.000} s, attack timer +{timerOut - switched:0.000} s), the client's shot leaves " +
+                          $"+{leaves:0.000} s");
+        TestAssert.True(shots.Count > 0, $"{label}: the turret shoots its new target");
+        TestAssert.Near(expected, shots[0].At, 1e-6,
+            $"{label}: the first shot at the new target waits for scan {switchCase.Scan}'s TurnOnAutoAttack and the attack timer " +
+            $"(first 0x0D +{first:0.000} s, expected +{expected - switched:0.000} s)");
+        TestAssert.Equal(0, stolen, $"{label}: no shot at {switchCase.Watched?.Name} after the switch");
+    }
+
+    /// <summary>
     /// A two-seat production match around the front Chaos lane turret (the nearest to the map's centre): the Order champion is the diver, the
     /// Chaos champion stands beside the turret. Both are 1e7-health and acquire nothing; the client of the Order seat records the wire.
     /// </summary>
@@ -403,6 +651,37 @@ public static class AttackCadenceChecks
         {
             for (var tick = 0; tick < (int)Math.Round(seconds / Step); tick++) Tick();
         }
+
+        /// <summary>A 1e7-health dummy minion <paramref name="distance"/> units from the turret toward the centre (an Order one by default).</summary>
+        public Entity Minion(double distance, Team team = Team.Order) => Runtime.World.Register(new Entity(
+            Runtime.World.Allocate(UnitType.Minion), EntityKind.Minion, UnitType.Minion, team, Toward(distance))
+            { Health = 1e7, MaxHealth = 1e7, Name = $"Dummy{distance:0}" });
+
+        /// <summary>Steps until the turret has swung at <paramref name="target"/> twice, which settles its attack on it.</summary>
+        public void Engage(Entity target)
+        {
+            for (var tick = 0; tick < (int)Math.Round(6.0 / Step) && Sent(0x0D, target, 0.0).Count() < 2; tick++) Tick();
+            TestAssert.True(Sent(0x0D, target, 0.0).Count() >= 2, $"{Turret.Name} shoots {target.Name} first");
+        }
+
+        /// <summary>Steps until the step that ran a TimerFindEnemies scan.</summary>
+        public void AfterScan()
+        {
+            Tick();
+            while (ScanTimes.Count == 0 || ScanTimes[^1] < Now - 1e-9) Tick();
+        }
+
+        /// <summary>Steps until the turret's next 0x0D at <paramref name="target"/>: its swing's wind-up has just begun.</summary>
+        public void NextSwing(Entity target)
+        {
+            var before = Sent(0x0D, target, 0.0).Count();
+            for (var tick = 0; tick < (int)Math.Round(3.0 / Step) && Sent(0x0D, target, 0.0).Count() == before; tick++) Tick();
+            TestAssert.True(Sent(0x0D, target, 0.0).Count() > before, $"{Turret.Name} swings at {target.Name} again");
+        }
+
+        /// <summary>The diver hits the champion beside the turret: Turret.luaobj's OnCallForHelp.</summary>
+        public void CallForHelp() => TestAssert.True(
+            Runtime.Combat.ApplyHit(Diver.NetId, Ally.NetId, 1.0, DamageType.True, DamageSourceKind.Basic), $"{Diver.Name} hits {Ally.Name}");
 
         /// <summary>The turret's packets of <paramref name="opcode"/> naming <paramref name="target"/> (at byte 5), delivered after <paramref name="after"/>.</summary>
         public IEnumerable<(double At, byte[] Bytes)> Sent(byte opcode, Entity target, double after) => _wire.Packets

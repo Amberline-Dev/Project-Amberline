@@ -1120,9 +1120,11 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     // Resources, ids, positions
     // ------------------------------------------------------------------------------------------------------------
 
-    // Batch 512: the shipped scripts whose BBIncPAR on a capture guardian the point's tree models itself (see IncPar).
+    // Batch 512: the shipped scripts whose BBIncPAR on a capture guardian the point's tree models itself (see IncPar). Batch 711: not
+    // OdinMinionSpellAttack: the tree's minion +-9 came with its kill of the arriving minion, which no longer happens (BehaviorLeaves.KillUnit),
+    // so each hit's 1 % to 3 % of the pool is the progress it shows (BehaviorTreeQuestHost's pending PAR, batch 694).
     private static readonly HashSet<string> TreeModelledMeterScripts =
-        new(StringComparer.OrdinalIgnoreCase) { "OdinGuardianSuppression", "OdinGuardianBuff", "OdinMinionSpellAttack" };
+        new(StringComparer.OrdinalIgnoreCase) { "OdinGuardianSuppression", "OdinGuardianBuff" };
 
     private void IncPar(BbCall call)
     {
@@ -1134,9 +1136,9 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         var parType = call.Value("PARType") is double named ? named : (double)BbParType.PAR_MANA;
         if (_host.PowerType(target) != (BbParType)(int)parType) return;
         // Batch 512 (Reconstruction, owner "one timer", 31 October 2026): a capture guardian's pool is the point tree's progress
-        // (BehaviorLeaves.CapturePointSetValue). OdinGuardianSuppression's drain, OdinGuardianBuff's regen and OdinMinionSpellAttack's hit keep
-        // running for their other effects (particles, sounds, buffs) but do not move it: a second writer is what made the meter go back (batch 510).
-        // Batch 694: those three are the tree's own math (CapturePointMath's rate, the owner's regen, the minions' +/-9). Any other script's PAR
+        // (BehaviorLeaves.CapturePointSetValue). OdinGuardianSuppression's drain and OdinGuardianBuff's regen keep running for their other
+        // effects (particles, sounds, buffs) but do not move it: a second writer is what made the meter go back (batch 510).
+        // Batch 694: those are the tree's own math (CapturePointMath's rate, the owner's regen; batch 711 took the minions' hit out). Any other script's PAR
         // has no tree counterpart (SummonerOdinGarrison's 800 a stats sample, "Quickly restores the neutralized portion"), so it goes to the point's
         // tree as progress, and the tree's CapturePoint_SetValue writes the pool. A stats hook's mutation lands on the buff's mutation clock (M4).
         if (target.ParIsCaptureMeter)

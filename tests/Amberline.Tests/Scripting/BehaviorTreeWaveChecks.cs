@@ -76,34 +76,49 @@ public static class BehaviorTreeWaveChecks
         spawned.Where(unit => unit.Team == team && unit.Name is "Odin_Blue_Minion_Caster" or "OdinBlueSuperminion" or "Odin_Red_Minion_Caster"
             or "OdinRedSuperminion").ToList();
 
-    /// <summary>Batch 451 step 3: a minion of a team standing on a neutral point moves that point's capture progress (EvaluateCapturePoint).</summary>
-    [Check("scripting.behaviour-tree-map8-minion-on-neutral-point-moves-its-capture")]
-    public static void MapEightMinionOnNeutralPointMovesItsCapture()
+    /// <summary>
+    /// Batch 451 step 3 ("...-minion-on-neutral-point-moves-its-capture"), restated by batch 711: the point's tree no longer consumes the minions
+    /// that assault it. An Order wave squad standing on neutral point A is not killed and moves no progress by standing there (its hits do,
+    /// OdinMinionSpellAttack: DominionGuardianChecks.Minions.cs); the tree's KillProximalMinion (OdinScriptBehaviorTrees.xml:949) contradicts the
+    /// shipped minion side (BehaviorLeaves.KillUnit). Once Order holds A, an Order squad from another point arriving there is consumed and adds
+    /// to the point (the allied branch, :714-818, kept).
+    /// </summary>
+    [Check("scripting.behaviour-tree-map8-point-consumes-arriving-allies-not-its-attackers")]
+    public static void MapEightPointConsumesArrivingAlliesNotItsAttackers()
     {
         var world = new WorldState();
         var spawned = new List<Entity>();
-        var host = MapEightHost(world, spawned);
+        var killed = new List<Entity>();
+        var host = MapEightHost(world, spawned, (unit, _) => killed.Add(unit));
         host.Tick(Step, Step);
         var capture = host.Captures[0];
         var scene = Path.Combine(GameDataPaths.Default.ForMap(GameMaps.CrystalScar).Root, "LEVELS", "Map8", "Scene");
         var centre = SceneMesh.CentralPoint(Path.Combine(scene, "Info_PointA.SCB"));
-        // A wave squad on the point: the point kills its squad minions and that kill is the progress (OdinScriptBehaviorTrees.xml:928-967).
         var encounters = host.Context.Encounters ?? throw new InvalidOperationException("map 8 has an encounter service");
         var encounter = encounters.CreateEncounter("SmallWave", 1, "") ?? throw new InvalidOperationException("SmallWave ships");
-        encounters.SpawnSquad(encounter, new Position2(centre.X, centre.Z), Team.Order, "waveSpawn");
-
-        var before = Convert.ToDouble(capture.Variable("CaptureProgress") ?? 0.0, CultureInfo.InvariantCulture);
+        var squadId = encounters.SpawnSquad(encounter, new Position2(centre.X, centre.Z), Team.Order, "waveSpawn")
+            ?? throw new InvalidOperationException("the squad spawns");
+        IReadOnlyList<Entity> Units() => encounters.Squad(squadId)?.Units ?? [];
         for (var tick = 2; tick <= 31; tick++) host.Tick(tick * Step, Step);
-        var after = Convert.ToDouble(capture.Variable("CaptureProgress") ?? 0.0, CultureInfo.InvariantCulture);
-        TestAssert.True(spawned.Count >= 3 && after > before,
-            $"an Order wave squad on neutral point A raises its progress ({before} to {after})");
+        TestAssert.True(Units().Count >= 1 && killed.Count == 0,
+            $"an Order squad on neutral point A is not consumed ({killed.Count} of {Units().Count} killed)");
+        TestAssert.Equal(0.0, Convert.ToDouble(capture.Variable("CaptureProgress") ?? 0.0, CultureInfo.InvariantCulture),
+            "standing on the neutral point moves no progress");
+
+        Hold(host, 0, Team.Order);
+        capture.SetVariable("CaptureProgress", 50.0);
+        for (var tick = 32; tick <= 61; tick++) host.Tick(tick * Step, Step);
+        TestAssert.True(Units().Count >= 1 && Units().All(killed.Contains),
+            $"once A is Order's, the arriving Order squad is consumed ({killed.Count} of {Units().Count})");
+        TestAssert.True(Convert.ToDouble(capture.Variable("CaptureProgress") ?? 0.0, CultureInfo.InvariantCulture) > 50.0,
+            "and adds to the point");
     }
 
-    private static BehaviorTreeQuestHost MapEightHost(WorldState world, List<Entity> spawned) =>
+    private static BehaviorTreeQuestHost MapEightHost(WorldState world, List<Entity> spawned, Action<Entity, uint>? kill = null) =>
         BehaviorTreeQuestHost.ForMap(GameMaps.CrystalScar, GameDataPaths.Default, world, null, null,
             (skin, at, team) => TestSpawn(world, spawned, skin, at, team, UnitType.Monster),
             // The kill hook is what production passes (KillUnit fails without one); the test's kill leaves the unit in place.
-            hooks: new CapturePointHooks(Kill: (_, _) => { }),
+            hooks: new CapturePointHooks(Kill: kill ?? ((_, _) => { })),
             spawnMinion: (skin, at, team) => TestSpawn(world, spawned, skin, at, team, UnitType.Minion))
         ?? throw new InvalidOperationException("map 8 has a quest host");
 

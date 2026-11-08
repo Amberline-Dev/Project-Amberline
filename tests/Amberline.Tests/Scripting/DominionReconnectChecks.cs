@@ -87,6 +87,17 @@ public static class DominionReconnectChecks
                 "the live Chaos client is told point A's guardian is Order's (UnitChangeTeam, 0xE0)");
 
             // A quest set goes out at 5:00 (each team holds a point); then both nexuses lose health (DIAGNOSTICS: the damage seam the quest sap uses).
+            // Batch 711: the waves neutralise an undefended point before 5:00 (Chaos's E1 waves take Order's A at about 3:50, DominionQuestChecks.Retake),
+            // so each team takes its point back through the same capture-tree seam just before (DIAGNOSTICS).
+            while (runtime.Combat.CurrentTime + Step / 2 < 299.0) runtime.Tick(Step);
+            foreach (var (point, team) in new[] { (1, Team.Order), (5, Team.Chaos) })
+            {
+                if (quests.CapturePointOwners.GetValueOrDefault(point) == team) continue;
+                quests.Captures[point - 1].SetVariable("CurrentPointOwner", Team.Neutral);
+                quests.Captures[point - 1].SetVariable("CaptureProgress", team == Team.Order ? 100.0 : -100.0);
+                for (var tick = 0; tick < 3; tick++) runtime.Tick(Step);
+                TestAssert.True(quests.CapturePointOwners[point] == team, $"{team} takes point {point} back before 5:00");
+            }
             while (runtime.Combat.CurrentTime + Step / 2 < 300.5) runtime.Tick(Step);
             var issued = captures[1].Of(DominionPackets.QuestUpdateOpcode).Where(packet => packet[0x186] == DominionPackets.QuestAdd).ToList();
             TestAssert.True(issued.Count == 2, $"the Chaos client got its two quest adds at 5:00, got {issued.Count}");

@@ -699,6 +699,8 @@ internal static class ProductionMatchComposition
         MatchScriptSeams.BindUnitCharacters(session, unitScripts);
         MatchScriptSeams.BindUnitCharacters(waves, unitScripts);
         MatchScriptSeams.BindUnitCharacters(scheduler, unitScripts);
+        // Batch 711: a minion's UseTarget within the use range casts the used unit's MinionUseSpell (map 8: OdinMinionSpellAttack on a guardian).
+        minions.UseObject = unitScripts.CastUseSpell;
         session.HeroCreated = hero =>
         {
             // Batch 556, Reconstruction: a spawn slot on a blocked cell starts on the nearest floor cell. Only Map4's fountain has one: the

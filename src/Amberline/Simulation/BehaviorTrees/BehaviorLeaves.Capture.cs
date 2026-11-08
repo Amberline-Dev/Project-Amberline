@@ -331,9 +331,20 @@ public static partial class BehaviorLeaves
     /// Reconstruction (batch 512, owner "one timer"): that drain no longer moves the meter (BbNativeHandlers.IncPar), the tree's CapturePointMath
     /// rate does, so the champions' rate there takes the drain's own ratio, x1.236 for one channeller, x1.174 for two. The script's ratio, not
     /// the tooltip's 15 %: the scripts are the server's code. Every other tree gets 1.
+    /// <para>
+    /// Batch 711: in EvaluateCapturePoint the only normalised rates are the "Capture Degen" regen (Order Regen, Chaos Regen, Neutral Degen,
+    /// OdinScriptBehaviorTrees.xml:332-518), the tree's stand-in for OdinGuardianBuff's regen (batch 694). The shipped regen
+    /// (<c>Spells/OdinGuardianBuff.luaobj</c> BuffOnUpdateActions, BBExecutePeriodically 1 s) runs only when the guardian's
+    /// BBGetBuffCountFromAll of OdinGuardianSuppression plus OdinMinionSpellAttack is 0, so the tree's regen is 0 while the guardian holds either:
+    /// a minion's hit (OdinMinionSpellAttack, 1 s on the guardian) is not taken back before the next one. Reconstruction: the script tests once
+    /// a second; this tests each tree tick.
+    /// </para>
     /// </summary>
     internal static double CaptureRateScale(BehaviorCall call)
     {
+        if (call.TreeName == "EvaluateCapturePoint")
+            return BehaviorCall.ToNumber(call.InstanceVariable("CapturePointID")) is { } id && call.Context.PointGuardian((int)id + 1) is { } held &&
+                   BuffCount(held, "OdinGuardianSuppression") + BuffCount(held, "OdinMinionSpellAttack") > 0.0 ? 0.0 : 1.0;
         if (call.TreeName != "CapturePointMath" || BehaviorCall.ToNumber(call.InstanceVariable("CapturePointID")) is not { } point ||
             call.Context.PointGuardian((int)point + 1) is not { } guardian || BuffCount(guardian, "PrilisasBlessing") <= 0.0) return 1.0;
         var extra = Math.Max(BuffCount(guardian, "OdinGuardianSuppressionOrder"), BuffCount(guardian, "OdinGuardianSuppressionChaos")) - 1.0;
@@ -504,6 +515,15 @@ public static partial class BehaviorLeaves
     private static BehaviorStatus KillUnit(BehaviorCall call)
     {
         if (call.Unit("Unit") is not { } unit) return BehaviorStatus.Failure;
+        // Batch 711 (Reconstruction, owner finding 7 November 2026: wave minions "just die and disappear when approaching a shrine"):
+        // EvaluateCapturePoint consumes every attacking squad minion within its 600 radius (KillProximalMinion, OdinScriptBehaviorTrees.xml:949,
+        // then the +-9 progress and the defenders' gold, :967-1076). The shipped minion side contradicts it: the guardian taunts enemy minions
+        // within 900 (OdinGuardianBuff, OdinMinionTaunt "Capture Fervor ... when assaulting a Capture Point"), MinionOdin answers the taunt with
+        // UseTarget, and the use is OdinMinionSpellAttack from 400 (its own missile, hit effect and Attack2), whose hit costs the minion a quarter
+        // of its health on a neutral point. A kill at 600 would leave all of that unreachable, and no shipped file starts this prototype tree
+        // (StartCapturePoints). So the attacker is not consumed: the node fails, NonWaveMinionsPresent stays false and the rest of the branch
+        // does not run. The allied branch's kill (:747, an arriving ally adds +-9) stays.
+        if (call.TreeName == "EvaluateCapturePoint" && call.Node.Name == "KillProximalMinion") return BehaviorStatus.Failure;
         return KillWith(call, unit, call.Unit("Killer")?.NetId ?? 0u);
     }
 

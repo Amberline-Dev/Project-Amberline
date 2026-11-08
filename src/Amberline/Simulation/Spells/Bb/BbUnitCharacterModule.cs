@@ -302,6 +302,11 @@ public sealed class BbUnitCharacterModule
             var at = Ground(system, target.Position);
             var missileId = system.World.Allocate(UnitType.Missile);
             var info = Info(missileId, at, at, [new SpellCastTarget(target.NetId, at, 0)]);
+            // Batch 711: an announced missile cast (a minion's use, CastUseSpell) goes out as its cast answer, the way a champion's homing cast
+            // does (BbChampionModule.CastHoming): the client plays the animation and builds the missile from it, and the flight's refreshes follow.
+            // An Instacast spell is left to the flight's own creation packet (batch 582).
+            if (announce && !data.IsInstant && system.Effects.IsReferenceReady(caster))
+                system.Effects.SendCast(caster, info, system.World.Clock.SyncId());
             var flight = new BbSpellProjectile(Forget, host, script, caster, slot, rank,
                 new ChampionCastContext(data, rank, 0.0, 0.0), info, target.NetId, missileId, targetFlags: flags,
                 atWindupEnd: () => RouterOrThrow.RunSelfExecute(script, caster, slot, rank, 0.0, at, at, target),
@@ -366,6 +371,26 @@ public sealed class BbUnitCharacterModule
     public void CastSpellSlot(Entity unit, int slot, Entity target) =>
         CastChild(new BbChildCast(unit, slot, target, target.Position, target.Position, new BbHookFrame("AI", "", unit),
             SlotType: BbSlotType.SpellSlots, OverrideCooldownCheck: false), announce: true);
+
+    /// <summary>
+    /// Batch 711: a minion's use of a useable unit (MinionOdin's <c>UseTarget</c> within the use range): the unit's <c>MinionUseSpell</c>
+    /// (OdinMinionSpellAttack on a capture point guardian) cast at it from the use slot, the slot a hero's use takes (0x33, the last extra slot,
+    /// <see cref="BbSummonerModule.UseChannelSlot"/>), with the spell's cooldown checked and started. The slot is bound to the spell on the
+    /// clients first (0x73, as a hero's use is, batch 494), then the cast answer goes out, so the client's spellbook plays the spell's
+    /// AnimationName (Attack2) and builds its missile. Reconstruction: retail's server half of a minion's use is not in the client.
+    /// </summary>
+    public void CastUseSpell(Entity unit, Entity used, string spell)
+    {
+        if (_host is null || !unit.Alive) return;
+        const int slot = BbSummonerModule.UseChannelSlot;
+        if (unit.ScriptSlotReadyAt.TryGetValue(slot, out var readyAt) && readyAt > _host.Spells.CurrentTime + 1e-9) return;
+        while (unit.ActiveSpellNames.Count <= slot) unit.ActiveSpellNames.Add(string.Empty);
+        unit.ActiveSpellNames[slot] = spell;
+        if (_host.Spells.Effects.IsReferenceReady(unit))
+            _host.Spells.Effects.SendSetSpellData(unit, SpellSystem.ProtocolHash(spell), slot);
+        CastChild(new BbChildCast(unit, slot - SpellSystem.ExtraSpellSlotStart, used, used.Position, used.Position,
+            new BbHookFrame("AI", "", unit), SlotType: BbSlotType.ExtraSlots, OverrideCooldownCheck: false), announce: true);
+    }
 
     /// <summary>The spell a unit's own slot casts (the character record's <c>Data*Spell{n+1}</c>; a check's pin and the
     /// name <see cref="CastChild"/> resolves). Null when the module is not bound or the slot holds no name.</summary>
