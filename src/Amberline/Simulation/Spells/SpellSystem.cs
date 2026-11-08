@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Amberline.Core;
 using Amberline.Core.Buffs;
 using Amberline.Data;
@@ -90,9 +91,15 @@ public sealed partial class SpellSystem
     private double _time;
     // Batch 404: actions due at a later match time (RunAt), run in the order they were queued once the step's clock reaches them.
     private readonly List<(double At, Action Run)> _timedActions = new();
-    // Batch 246: each holder's self-buff poll line (Bb.BbSelfUpdate) and whether this step is on it.
-    private readonly Dictionary<Entity, double> _selfUpdateNextAt = new(ReferenceEqualityComparer.Instance);
-    private readonly HashSet<Entity> _selfUpdateDue = new(ReferenceEqualityComparer.Instance);
+    // Batch 246: each holder's self-buff poll line (Bb.BbSelfUpdate) and whether this step is on it. Batch 720: every unit keeps one, the
+    // pass its buffs' bare BuffOnUpdateActions run on (BbBuffRuntime.OnTick); held weakly, so a unit the world removed takes its line along.
+    private sealed class UpdateLine
+    {
+        public double NextAt;
+        public double SteppedAt = double.NaN;
+        public bool Due;
+    }
+    private readonly ConditionalWeakTable<Entity, UpdateLine> _updateLines = new();
 
     public SpellSystem(
         WorldState world,
@@ -152,30 +159,30 @@ public sealed partial class SpellSystem
     }
 
     /// <summary>Whether this step is the unit's self-buff poll line (<see cref="Bb.BbSelfUpdate"/>), as the hero loop set it.</summary>
-    public bool SelfUpdateDue(Entity unit) => _selfUpdateDue.Contains(unit);
+    public bool SelfUpdateDue(Entity unit) => _updateLines.TryGetValue(unit, out var line) && line.Due;
+
+    /// <summary>
+    /// Batch 720: the instant the unit's line is due next (its next pass after this step's), or +infinity for a unit no step has met yet.
+    /// </summary>
+    internal double SelfUpdateNextAt(Entity unit) => _updateLines.TryGetValue(unit, out var line) ? line.NextAt : double.PositiveInfinity;
 
     // The line advances by whole intervals from the last one, so it keeps the first poll's phase; a passed line is skipped, never
     // repaid (the BuffOnUpdateActions rule, BbBuffRuntime.ActionsUpdateInterval). The holder's first poll runs at once.
     // Batch 256: a bound non-champion unit (Bb.BbUnitCharacterModule) steps its own line here too, and forgets it when unbound.
     internal bool StepSelfUpdate(Entity unit)
     {
-        if (!_selfUpdateNextAt.TryGetValue(unit, out var next)) next = _time;
-        var due = _time + 1e-9 >= next;
-        if (due)
+        if (!_updateLines.TryGetValue(unit, out var line)) _updateLines.Add(unit, line = new UpdateLine { NextAt = _time });
+        line.SteppedAt = _time;
+        line.Due = _time + 1e-9 >= line.NextAt;
+        if (line.Due)
         {
-            var missed = Math.Floor((_time - next) / Bb.BbSelfUpdate.Interval + 1e-9);
-            _selfUpdateNextAt[unit] = next + Math.Max(1.0, missed + 1.0) * Bb.BbSelfUpdate.Interval;
-            _selfUpdateDue.Add(unit);
+            var missed = Math.Floor((_time - line.NextAt) / Bb.BbSelfUpdate.Interval + 1e-9);
+            line.NextAt += Math.Max(1.0, missed + 1.0) * Bb.BbSelfUpdate.Interval;
         }
-        else _selfUpdateDue.Remove(unit);
-        return due;
+        return line.Due;
     }
 
-    internal void ForgetSelfUpdate(Entity unit)
-    {
-        _selfUpdateNextAt.Remove(unit);
-        _selfUpdateDue.Remove(unit);
-    }
+    internal void ForgetSelfUpdate(Entity unit) => _updateLines.Remove(unit);
 
     /// <summary>The match's hero stat service (null in the stand-alone check systems); the script engine refreshes through it.</summary>
     internal HeroStatsService? HeroStats => _heroStats;
@@ -606,6 +613,10 @@ public sealed partial class SpellSystem
             _timedActions.RemoveAt(index);
             run();
         }
+        // Batch 720: every other unit's line from its first step on (a lane minion, a ward, a trap: the pass its buffs' bare BuffOnUpdateActions
+        // run on, before TickBuffs). The heroes, the item-holding pets and the bound units stepped theirs above, each in its own place.
+        foreach (var unit in _world.Entities.Values)
+            if (!_updateLines.TryGetValue(unit, out var line) || line.SteppedAt != _time) StepSelfUpdate(unit);
     }
 
     /// <summary>

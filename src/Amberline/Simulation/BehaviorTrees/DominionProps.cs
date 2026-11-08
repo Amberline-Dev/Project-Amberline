@@ -278,8 +278,8 @@ public static class DominionProps
     }
 
     /// <summary>
-    /// Batch 507: each stage's lasers go out once, at the stage's latch frame of its Close clip (the clip start plus frame / 30; the clips are
-    /// time-synced at 30 fps, <see cref="PacketSeconds"/>): 49.37, 59.23, 69.43 and 79.63 s with the 80 s release. A team whose nexus has
+    /// Batch 507: each stage's lasers go out once, at the stage's latch frame of its Close clip. Batch 715: the clip start plus frame * duration /
+    /// frames, as the 0xDA time-syncs each clip over its stage (<see cref="StairClips"/>): 19.16, 38.60, 58.94 and 79.27 s with the 80 s release. A team whose nexus has
     /// fallen gets no more. The lasers stay on (k:0) until the fall. Batch 523: the fall's removal is <see cref="Removals"/> (the delivery's
     /// effect destroy, which also drops the persistent create, so no later viewer gets it).
     /// </summary>
@@ -297,7 +297,8 @@ public static class DominionProps
             var messages = new List<EffectCreateReplicationMessage>();
             foreach (var row in BeamStages)
             {
-                if (_sent[row.Stage] || now < stages[row.Stage].Start + row.Frame / ClipFps) continue;
+                var (_, start, duration) = stages[row.Stage];
+                if (_sent[row.Stage] || now < start + row.Frame * duration / StairClips[row.Stage].Frames) continue;
                 _sent[row.Stage] = true;
                 foreach (var team in new[] { Team.Order, Team.Chaos })
                     if (!nexusFallen(team)) messages.AddRange(BeamMessages(row.Stage, team, bounds));
@@ -324,15 +325,21 @@ public static class DominionProps
     /// </summary>
     public const double SpawnHoldStart = 1.0;
 
-    /// <summary>The stairs' closing clips in order, with their frame counts from each .anm header (Odin_SoG_{Order,Chaos}_Close_1..4:
-    /// 286 frames for Close1, 301 for Close2 to Close4; the header's fps is 30 for all of them).</summary>
-    public static readonly (string Name, int Frames)[] StairClips =
+    /// <summary>
+    /// The stairs' closing clips in order, with their frame counts from each .anm header (Odin_SoG_{Order,Chaos}_Close_1..4: 286 frames for
+    /// Close1, 301 for Close2 to Close4; the header's fps is 30) and the seconds each stage is time-synced over.
+    /// Reconstruction (batch 715): 15 s for Close1 and 20 s for Close2 to Close4, from the closing sounds. Each clip fires its sound at frame 0
+    /// (<c>Odin-SOG_Stair{n}_OBA_Sound.troy</c>, <c>BOG/Stair{n}/buffactivate</c>: the waves <c>odin-bog_stair{n}_extend_01/02</c>, 18 to 24 s), and
+    /// each wave ends in a thump: its end event starts 13.0 to 13.6 s in for Stair1 and 17.5 to 17.9 s in for Stair2 to Stair4 (both waves of
+    /// each, decoded from <c>LoL_SFX_odin.fsb</c>). The slam is the slamming dust's frame (AnimEffects s:260 on Close1, s:270 on the others; the
+    /// stair piece's fastest frame, .anm). Over 15 and 20 s the slam comes 13.64 and 17.94 s in, on the thump; at the clips' own 30 fps it came
+    /// at 8.67 and 9.0 s, so the thump played 4.4 to 8.9 s after the slam, in the next stage (batch 715 record). Retail's sender is not
+    /// recovered; these are the round stage lengths the four sounds agree on.
+    /// </summary>
+    public static readonly (string Name, int Frames, double Seconds)[] StairClips =
     [
-        ("Close1", 286), ("Close2", 301), ("Close3", 301), ("Close4", 301),
+        ("Close1", 286, 15.0), ("Close2", 301, 20.0), ("Close3", 301, 20.0), ("Close4", 301, 20.0),
     ];
-
-    /// <summary>The clips' fps (the header field after the frame count).</summary>
-    public const double ClipFps = 30.0;
 
     /// <summary>
     /// Reconstruction (batch 485): the duration of a held idle (Raised_Idle). The client sets the playback speed to frames / duration
@@ -366,17 +373,17 @@ public static class DominionProps
 
     /// <summary>
     /// The stages with their mission start times: the four clips run back to back and the last one ends at <paramref name="release"/>
-    /// (the owner's 1:20 start). Stage <c>i</c> starts when stage <c>i-1</c> has run its duration.
+    /// (the owner's 1:20 start). Stage <c>i</c> starts when stage <c>i-1</c> has run its duration. Batch 715: each duration is the stage's
+    /// <see cref="StairClips"/> seconds (15, 20, 20, 20), so with the 80 s release the stages start at 5, 20, 40 and 60 s.
     /// </summary>
     public static IReadOnlyList<(string Name, double Start, double Duration)> StairStages(double release)
     {
-        var durations = StairClips.Select(clip => clip.Frames / ClipFps).ToArray();
-        var start = release - durations.Sum();
+        var start = release - StairClips.Sum(clip => clip.Seconds);
         var stages = new (string Name, double Start, double Duration)[StairClips.Length];
         for (var index = 0; index < StairClips.Length; index++)
         {
-            stages[index] = (StairClips[index].Name, start, durations[index]);
-            start += durations[index];
+            stages[index] = (StairClips[index].Name, start, StairClips[index].Seconds);
+            start += StairClips[index].Seconds;
         }
         return stages;
     }
@@ -506,7 +513,8 @@ public static class DominionProps
 
     /// <summary>
     /// Sends each stage's 0xDA once, on the first tick at or after its start. The client seeks a clip to "now minus start", so a send
-    /// at the start shows the clip from its first frame. Each stage holds its last frame until the next one lands (<see cref="ClipFlags"/>).
+    /// at the start shows the clip from its first frame, and the frame-0 closing sound starts with it (batch 715). Each stage holds its last
+    /// frame until the next one lands (<see cref="ClipFlags"/>).
     /// </summary>
     public sealed class StairAnimator
     {

@@ -193,7 +193,9 @@ public static partial class ChampionLiveRegressionChecks
         var hero = match.Hero(0);
         match.Hero(1).Position = new Position2(7000, 9000);
         match.CastGround(0, hero.Position + new Position2(500, 0));
-        match.Runtime.Tick(.6);
+        // Batch 713: the Izuna line (Instacast) flies from the step after its creation 0x41, so the ball lands one 1/30 s step later and its
+        // OrianaGhost updates come one step later too; one more step keeps every window below on the same updates as before.
+        match.Runtime.Tick(.6 + 1.0 / 30.0);
         var ball = OriannaBall(match, Team.Order);
         var radii = hero.CombatRadius + ball.CombatRadius;
         void Stand(double centre)
@@ -214,7 +216,7 @@ public static partial class ChampionLiveRegressionChecks
 
         OriannaReady(hero);
         match.CastGround(0, hero.Position + new Position2(500, 0));
-        match.Runtime.Tick(.6);
+        match.Runtime.Tick(.6 + 1.0 / 30.0);
         var far = OriannaBall(match, Team.Order);
         hero.Position = new Position2(far.Position.X - (radii + 1126.0), far.Position.Z);
         match.Runtime.Tick(.1);

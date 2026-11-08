@@ -44,7 +44,7 @@ internal sealed partial class BbHookRouter
     {
         if (flight.Script.Event("SpellOnMissileUpdate") is null) return;
         var scope = MissileSpellScope(flight, target);
-        scope.Vars["MissilePosition"] = _host.Point(at);
+        scope.Vars["MissilePosition"] = _host.Point(at, flight.Height);
         RunInSpell(flight.Script, "SpellOnMissileUpdate", scope, MissileSpellFrame(flight, "SpellOnMissileUpdate"));
     }
 
@@ -62,7 +62,7 @@ internal sealed partial class BbHookRouter
         if (flight.Script.Event("SpellOnMissileEnd") is not null)
         {
             var scope = MissileSpellScope(flight, target);
-            scope.Vars["MissileEndPosition"] = _host.Point(flight.Position);
+            scope.Vars["MissileEndPosition"] = _host.Point(flight.Position, flight.Height);
             scope.Vars["SpellName"] = flight.SpellName;
             RunInSpell(flight.Script, "SpellOnMissileEnd", scope, MissileSpellFrame(flight, "SpellOnMissileEnd"));
         }
@@ -70,7 +70,7 @@ internal sealed partial class BbHookRouter
         {
             var scope = NewScope(instance.Owner, instance.Owner, target, _host.Spells.World.Get(instance.CasterNetId),
                 instance.SpellRank >= 1 ? instance.SpellRank : null, instance.InstanceVars);
-            scope.Vars["MissileEndPosition"] = _host.Point(flight.Position);
+            scope.Vars["MissileEndPosition"] = _host.Point(flight.Position, flight.Height);
             scope.Vars["SpellName"] = flight.SpellName;
             // The buff script deals the damage of an end hook (Flash Frost's burst): its own spell-shield flags are the ambient ones, as for a
             // buff's update ticks (the owner decision of 18 October 2026, evening).

@@ -215,9 +215,25 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
     /// on each order (<c>OnOrder</c>) and on each acquisition or state change (<c>TimerFindEnemies</c>, <c>TimerScanDistance</c>),
     /// and each ask is one packet. A repeated stop is therefore sent, not deduplicated. Owner decision,
     /// 25 October 2026: retail even where it measures worse; batch 229 records the match numbers.
+    /// <para>
+    /// A walk of a non-hero unit ends that unit's attack on its clients first (batch 716). The stock client runs every non-hero unit
+    /// (pet, clone, ghoul, Nimbus clone, lane minion, monster) as an obj_AI_Minion: from its 0x0D on, the unit's attack state starts
+    /// the last attack again every attack period (UpdatePimpl) and every start erases the path the unit follows; only a
+    /// 0x39 or the unit's own death ends that state, and neither a route nor a reveal does. A route sent into that state
+    /// is walked until the next start at most, and then the unit swings in place at a target it no longer reaches while the server
+    /// walks it and deals nothing (Tibbers chasing a target inside his 100-unit cancel band, which Pet.lua turns neither on nor off).
+    /// The lane minions' and the monsters' own natives stop before they walk (MinionAiSystem.StopAttack, NeutralLuaAiEngine.CloseToTarget);
+    /// every other route of a non-hero unit is published here. <see cref="CombatPackets.StopAttack"/> sends the stop only to a client
+    /// still in that state, so a unit already stopped costs nothing. A one-point path is a stop, not a walk, and a hero has no such
+    /// repeat (its stop also ends a channel), so neither gets one. Reconstruction: where retail's native sent its stop is unrecovered;
+    /// The client shows it must precede the walk.
+    /// </para>
     /// </summary>
-    public void SendWaypoints(Entity unit, IReadOnlyList<Position2> points, long syncId) =>
+    public void SendWaypoints(Entity unit, IReadOnlyList<Position2> points, long syncId)
+    {
+        if (points.Count > 1 && unit.UnitType != UnitType.Hero && unit.ClientAttackArmed) SendStopAttack(unit);
         Enqueue(VisionPackets.WaypointList(unit.NetId, points, checked((uint)syncId)));
+    }
 
     // Whether a unit gets a stop-attack (0x39) and with which flags is CombatPackets.StopAttack's decision, the same one the minion
     // AI, the neutral wire and the session detach use: a swing the server dropped is not played, a hit that stands keeps its shot.

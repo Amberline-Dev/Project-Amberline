@@ -158,12 +158,14 @@ internal static class ChampionSpellSupport
     public static void RefreshMissile(SpellSystem system, Entity hero, SpellCastInfo? info,
         Position2 origin, Position2 position, Position2 end, double speed,
         bool homing = false, Position2? casterPosition = null,
-        MissileCasterProjection? casterProjection = null, double launchHeight = 0.0)
+        MissileCasterProjection? casterProjection = null, double launchHeight = 0.0, double lineHeight = 0.0)
     {
         if (info is null || info.MissileNetId == 0) return;
-        var start3 = Ground(system, origin);
-        var current3 = Ground(system, position);
-        var end3 = Ground(system, end);
+        // Batch 713: a line missile flies lineHeight above the terrain the whole way (BbLineMissile.LaunchHeight), so its points are raised by it; the
+        // client keeps the height of the packet's position over the ground for the line's whole flight.
+        var start3 = Raised(Ground(system, origin), lineHeight);
+        var current3 = Raised(Ground(system, position), lineHeight);
+        var end3 = Raised(Ground(system, end), lineHeight);
         var length = Distance(origin, end);
         var life = length <= 1e-9 ? 0.0f : (float)Math.Clamp(Distance(origin, position) / length, 0.0, 1.0);
         var direction = Direction(homing ? position : origin, end);
@@ -214,6 +216,8 @@ internal static class ChampionSpellSupport
 
     public static Position3 Ground(SpellSystem system, Position2 point) =>
         new(point.X, system.Movement.Navigation.HeightAt(point), point.Z);
+
+    public static Position3 Raised(Position3 point, double height) => height == 0.0 ? point : point with { Y = point.Y + height };
 
     public static double RawNumber(SpellData data, string key, double fallback = 0.0) =>
         data.Raw.TryGetValue(InibinReader.KeyHash(key), out var value) && value.IsNumeric

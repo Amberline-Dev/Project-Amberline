@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using Amberline.Core;
 using Amberline.Data;
 using Amberline.Network.Sessions;
+using Amberline.Simulation.BehaviorTrees;
 using Amberline.Simulation.Spells;
 
 namespace Amberline.Tests;
@@ -237,6 +238,80 @@ public static class DominionBaseChecks
     private sealed class Capture(List<Amberline.Network.Protocol.PlaintextPacket> sink) : Amberline.Network.Replication.IReplicationTransport
     {
         public void Send(Amberline.Network.Protocol.PlaintextPacket packet) => sink.Add(packet);
+    }
+
+    /// <summary>
+    /// Batch 715: the stairs' thump. The client fires a clip's AnimEffects once the clip's frame reaches their start frame (AnimationFXPlayer,
+    /// The client). At frame 0 of Close{n} that is the closing sound, <c>Odin-SOG_Stair{n}_OBA_Sound.troy</c>, whose OnCreate sound
+    /// (<c>BOG/Stair{n}/buffactivate</c>, the waves <c>odin-bog_stair{n}_extend_01/02</c>) plays once when the particle is made,
+    /// so the sound starts when the 0xDA lands. At the slam frame it is the slamming dust. The thump is the wave's end event, <see cref="ThumpSeconds"/>
+    /// after the sound starts. The 0xDA's start and duration time-sync the clip, so its slam comes at start + frame * duration / frames. Every client
+    /// gets each stage once on both stairs, and each slam lands within 0.75 s of its sound's thump, for both waves the sound picks from.
+    /// </summary>
+    [Check("dominion.stairs-slam-lands-on-the-thump-of-their-closing-sound")]
+    public static void StairsSlamLandsOnTheThumpOfTheirClosingSound()
+    {
+        WithMatch(runtime =>
+        {
+            var wire = new Dictionary<Team, List<(double Time, byte[] Bytes)>>();
+            foreach (var seat in runtime.Session.Participants)
+            {
+                var packets = wire[seat.Team] = new List<(double Time, byte[] Bytes)>();
+                runtime.Delivery.AddObserver(new Amberline.Network.Replication.ReplicationObserver(seat.PlayerId, seat.Team, seat.Hero!.NetId,
+                    new StampedCapture(packets, () => runtime.Combat.CurrentTime), ready: true, view: seat.View));
+            }
+            for (var tick = 0; tick < (OpeningCeremonyTiming.ReleaseSeconds + 5.0) / Step && runtime.Combat.CurrentTime < OpeningCeremonyTiming.ReleaseSeconds + 1.0; tick++)
+            {
+                runtime.Tick(Step);
+                runtime.Delivery.Flush();
+            }
+            foreach (var (team, packets) in wire)
+                foreach (var (stairs, character) in new[] { (DominionProps.OrderStairsNetId, "Odin_SoG_Order"), (DominionProps.ChaosStairsNetId, "Odin_SoG_Chaos") })
+                {
+                    var clips = packets.Where(packet => packet.Bytes.Length == 89 && packet.Bytes[0] == 0xDA
+                        && BinaryPrimitives.ReadUInt32LittleEndian(packet.Bytes.AsSpan(77)) == stairs).ToList();
+                    var timeline = string.Join("; ", clips.Select(clip => $"{clip.Time:0.000}: {ClipName(clip.Bytes)} start "
+                        + $"{BinaryPrimitives.ReadSingleLittleEndian(clip.Bytes.AsSpan(69)):0.000} duration {BinaryPrimitives.ReadSingleLittleEndian(clip.Bytes.AsSpan(73)):0.000}"));
+                    var stages = clips.Where(clip => ClipName(clip.Bytes).StartsWith("Close", StringComparison.Ordinal)).ToList();
+                    TestAssert.Equal(4, stages.Count, $"the {team} client gets the four Close stages of {character} once each ({timeline})");
+                    var effects = File.ReadAllLines(GameDataPaths.Default.Data($"Characters/{character}/AnimEffects.list"));
+                    for (var n = 1; n <= 4; n++)
+                    {
+                        var (received, bytes) = stages[n - 1];
+                        TestAssert.Equal($"Close{n}", ClipName(bytes), $"{character} stage {n} is Close{n} ({timeline})");
+                        TestAssert.Equal(0, EffectFrame(effects, $"Close{n}", $"Odin-SOG_Stair{n}_OBA_Sound.troy"), $"Close{n}'s closing sound fires at frame 0");
+                        var header = File.ReadAllBytes(GameDataPaths.Default.Data($"Characters/{character}/Animations/{character}_Close_{n}.anm"));
+                        var frames = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(20));
+                        var start = BinaryPrimitives.ReadSingleLittleEndian(bytes.AsSpan(69));
+                        var duration = BinaryPrimitives.ReadSingleLittleEndian(bytes.AsSpan(73));
+                        var slam = start + EffectFrame(effects, $"Close{n}", "Odin_SOG_slamming_dust.troy") * duration / frames;
+                        foreach (var thump in ThumpSeconds[n - 1])
+                            TestAssert.True(Math.Abs(received + thump - slam) <= 0.75,
+                                $"{team} client, {character} Close{n}: the slam at {slam:0.00} s lands on the thump at {received + thump:0.00} s ({timeline})");
+                    }
+                }
+        });
+    }
+
+    /// <summary>
+    /// Batch 715: the onset of each closing sound's end event (its thump), in seconds after the sound starts, for both waves of the sound
+    /// (<c>odin-bog_stair{n}_extend_01</c> and <c>_02</c> in <c>DATA/Sounds/FMOD/LoL_SFX_odin.fsb</c>, CELT 0.6.1; the coarse band energies decoded
+    /// at 0.1 s steps, batch 715 record).
+    /// </summary>
+    private static readonly double[][] ThumpSeconds = [[13.62, 13.04], [17.54, 17.75], [17.54, 17.54], [17.89, 17.65]];
+
+    private static string ClipName(byte[] bytes) => System.Text.Encoding.ASCII.GetString(bytes, 5, 64).Split('\0')[0];
+
+    // The start frame (s:) of an AnimEffects.list line: the clip, a bone, the effect file, then its options. Both bones of a stage share it.
+    private static int EffectFrame(string[] lines, string clip, string effect) => lines
+        .Select(line => line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        .Where(words => words.Length > 3 && words[0] == clip && words[2].Equals(effect, StringComparison.OrdinalIgnoreCase))
+        .Select(words => int.Parse(words.First(word => word.StartsWith("s:", StringComparison.Ordinal))[2..]))
+        .Distinct().Single();
+
+    private sealed class StampedCapture(List<(double Time, byte[] Bytes)> sink, Func<double> now) : Amberline.Network.Replication.IReplicationTransport
+    {
+        public void Send(Amberline.Network.Protocol.PlaintextPacket packet) => sink.Add((now(), packet.Plaintext.ToArray()));
     }
 
     [Check("dominion.recall-lands-at-the-map-8-spawn-point")]

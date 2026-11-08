@@ -90,6 +90,8 @@ internal sealed class BbMissileFlight
     public Position3 CastPosition { get; }
     public Position3 CastEndPosition { get; }
     public Position2 Position { get; private set; }
+    /// <summary>Batch 713: how far above the terrain the missile flies (a line's launch height, <see cref="BbLineMissile"/>); its script points carry it.</summary>
+    public double Height { get; init; }
     public bool Launched { get; private set; }
     /// <summary>A script destroyed the missile (<c>BBDestroyMissile</c>): its owner ends it instead of flying on.</summary>
     public bool Destroyed { get; private set; }

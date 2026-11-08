@@ -886,8 +886,10 @@ public sealed class BbChampionModule : IChampionSpellModule
             // of an Instacast parent; the cast frame, the rest), for the child's own SpellRevealsChampion: the same routine
             // BuildChampionCastInfo runs for a slot spell. Ezreal's Arcane Shift bolt reveals him to its target at launch, after the blink.
             if (targets.Count > 0) system.RevealCaster(hero, data, targets);
+            // Batch 713: an overriding cast's CasterPos is the 3D point the client launches the missile from (DoCast_ClientAndServer), so it keeps
+            // the point's height (a raised marker's).
             return Channelled(script, new(SpellSystem.ProtocolHash(name), hero.NetId, rank, hero.NetId, missileId, at, end, targets, 0.0f, 0.0f, extraSlot,
-                Ground(system, launchFrom), 1.0f, (float)data.CastDelay, 0.0f, (float)attackTotal, 0.0f)
+                ChampionSpellSupport.Raised(Ground(system, launchFrom), child.CastHeight), 1.0f, (float)data.CastDelay, 0.0f, (float)attackTotal, 0.0f)
                 {
                     Flags = (byte)((child.ForceCastingOrChannelling ? ChannellingFlag : (byte)0) |
                                    (child.OverrideCastPosition ? OverrideCastPositionFlag : (byte)0) |
@@ -956,7 +958,8 @@ public sealed class BbChampionModule : IChampionSpellModule
             var container = parent is { IsInstant: true } && !child.FireWithoutCasting;
             var delay = child.FireWithoutCasting ? 0.0 : parent is not null ? (parent.IsInstant ? data.CastDelay : 0.0) : data.CastTime;
             var line = new BbLineMissile(Forget, host, script, name, hero, parentSlot, rank, info, delay,
-                tracked?.Position ?? lineEnd, data, flags, tracked, projection, completesCast: container, launchFrom: child.CastPosition);
+                tracked?.Position ?? lineEnd, data, flags, tracked, projection, completesCast: container, launchFrom: child.CastPosition,
+                launchHeight: child.CastHeight);
             _lines.Add(line);
             system.EnqueueSharedProjectile(line);
             return;

@@ -412,7 +412,12 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
                 // Wait for that actor's normal template instead of erasing it.
                 if (missileTargets.Count != missile.Info.Targets.Count)
                     break;
-                if (missile.RefreshOnly)
+                // Reconstruction (batch 719): a refresh reaches a view that missed the cast by sight of the missile's point, but the caster's own view
+                // takes its child missile's first refresh in place of the cast answer (batch 393, above), and that answer reaches every view that sees
+                // the caster, his own always. By sight, a blade whose refresh points lay behind a wall or in brush never reached its caster (Talon's
+                // Rake cast over a river-bank wall: his client built 1 of the 3 blades the ally and the enemy built from the answer), so the
+                // caster's own view takes the creation's rule below.
+                if (missile.RefreshOnly && observer.HeroNetId != missile.CasterNetId)
                 {
                     var point = new Position2(missile.Position.X, missile.Position.Z);
                     if (!VisibilityRules.ProvidersReveal(Environment, teamState.Providers, point))

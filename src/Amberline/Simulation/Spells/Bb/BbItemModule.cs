@@ -398,7 +398,8 @@ public sealed class BbItemModule
         var flags = BbSpellTargeting.Names(BbSpellTargeting.Flags(data));
         if (castType != 3 && castType is not (0 or 1))
             throw BbSpellHost.Unbound($"an item child cast of CastType {castType} ({name})", "child casts");
-        var launch = Ground(system, child.CastPosition ?? caster.Position);
+        // Batch 713: an overriding child leaves from its 3D point (BbChampionModule.CastChild, BbLineMissile.LaunchHeight).
+        var launch = Amberline.Simulation.Spells.Champions.ChampionSpellSupport.Raised(Ground(system, child.CastPosition ?? caster.Position), child.CastHeight);
         // The child's own cast time, or none when the call fires without casting (every item child does).
         var wait = child.FireWithoutCasting ? 0.0 : data.CastDelay;
         var context = new ChampionCastContext(data, rank, 0.0, 0.0);
@@ -416,7 +417,7 @@ public sealed class BbItemModule
             var info = Announce(missileId, at, Ground(system, child.End), Array.Empty<SpellCastTarget>());
             if (system.Effects.IsReferenceReady(caster)) system.Effects.SendCast(caster, info);
             var line = new BbLineMissile(Forget, host, script, name, caster, child.Frame.SpellSlot, rank, info,
-                wait, child.End, data, flags, launchFrom: child.CastPosition, itemId: child.Frame.ItemId);
+                wait, child.End, data, flags, launchFrom: child.CastPosition, itemId: child.Frame.ItemId, launchHeight: child.CastHeight);
             _lines.Add(line);
             system.EnqueueSharedProjectile(line);
             return;

@@ -1243,6 +1243,9 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         // announced launch position and the missile's origin are that point.
         var overridePosition = Flag(call, "OverrideCastPosition", false);
         Position2? castFrom = overridePosition ? PointOf("OverrideCastPosVar") : null;
+        // Batch 713: the shared DoCast_ClientAndServer launches an overriding cast at CasterPos as a 3D point, so the point's height above the
+        // terrain is the missile's (Talon's returning blades leave from their raised markers).
+        var castHeight = overridePosition ? _host.HeightAbove(PositionOperand(call, "OverrideCastPosVar")) : 0.0;
         // NOT RETAIL: crash containment (batch 280). A child with no cast time lands inside this call, so a child whose own hook casts it again
         // nests without end: DeathsCaress's BBElse (the second cast without its shield) casts extra slot 0, which is DeathsCaress itself. Retail's
         // handling is server-only and unknown; here, past MaxSpellCastNesting, the cast is a script failure, because a stack overflow ends the
@@ -1254,7 +1257,7 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         {
             caster2(new BbChildCast(caster, index, Unit(call, "TargetVar"), at, end, _host.Frame, level > 0 ? level : null,
                 Flag(call, "FireWithoutCasting", false), type, Flag(call, "OverrideCoolDownCheck", true), castFrom,
-                Flag(call, "ForceCastingOrChannelling", false), overridePosition));
+                Flag(call, "ForceCastingOrChannelling", false), overridePosition, castHeight));
         }
         finally { _spellCastNesting--; }
     }
@@ -1292,8 +1295,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     private void GetUnitPosition(BbCall call)
     {
         var unit = Unit(call, "UnitVar") ?? throw new BbRuntimeException("BBGetUnitPosition has no unit");
-        // The position native stores the unit's position vector under the "Position" parameter.
-        call.Table("PositionVarTable", create: true)[call.Value("PositionVar")] = _host.Point(unit.Position);
+        // The position native stores the unit's position vector under the "Position" parameter, its height included (batch 713: a raised marker's).
+        call.Table("PositionVarTable", create: true)[call.Value("PositionVar")] = _host.Point(unit.Position, unit.Height);
     }
 
     private void GetPointByUnitFacingOffset(BbCall call)

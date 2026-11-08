@@ -194,6 +194,12 @@ public sealed partial class Entity
     public Team Team { get; set; }
     public bool IsTrainingDummy { get; set; }
     public Position2 Position { get; set; }
+    /// <summary>
+    /// Batch 713: how far above the terrain the unit stands. Zero for every unit that walks; a unit a script spawns at a raised point keeps that
+    /// point's height, which <c>BBGetUnitPosition</c> answers.
+    /// Talon's blade markers stand where the outgoing blade ended, at the blade's flight height, and the returning blade leaves from there.
+    /// </summary>
+    public double Height { get; set; }
     public double Speed { get; set; }
     /// <summary>Hero flat movement modifier before percentages and soft caps.</summary>
     public double FlatMovementSpeedMod { get; set; }

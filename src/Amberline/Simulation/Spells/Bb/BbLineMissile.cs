@@ -57,15 +57,19 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     // SpellData*Flags bit 2 (Instacast): the client runs such a cast through the instant-cast routine, which never
     // reaches the cast routine, so the cast answer creates no missile object (see Launch).
     private readonly bool _instant;
+    // Batch 713: how far above the terrain the line flies (LaunchHeight); every point the clients and the scripts get from it carries it.
+    private readonly double _height;
     private Position2 _origin;
     private Position2 _position;
     private Position2 _direction;
 
     public BbLineMissile(Action<BbLineMissile> forget, BbSpellHost host, BbScript script, string spellName, Entity caster, int slot, int rank,
         SpellCastInfo castInfo, double delay, Position2 aim, SpellData data, HashSet<string> flags, Entity? tracked = null,
-        MissileCasterProjection? projection = null, bool completesCast = false, Position2? launchFrom = null, int itemId = 0)
+        MissileCasterProjection? projection = null, bool completesCast = false, Position2? launchFrom = null, int itemId = 0,
+        double launchHeight = 0.0)
     {
         _launchFrom = launchFrom;
+        _height = LaunchHeight(caster, launchFrom is not null, launchHeight);
         _completesCast = completesCast;
         _projection = projection;
         _forget = forget;
@@ -91,8 +95,24 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         _fromStart = BbChampionModule.RawCount(data, "SpellData*LineMissileCollisionFromStartPoint") != 0;
         _tracked = tracked is not null && Tracks(data) ? tracked : null;
         _position = _origin = launchFrom ?? caster.Position;
-        _flight = new BbMissileFlight(host, script, spellName, caster, slot, rank, 0.0, castInfo, data);
+        _flight = new BbMissileFlight(host, script, spellName, caster, slot, rank, 0.0, castInfo, data) { Height = _height };
     }
+
+    /// <summary>
+    /// Batch 713 (owner, 8 November 2026: Talon's W blade "flies towards his feet when going back... goes underground almost instantly"). How far above
+    /// the terrain a line flies. The shared the client (AB 2605987-2606008) launches an <c>obj_SpellLineMissile</c> at
+    /// the caster's <c>MissileBoneName</c> joint, which <c>GetJointPositionHelper</c> finds only through the unit's animation component (the client's
+    /// actor), else 100 above the caster's position; a cast that overrides its position leaves from <c>CasterPos</c>, the 3D point the script gave.
+    /// The line then keeps that height over the terrain (the client: the start and end
+    /// heights are the ground's plus <c>mStartHeightFromGround</c>, which the 0x41 handler the client takes from the packet's position).
+    /// Reconstruction: the server has no animated skeleton, so its line leaves 100 above its caster; the scripts' points carry the height on
+    /// (MissileEndPosition, the spawn there, BBGetUnitPosition, OverrideCastPosVar), so Talon's returns leave from markers raised to the blade's height.
+    /// </summary>
+    internal static double LaunchHeight(Entity caster, bool overridesCastPosition, double castPositionHeight) =>
+        overridesCastPosition ? castPositionHeight : caster.Height + LaunchHeightWithoutJoint;
+
+    /// <summary>The launch height above the caster of a line whose caster has no joint pose (DoCast_ClientAndServer's fallback).</summary>
+    internal const double LaunchHeightWithoutJoint = 100.0;
 
     /// <summary>Whether the spell's line chases the unit its cast named (<c>SpellData*LineMissileTrackUnits</c>).</summary>
     public static bool Tracks(SpellData data) => BbChampionModule.RawCount(data, "SpellData*LineMissileTrackUnits") != 0;
@@ -134,8 +154,20 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
             // executes an outstanding cast frame once and ends the cast controller, so the ordered stream is cast, finish,
             // missile created, missile retired.
             if (_completesCast && Caster.UnitType == UnitType.Hero && system.Effects.IsReferenceReady(Caster)) system.Effects.SendFinishCast(Caster);
-            if (_projection is { } projected) SendProjected(system, projected);
-            else if (_instant) SendInstantCreation(system);
+            var announced = false;
+            if (_projection is { } projected)
+            {
+                SendProjected(system, projected);
+                announced = true;
+            }
+            else if (_instant) announced = SendInstantCreation(system);
+            // Batch 713 (owner, 8 November 2026: Talon's R blades "sometimes" end early). A line announced by its own creation packet (an Instacast
+            // line, a worldless caster's) is at its start on the client when that packet arrives: the 0x41 handler puts the
+            // object at the packet's position and the line update moves it from there. The packet leaves with this step's flush, so the line
+            // flies from the next step: the rest of this one flown here put the server one step (1850 x 1/30 = 62 units) ahead of every client,
+            // and the 0x5D of a returning blade that reached Talon cut the client's blade that far short of him. Reconstruction: when retail's
+            // server first moved a missile it created is server-only; the client's start is the packet's.
+            if (announced) left = 0.0;
             // The line leaves its caster: BuffOnLaunchMissile of the caster's script buffs.
             _flight.Launch(_position, null);
         }
@@ -177,17 +209,18 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
             }
         }
         var end = _returning ? Caster.Position : _origin + new Position2(_direction.X * _range, _direction.Z * _range);
-        ChampionSpellSupport.RefreshMissile(system, Caster, _castInfo, _origin, _position, end, _speed, casterProjection: _projection);
+        ChampionSpellSupport.RefreshMissile(system, Caster, _castInfo, _origin, _position, end, _speed, casterProjection: _projection, lineHeight: _height);
         return true;
     }
 
     /// <summary>The first packet of a line cast by a worldless caster: the missile at its start, flying along the line at its speed.</summary>
     private void SendProjected(SpellSystem system, MissileCasterProjection projection)
     {
-        var start = ChampionSpellSupport.Ground(system, _origin);
-        var end = ChampionSpellSupport.Ground(system, _origin + new Position2(_direction.X * _range, _direction.Z * _range));
+        var ground = ChampionSpellSupport.Ground(system, _origin);
+        var start = ChampionSpellSupport.Raised(ground, _height);
+        var end = ChampionSpellSupport.Raised(ChampionSpellSupport.Ground(system, _origin + new Position2(_direction.X * _range, _direction.Z * _range)), _height);
         system.Effects.SendProjectedMissile(projection, _castInfo, start, new Position3(_direction.X, 0.0, _direction.Z),
-            new Position3(_direction.X * _speed, 0.0, _direction.Z * _speed), start, end, start, start);
+            new Position3(_direction.X * _speed, 0.0, _direction.Z * _speed), start, end, ground, ground);
     }
 
     /// <summary>
@@ -207,15 +240,16 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     /// 24 September native retest).
     /// </para>
     /// </summary>
-    private void SendInstantCreation(SpellSystem system)
+    private bool SendInstantCreation(SpellSystem system)
     {
-        if (_missileNetId == 0 || !system.Effects.IsReferenceReady(Caster)) return;
-        var start = ChampionSpellSupport.Ground(system, _origin);
-        var end = ChampionSpellSupport.Ground(system,
-            _tracked is { } tracked ? tracked.Position : _origin + new Position2(_direction.X * _range, _direction.Z * _range));
+        if (_missileNetId == 0 || !system.Effects.IsReferenceReady(Caster)) return false;
+        var start = ChampionSpellSupport.Raised(ChampionSpellSupport.Ground(system, _origin), _height);
+        var end = ChampionSpellSupport.Raised(ChampionSpellSupport.Ground(system,
+            _tracked is { } tracked ? tracked.Position : _origin + new Position2(_direction.X * _range, _direction.Z * _range)), _height);
         system.Effects.SendMissile(Caster, _castInfo, start, new Position3(_direction.X, 0.0, _direction.Z),
             new Position3(_direction.X * _speed, 0.0, _direction.Z * _speed), start, end,
             ChampionSpellSupport.Ground(system, Caster.Position), needsCastAnnouncement: true);
+        return true;
     }
 
     /// <summary>
@@ -258,7 +292,7 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
             if (_tracked.Alive && !_hit.Contains(_tracked.NetId) && Admissible(system, _tracked)) Strike(system, _tracked);
             return Finish(system, _tracked);
         }
-        ChampionSpellSupport.RefreshMissile(system, Caster, _castInfo, _origin, _position, goal, _speed, casterProjection: _projection);
+        ChampionSpellSupport.RefreshMissile(system, Caster, _castInfo, _origin, _position, goal, _speed, casterProjection: _projection, lineHeight: _height);
         return true;
     }
 

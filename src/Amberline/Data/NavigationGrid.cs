@@ -29,7 +29,9 @@ public sealed partial class NavigationGrid
     private const ushort BlockedMask = 0x42;
     private const ushort NotPassableMask = 0x02;
     private const ushort SeeThroughMask = 0x40;
-    private const ushort AntiBrushMask = 0x100;
+    // Global vision (later emulators name it HAS_GLOBAL_VISION): every client lights these cells in its fog, the client /
+    // The client (see HasGlobalVision). Of the shipped grids only Map8's has it: the Crystal Scar's outer track and its centre.
+    private const ushort GlobalVisionMask = 0x100;
     private const ushort GrassMask = 0x01;
     // Constants of the client's brush test.
     private const double MinBrushAreaRadius = 35.0;
@@ -50,10 +52,11 @@ public sealed partial class NavigationGrid
     private readonly byte[] _walkableHeroPathing;
     private readonly byte[] _walkableMovement;
     // The client's own vision flags: a cell blocks sight when it is NotPassable without SeeThrough, the rule of both the fog raycast
-    // (bit 1 set, bit 6 clear) and the object walk (which also lets AntiBrush 0x100 through; Map1 ships
-    // no SeeThrough or AntiBrush cell). That is the shipped NotPassable cells with every building stamp (flag 0x42, see-through)
-    // written over them, as the client stamps its own grid. Every sight test walks it.
+    // (bit 1 set, bit 6 clear) and the object walk (which also lets global vision 0x100 through; Map1 ships
+    // no SeeThrough or 0x100 cell, and no shipped 0x100 cell is NotPassable). That is the shipped NotPassable cells with every building
+    // stamp (flag 0x42, see-through) written over them, as the client stamps its own grid. Every sight test walks it.
     private readonly byte[] _visionBlocking;
+    private readonly byte[] _globalVision;
     private readonly byte[] _grass;
     private readonly byte[] _notPassable;
     private readonly int[] _brushLabels;
@@ -66,6 +69,7 @@ public sealed partial class NavigationGrid
         byte[] walkableHeroPathing,
         byte[] walkableMovement,
         byte[] visionBlocking,
+        byte[] globalVision,
         byte[] grass,
         byte[] notPassable,
         int[] brushLabels,
@@ -77,6 +81,7 @@ public sealed partial class NavigationGrid
         _walkableHeroPathing = walkableHeroPathing;
         _walkableMovement = walkableMovement;
         _visionBlocking = visionBlocking;
+        _globalVision = globalVision;
         _grass = grass;
         _notPassable = notPassable;
         _brushLabels = brushLabels;
@@ -192,7 +197,7 @@ public sealed partial class NavigationGrid
     private NavigationGrid Fork()
     {
         var fork = new NavigationGrid(Metadata, _walkable, _walkablePathing, _walkableHeroPathing,
-            _walkableMovement, _visionBlocking, _grass, _notPassable, _brushLabels, _height);
+            _walkableMovement, _visionBlocking, _globalVision, _grass, _notPassable, _brushLabels, _height);
         fork.CopyClientRegionsFrom(this);
         return fork;
     }
@@ -231,6 +236,7 @@ public sealed partial class NavigationGrid
 
         var walkable = new byte[count];
         var visionBlocking = new byte[count];
+        var globalVision = new byte[count];
         var grass = new byte[count];
         var notPassable = new byte[count];
         var height = new double[count];
@@ -243,7 +249,8 @@ public sealed partial class NavigationGrid
             notPassable[index] = (byte)((flags & NotPassableMask) != 0 ? 1 : 0);
             visionBlocking[index] = (byte)((flags & NotPassableMask) != 0 &&
                                             (flags & SeeThroughMask) == 0 &&
-                                            (flags & AntiBrushMask) == 0 ? 1 : 0);
+                                            (flags & GlobalVisionMask) == 0 ? 1 : 0);
+            globalVision[index] = (byte)((flags & GlobalVisionMask) != 0 ? 1 : 0);
             var bits = BinaryPrimitives.ReadInt32LittleEndian(cellBytes.AsSpan(offset + HeightOffset, sizeof(float)));
             height[index] = BitConverter.Int32BitsToSingle(bits);
         }
@@ -267,7 +274,7 @@ public sealed partial class NavigationGrid
         StampBuildings(movement, metadata, settings, settings.TurretClientStampRadius);
         var labels = LabelBrushes(grass, countX, countY);
         var grid = new NavigationGrid(metadata, walkable, pathing, heroPathing, movement, visionBlocking,
-            grass, notPassable, labels, height);
+            globalVision, grass, notPassable, labels, height);
         grid.ReadClientRegions(cellBytes, count, reader);
         return grid;
     }
@@ -445,6 +452,20 @@ public sealed partial class NavigationGrid
     {
         var cell = WorldToCell(point);
         return IsMovementWalkable(cell) && _height[Index(cell)] >= PlatformFloor;
+    }
+
+    /// <summary>
+    /// Whether the point's cell carries the grid's global vision flag (0x100). The stock client lights every such cell for its team:
+    /// the per-frame fog update first builds the set of fog cells over the flagged nav cells (the client,
+    /// flag word +0x32 bit 8), then every 0.5 s writes it into the fog field (full brightness)
+    /// unless the local hero has a NearSight buff (its vtable slot 0x24c). A point outside
+    /// the grid, or a non-finite one, has none (the visibility pass asks it of every unit, so it never throws as WorldToCell does).
+    /// </summary>
+    public bool HasGlobalVision(Position2 point)
+    {
+        var column = Math.Truncate((point.X - MinX) / CellSize);
+        var row = Math.Truncate((point.Z - MinZ) / CellSize);
+        return column >= 0 && column < CountX && row >= 0 && row < CountY && _globalVision[(int)row * CountX + (int)column] != 0;
     }
 
     public int? BrushIdAt(Position2 point)

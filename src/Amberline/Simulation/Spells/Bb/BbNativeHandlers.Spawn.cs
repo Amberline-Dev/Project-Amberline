@@ -230,6 +230,9 @@ internal sealed partial class BbNativeHandlers
         else
             unit = SpawnGeneric(owner, name, skin, position, team, flags, redirect, visibility, call.Value("AiScript") as string);
         unit.VisibilitySize = visibility;
+        // Batch 713 (Reconstruction: the native is server-only): the unit stands at its
+        // point's height. Talon's blade markers spawn at MissileEndPosition, the blade's flight height, and his returning blades leave from there.
+        unit.Height = _host.HeightAbove(PositionOperand(call, "PosVar"));
 
         // GoldRedirectTarget: the hero the unit's kills credit. The services set the owner themselves (the box, the ghouls and the trap
         // belong to the caster); a different hero only changes the credit chain.

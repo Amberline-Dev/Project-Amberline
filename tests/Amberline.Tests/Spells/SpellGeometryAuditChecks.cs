@@ -58,6 +58,8 @@ public static partial class ChampionLiveRegressionChecks
             var health = target.Health;
             if (slot == 0) match.CastGround(0, ally.Position);
             else match.Cast(0, 2, ally);
+            // Batch 713: an Instacast line flies from the step after its creation 0x41 (BbLineMissile.Tick), so the launch step is its own step here.
+            SpellStep(match, 0);
             SpellStep(match, .7);
             TestAssert.Equal(!outside, target.Health < health, "Orianna slot " + slot);
             health = target.Health;
@@ -72,7 +74,8 @@ public static partial class ChampionLiveRegressionChecks
             target.Position = landing + new Position2(0, outside ? 176 : 174);
             SpellStep(match, 0);
             var health = target.Health;
-            match.CastGround(0, landing); SpellStep(match, .6);
+            // Batch 713: an Instacast line flies from the step after its creation 0x41 (BbLineMissile.Tick), so the launch step is its own step here.
+            match.CastGround(0, landing); SpellStep(match, 0); SpellStep(match, .6);
             TestAssert.Equal(!outside, target.Health < health, "175-unit script burst stays separate from line width");
         }
     }

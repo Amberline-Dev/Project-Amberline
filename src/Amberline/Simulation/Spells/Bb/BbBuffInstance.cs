@@ -47,30 +47,29 @@ internal sealed class BbBuffInstance
     /// </summary>
     public double StatsNextAt { get; set; }
     /// <summary>
-    /// The game-clock instant of the next bare <c>BuffOnUpdateActions</c> run when the add carried no <c>TickRate</c>
-    /// (<see cref="BbBuffRuntime.ActionsUpdateInterval"/>): the native's <c>mLastTickTimeUpdateActions</c> stamp beside
-    /// <see cref="StatsNextAt"/>. One run per update at most; the add that creates the instance stamps it one interval after its own
-    /// clock, so a buff's lines are the add + k * the interval (PickACard's even seed and its 2/4/6 turns are written to that phase,
-    /// batch 175). A buff that ends before its first line gets that one run at its first update (<see cref="ActionsFirstLinePending"/>).
-    /// After every run the line advances by whole intervals to the first line after it, so a line the clock has passed is skipped,
-    /// not repaid one update at a time (the burst the owner saw on first use, batch 175), and the add's phase is kept. A renewal
-    /// keeps it. A buff with a <c>TickRate</c> runs on <see cref="TickElapsed"/> instead and this line is not read.
+    /// The game-clock instant before which the next bare <c>BuffOnUpdateActions</c> run may not come, when the add carried no
+    /// <c>TickRate</c> (the native's <c>mLastTickTimeUpdateActions</c> stamp beside <see cref="StatsNextAt"/>). Batch 720: the hook
+    /// runs on its holder's 0.25 s pass (<c>SpellSystem.SelfUpdateDue</c>, <see cref="BbBuffRuntime.OnTick"/>), the first time on the
+    /// holder's next pass after the add, so the add stamps its own clock here and every run stamps the holder's next line: one run per
+    /// update at most, and a line the holder's clock has passed is skipped, not repaid one update at a time (the burst the owner saw on
+    /// first use, batch 175). Batch 175 stamped the first line one interval after the add instead. A renewal keeps it. A buff with a
+    /// <c>TickRate</c> runs on <see cref="TickElapsed"/> instead and this stamp is not read.
     /// </summary>
     public double ActionsNextAt { get; set; }
     /// <summary>
-    /// The first bare <c>BuffOnUpdateActions</c> line of this life has not come yet. A buff that ends before that line takes its one
-    /// run at its first update instead (<see cref="BbBuffRuntime.OnTick"/>): the shipped "do it once" applicators live shorter than
-    /// the interval (<c>FrostArrowApplicator</c> and <c>ToxicShotApplicator</c> 0.1 s, Renekton's unlock animations 0.01 s) and their
-    /// hook is the whole buff — it removes itself or releases the slot it sealed. One run only: the line then moves a full interval
-    /// on, past the buff's end, so a short-lived buff cannot spin. A renewal keeps the flag the way it keeps
-    /// <see cref="ActionsNextAt"/>.
+    /// The first bare <c>BuffOnUpdateActions</c> run of this life has not come yet. A buff that ends before its holder's next pass
+    /// takes its one run at its first update instead (<see cref="BbBuffRuntime.OnTick"/>): the shipped "do it once" applicators live
+    /// shorter than the interval (<c>FrostArrowApplicator</c> and <c>ToxicShotApplicator</c> 0.1 s, Renekton's unlock animations 0.01 s)
+    /// and their hook is the whole buff — it removes itself or releases the slot it sealed. One run only: that run stands for the pass,
+    /// so the next may only come a whole line after it, past the buff's end, and a short-lived buff cannot spin. A renewal keeps the
+    /// flag the way it keeps <see cref="ActionsNextAt"/>.
     /// </summary>
     public bool ActionsFirstLinePending { get; set; }
     /// <summary>
     /// The update hook carries a <c>BBExecutePeriodically</c> of the script's own. Its due test runs inside the hook body, on the host
     /// clock, so that hook has to be polled every buff update for the script's period to resolve (Tryndamere's Spinning Slash scans every
     /// 0.1 s, Annie's burning every 1.0, Brand's blaze every 1.05, the Bushwhack trap every 0.9): the hook is the periodic's caller, not a
-    /// timer of its own. A hook without one is a bare poll and runs on the add's <see cref="BbBuffRuntime.ActionsUpdateInterval"/> tick.
+    /// timer of its own. A hook without one is a bare poll and runs on its holder's <see cref="BbBuffRuntime.ActionsUpdateInterval"/> pass.
     /// </summary>
     public bool ActionsCarriesPeriodic { get; set; }
     /// <summary>

@@ -35,25 +35,34 @@ public static class TwistedFateCardCycleChecks
         match.Advance(0.2);
         // Batch 175: the card the press deals is the script's seeded one, and the seed is EVEN (BlueCardLock 0, RedCardLock 2,
         // GoldCardLock 4) while BuffOnUpdateActions changes the slot on 2, 4 and 6. The first card therefore owns the buff from the
-        // press to the first hook run one interval later, and only then comes the first turn. Measured from the press, like the
-        // owner's "first use": a schedule that ran at the add (or repaid a backlog a step at a time) showed the seeded card for a
-        // single interval and then turned at step rate, which is the "very rapid" first use (finding 22, 24 October 2026).
+        // press to the hook's second run, and only then comes the first turn. Measured from the press, like the owner's "first use":
+        // a schedule that repaid a backlog a step at a time turned the deck at step rate, which is the "very rapid" first use
+        // (finding 22, 24 October 2026).
+        // Batch 720 (owner decision, 8 November 2026): the hook runs on his own 0.25 s pass, the first on the pass after the press
+        // (1 to 8 steps later: the press comes between two steps), so the seeded card shows for one to two passes, 0.27 to 0.53 s at
+        // 30 Hz, and every later card for two (0.5 s). Batch 175 pinned the seeded card at a whole card (its first run one interval
+        // after the add); the owner's decision gives the shorter first card back on most presses.
         TestAssert.True(match.Cast(1, hero), "Pick a Card casts on himself");
         var seed = Card(hero);
         TestAssert.True(seed is "BlueCardLock" or "RedCardLock" or "GoldCardLock", $"the press deals one of the three cards: {seed}");
         var turns = new List<(double At, string Slot)>();
+        var passes = new List<double>();
         var last = seed;
         var start = match.Now;
         for (var step = 0; step < 30 * 3; step++)
         {
             match.Advance(1.0 / 30.0);
+            if (match.Runtime.Spells.SelfUpdateDue(hero)) passes.Add(match.Now - start);
             if (Card(hero) == last) continue;
             last = Card(hero);
             turns.Add((match.Now - start, last));
         }
-        // The first card is a whole card: the seeded one is shown for 0.5 s, not the 0.25 s a first run at the add leaves it.
-        TestAssert.Near(0.5, turns[0].At, 0.08,
-            $"the first card (the script's seeded one) is shown for a whole card: {string.Join(", ", turns.Select(t => $"{t.At:0.00}s {t.Slot}"))}");
+        // The seeded card turns on his second pass after the press: the hook's first call takes the even seed to odd, the second to the turn.
+        TestAssert.Near(passes[1], turns[0].At, 1e-6,
+            $"the first card (the script's seeded one) turns on his second pass after the press (passes {string.Join(" ", passes.Take(4).Select(t => $"{t:0.000}"))}): " +
+            string.Join(", ", turns.Select(t => $"{t.At:0.00}s {t.Slot}")));
+        TestAssert.True(turns[0].At > 0.25 && turns[0].At <= 0.5 + 1.0 / 30.0 + 1e-9,
+            $"so it shows for one to two passes, never the single interval of a first run at the press: {turns[0].At:0.000} s");
         TestAssert.True(turns.Count >= 5, $"the deck turns on its own while the buff runs ({turns.Count} turns in 3 s)");
         var gaps = turns.Select((turn, index) => turn.At - (index == 0 ? 0.0 : turns[index - 1].At)).Skip(1).ToArray();
         foreach (var gap in gaps)

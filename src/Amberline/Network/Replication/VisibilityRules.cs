@@ -113,6 +113,13 @@ public static class VisibilityRules
         return Reveals(environment, provider, target, environment.BrushIdAt(target) is not null);
     }
 
+    /// <summary>
+    /// Whether the team sees the point: a global vision cell (the Crystal Scar's ring, <see cref="IVisionEnvironment.HasGlobalVision"/>), or
+    /// one of its providers. Reconstruction for the server's rule (batch 714): every client lights the global vision cells for its own team,
+    /// and the wiki's Dominion page says "The outer track is almost entirely revealed and is not in a fog of war", so a unit or an effect on
+    /// one is seen by both teams; the cell of the point decides (the client lights the coarser fog cells over them). Stealth still hides a
+    /// unit there (<see cref="RevealsEntity"/>): the cells are sight, not true sight.
+    /// </summary>
     /// <param name="targetSelectionRadius">
     /// The target unit's CharacterData SelectionRadius; negative for a point.
     /// </param>
@@ -124,6 +131,7 @@ public static class VisibilityRules
     {
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentNullException.ThrowIfNull(providers);
+        if (environment.HasGlobalVision(target)) return true;
         var targetInBrush = environment.BrushIdAt(target, targetSelectionRadius) is not null;
         return providers.Any(provider => Reveals(environment, provider, target, targetInBrush));
     }
@@ -290,6 +298,8 @@ public static class VisibilityRules
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentNullException.ThrowIfNull(providers);
         ArgumentNullException.ThrowIfNull(building);
+        // A building on a global vision cell is seen as any unit there is (ProvidersReveal).
+        if (environment.HasGlobalVision(building.Position)) return true;
         if (building.Kind == EntityKind.Turret || building.UnitType == UnitType.Turret)
         {
             var (selection, gameplay) = TurretBody(building);
@@ -491,19 +501,26 @@ public static class VisibilityRules
     /// Computes one raw visibility set for one team. It is deliberately free
     /// of observer state; the delivery layer applies known/visible lifetimes.
     /// </summary>
+    /// <param name="globalVision">
+    /// False for a nearsighted hero's own set: its client does not light the global vision cells (the client takes them out of
+    /// the fog while the local hero has a NearSight buff), so the ring reveals nothing to it (Reconstruction: the server's side of it).
+    /// </param>
     public static HashSet<uint> ComputeRawVisibility(
         WorldState world,
         Team team,
         IVisionEnvironment environment,
         IReadOnlyList<VisionProvider> providers,
         Func<Position2, bool>? revealsStealth = null,
-        ReplicationInstrumentation? instrumentation = null)
+        ReplicationInstrumentation? instrumentation = null,
+        bool globalVision = true)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentNullException.ThrowIfNull(providers);
         revealsStealth ??= static _ => false;
         instrumentation?.CountRaw(team);
+        // Each provider's brush area is scanned once per pass, not per target.
+        var passEnvironment = new PassBrushCache(environment, globalVision);
 
         var index = world.IndexUnits(world.Entities.Values.Where(entity => entity.UnitType != UnitType.Missile));
         var candidates = new HashSet<Entity>();
@@ -524,15 +541,14 @@ public static class VisibilityRules
                 candidates.Add(revealed);
 
         // An allied entity is always available to its own observer even when a
-        // malformed position falls outside the spatial index query; so is a unit both teams see (batch 673).
+        // malformed position falls outside the spatial index query; so is a unit both teams see (batch 673), and one on a global vision cell.
         foreach (var entity in world.Entities.Values)
         {
-            if (entity.UnitType != UnitType.Missile && (entity.Team == team || entity.SeenByBothTeams))
+            if (entity.UnitType != UnitType.Missile &&
+                (entity.Team == team || entity.SeenByBothTeams || passEnvironment.HasGlobalVision(entity.Position)))
                 candidates.Add(entity);
         }
 
-        // Each provider's brush area is scanned once per pass, not per target.
-        var passEnvironment = new PassBrushCache(environment);
         var visible = new HashSet<uint>();
         foreach (var entity in candidates)
             if (RevealsEntity(world, team, passEnvironment, providers, revealsStealth, entity))
@@ -563,11 +579,12 @@ public static class VisibilityRules
         }
     }
 
-    /// <summary>Memoizes unit brush (IsInWallOfGrass) for one visibility pass.</summary>
-    private sealed class PassBrushCache(IVisionEnvironment inner) : IVisionEnvironment
+    /// <summary>Memoizes unit brush (IsInWallOfGrass) for one visibility pass; a nearsighted hero's pass has no global vision.</summary>
+    private sealed class PassBrushCache(IVisionEnvironment inner, bool globalVision) : IVisionEnvironment
     {
         private readonly Dictionary<(Position2 Point, double Radius), int?> _brush = new();
 
+        public bool HasGlobalVision(Position2 point) => globalVision && inner.HasGlobalVision(point);
         public double CellSize => inner.CellSize;
         public bool HasVisionLos(Position2 source, Position2 target) => inner.HasVisionLos(source, target);
         public bool BrushAllowsVision(Position2 source, Position2 target) => inner.BrushAllowsVision(source, target);
@@ -592,20 +609,23 @@ public static class VisibilityRules
             Position2 marker) => inner.CampMarkerLineOfSightTest(viewer, viewerSelectionRadius, viewerPathfindingRadius, marker);
     }
 
+    /// <param name="globalVision">As <see cref="ComputeRawVisibility"/>'s.</param>
     public static HashSet<uint> ComputeVisibleBalls(
         Team team,
         IEnumerable<BallProjection> balls,
         IVisionEnvironment environment,
-        IReadOnlyList<VisionProvider> providers)
+        IReadOnlyList<VisionProvider> providers,
+        bool globalVision = true)
     {
         ArgumentNullException.ThrowIfNull(balls);
         ArgumentNullException.ThrowIfNull(environment);
         ArgumentNullException.ThrowIfNull(providers);
+        var passEnvironment = new PassBrushCache(environment, globalVision);
         var result = new HashSet<uint>();
         foreach (var ball in balls)
         {
             if (!ball.Rendered) continue;
-            if (ball.Team == team || ProvidersReveal(environment, providers, ball.Position))
+            if (ball.Team == team || ProvidersReveal(passEnvironment, providers, ball.Position))
                 result.Add(ball.NetId);
         }
         return result;

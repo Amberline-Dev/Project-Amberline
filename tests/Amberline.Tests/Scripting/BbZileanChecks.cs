@@ -358,16 +358,33 @@ public static class BbZileanChecks
         match.Runtime.Buffs.AddBuff(ally, "AcceptanceSlow", BuffType.Slow, 10.0, match.Foe.NetId, canMitigateDuration: false);
         // Lethal.
         match.Runtime.Combat.ApplyHit(match.Foe.NetId, ally.NetId, 6000.0, DamageType.Magic, DamageSourceKind.Spell);
-        match.Advance(0.1);
+        // Batch 720 (owner decision, 8 November 2026): the hit's BuffOnPreDamage sets the rune's WillRemove and its own BuffOnUpdateActions
+        // removes it on the next update, which is the ally's next 0.25 s pass now (0 to 0.25 s after the hit; here 0.133 s, one step after
+        // the 0.1 s this check read it at, where the rune's own old line, its add + 0.5, happened to fall). Until that pass the rune stays,
+        // and it goes on the pass.
+        var spells = match.Runtime.Spells;
+        var passed = false;
+        for (var step = 0; step < 3; step++)
+        {
+            match.Advance(Step);
+            passed |= spells.SelfUpdateDue(ally);
+            TestAssert.Equal(passed, Of(ally, "ChronoShift") is null, $"the rune stays until the ally's next pass and goes on it (+{(step + 1) * Step:0.000} s)");
+        }
         TestAssert.True(ally.Alive, "alive");
         TestAssert.Near(1.0, ally.Health, 1e-6, "with one health point");
         var stasis = Of(ally, "ChronoRevive");
         TestAssert.True(stasis is not null, "in stasis");
         TestAssert.Near(2.9, stasis!.ExpiresAt, 0.1, "for three seconds");
-        TestAssert.True(Of(ally, "ChronoShift") is null, "the rune is spent");
         TestAssert.True(Of(ally, "AcceptanceStun") is null && Of(ally, "AcceptanceSlow") is null, "the stasis cleansed the control and the slow");
         TestAssert.Near(3.0, ally.SummonerCooldowns[0] + 0.1, 0.1, "a summoner spell with at most six seconds is set to three");
         TestAssert.Near(100.0, ally.SummonerCooldowns[1] + 0.1, 0.5, "one with more is left");
+        for (var step = 3; step < 8 && !passed; step++)
+        {
+            match.Advance(Step);
+            passed |= spells.SelfUpdateDue(ally);
+            TestAssert.Equal(passed, Of(ally, "ChronoShift") is null, $"the rune stays until the ally's next pass and goes on it (+{(step + 1) * Step:0.000} s)");
+        }
+        TestAssert.True(passed && Of(ally, "ChronoShift") is null, "the rune is spent on the ally's next pass, within a quarter second of the hit");
         // The stasis: invulnerable, and nothing else.
         match.Runtime.Combat.ApplyHit(match.Foe.NetId, ally.NetId, 3000.0, DamageType.True, DamageSourceKind.Spell);
         TestAssert.Near(1.0, ally.Health, 1e-6, "nothing lands");

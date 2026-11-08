@@ -89,7 +89,8 @@ internal sealed class BbBuffRuntime
     /// out is the native's <c>mTickTimeDelay</c>, which the constructor zeroes and which no recovered assignment sets: that the
     /// buff update itself is a quarter second is Reconstruction, the arithmetic above being the evidence. What stays open is the
     /// boundary count against a buff's own end (see <see cref="StatsUpdateInterval"/>) and whether the two hooks share one stamp
-    /// or keep their own (the native keeps two, so this engine keeps two clocks, both on the 0.25 s line the add set).
+    /// or keep their own (the native keeps two, so this engine keeps two clocks: the stats hook on the 0.25 s line the add set, the
+    /// update-actions hook, since batch 720, on its holder's 0.25 s pass, the unit's line of <c>SpellSystem.SelfUpdateDue</c>).
     /// A hook that does have a <c>TickRate</c> keeps its own period unchanged: the quarter second replaces only the "every buff
     /// update" default, which was the simulation step.
     /// </para>
@@ -1174,14 +1175,15 @@ internal sealed class BbBuffRuntime
                 instance.MutateNextAt = request.TickRate > 0.0
                     ? _host.Spells.CurrentTime + request.TickRate
                     : _host.Spells.CurrentTime;
-                // The update-actions line of this life (see ActionsUpdateInterval): one interval after the add, and it never runs
-                // earlier than that. The shipped hooks are written to that phase — PickACard.TargetExecute seeds an even Counter
-                // (0/2/4) and BuffOnUpdateActions changes the slot on 2/4/6, so a first run at the add itself showed the seeded card
-                // for half a card and the owner saw the first card flip on at once (batch 175). A buff whose whole life is shorter
-                // than one interval (the shipped "run once and remove myself" applicators: FrostArrowApplicator and
-                // ToxicShotApplicator 0.1 s) still gets one run — its last update is its only opportunity — which OnTick notices by
-                // the buff's own end. A renewal (below) keeps the line, like StartTime and MutateNextAt: the buff's own tick goes on.
-                instance.ActionsNextAt = _host.Spells.CurrentTime + ActionsUpdateInterval;
+                // The update-actions hook of this life (see ActionsUpdateInterval) runs on its holder's 0.25 s pass, the first time on
+                // the holder's next pass after this add (batch 720, owner decision of 8 November 2026: 0 to 0.25 s later; OnTick). This
+                // stamp is only the not-before of the next run. Batch 175 ran the first one a whole interval after the add, reading
+                // PickACard's even seed (Counter 0/2/4, turns on 2/4/6) as the script's own phase; on the holder's pass the seeded card
+                // shows for one to two passes. A buff whose whole life ends before that pass (the shipped "run once and remove myself"
+                // applicators: FrostArrowApplicator and ToxicShotApplicator 0.1 s) still gets one run — its last update is its only
+                // opportunity — which OnTick notices by the buff's own end. A renewal (below) keeps the stamp, like StartTime and
+                // MutateNextAt: the holder's line goes on.
+                instance.ActionsNextAt = _host.Spells.CurrentTime;
                 instance.ActionsFirstLinePending = true;
                 // A hook that schedules its own BBExecutePeriodically has to be polled every update: the period is tested inside the
                 // hook on the host clock, so a hook polled four times a second never admits Tryndamere's 0.1 s scan, Annie's 1.0 s
@@ -1992,22 +1994,32 @@ internal sealed class BbBuffRuntime
             }
             else if (!instance.ActionsCarriesPeriodic)
             {
-                // A bare hook polls on the add's quarter second; a hook that owns a BBExecutePeriodically runs every update and lets
-                // the script's own period decide (see ActionsCarriesPeriodic). One run per update at most, and the line advances by
-                // whole intervals to the first line after the run: a line the clock has passed is skipped, never repaid. Repaying it
-                // (the old "overdue kept" addition) ran the hook once per simulation step until the debt was gone, which turned
-                // Twisted Fate's deck at the step rate (owner finding, 24 October 2026). Advancing by whole intervals rather than
-                // from `now` keeps the add's phase, so every line stays on add + k * the interval.
+                // Batch 720 (owner decision, 8 November 2026). Reconstruction: no shipped file or source gives the phase (batch 718's
+                // research leans weakly this way). A bare hook runs on its holder's 0.25 s pass, the unit's one update line
+                // (SpellSystem.SelfUpdateDue, the line the self-buff polls run on: retail's per-unit obj_AI_Base update throttle,
+                // srvNextUpdate, under which UpdateBuffActions runs). The first run is the holder's next pass after the add: the line
+                // is stepped in SpellSystem.Tick and this hook runs in TickBuffs after it, so an add earlier in a pass step (a dash's
+                // landing hit, a cast, an attack's hit) runs in that step, and one after the holder's buff update (between two steps,
+                // or inside TickBuffs) waits for the next pass. Batch 175 ran it one interval after the add. A hook that owns a
+                // BBExecutePeriodically runs every update and its own period decides (see ActionsCarriesPeriodic). One run per update
+                // at most: ActionsNextAt is the next run's not-before, the holder's next line after each run. A line the clock has
+                // passed is skipped, never repaid (the holder's line advances by whole intervals): repaying it ran the hook once per
+                // simulation step until the debt was gone, which turned Twisted Fate's deck at the step rate (owner finding, 24 October 2026).
                 var now = _host.Spells.CurrentTime;
-                due = now + 1e-9 >= instance.ActionsNextAt;
-                // A buff that ends before its first line takes that one run at its first update instead (see ActionsFirstLinePending):
-                // the shipped applicators live a tenth of a second, so the grid would never reach them at all. One run only — the
-                // line then moves a whole interval on, past the buff's end, so a short-lived buff cannot spin.
-                if (!due && instance.ActionsFirstLinePending && instance.LifeEndsAt <= instance.ActionsNextAt - 1e-9) due = true;
+                var nextPass = _host.Spells.SelfUpdateNextAt(unit);
+                due = _host.Spells.SelfUpdateDue(unit) && now + 1e-9 >= instance.ActionsNextAt;
+                // A buff that ends before the holder's next pass takes that one run at its first update instead (see
+                // ActionsFirstLinePending): the shipped applicators live a tenth of a second. The run stands for that pass, so the next
+                // one waits a whole line more: the step a buff outlives its computed end by (ExpiresAt <= 0 has no tolerance) never
+                // meets the pass for a second run, and a short-lived buff cannot spin.
+                if (!due && instance.ActionsFirstLinePending && instance.LifeEndsAt <= nextPass - 1e-9)
+                {
+                    due = true;
+                    nextPass += ActionsUpdateInterval;
+                }
                 if (due)
                 {
-                    var missed = Math.Floor((now - instance.ActionsNextAt) / ActionsUpdateInterval + 1e-9);
-                    instance.ActionsNextAt += Math.Max(1.0, missed + 1.0) * ActionsUpdateInterval;
+                    instance.ActionsNextAt = nextPass;
                     instance.ActionsFirstLinePending = false;
                 }
             }

@@ -230,8 +230,9 @@ public static partial class ChampionLiveRegressionChecks
                 secondary.Health = 1;
                 // 19 October 2026: the secondary strike is BlindMonkRKick's BuffOnUpdateActions, which runs when the kicked unit's buffs tick, so the
                 // kick is stepped by the whole runtime (the spell system alone does not tick buffs).
-                // Batch 175: the bare hook's first line is one ActionsUpdateInterval after its add (the phase PickACard's even seed states),
-                // so the sweep lands 0.25 s after the kick buff exists — the cast's 0.25 s windup plus that line.
+                // Batch 175: the bare hook's first line was one ActionsUpdateInterval after its add, so the sweep landed 0.25 s after the kick
+                // buff existed — the cast's 0.25 s windup plus that line. Batch 720: it runs on the kicked unit's next 0.25 s pass, 0 to 0.25 s
+                // after the add, inside the same 0.6 s.
                 match.Cast(0, 3, victim); match.Runtime.Tick(.25); match.Runtime.Tick(.35);
                 victim = secondary;
             }

@@ -256,6 +256,8 @@ public interface IVisionEnvironment
     /// <summary>The client's camp marker line-of-sight test, <see cref="NavigationGrid.CampMarkerLineOfSightTest"/>.</summary>
     bool CampMarkerLineOfSightTest(Position2 viewer, double viewerSelectionRadius, double viewerPathfindingRadius, Position2 marker) =>
         Math.Pow(viewer.X - marker.X, 2) + Math.Pow(viewer.Z - marker.Z, 2) < 1000000.0 && HasVisionLos(viewer, marker);
+    /// <summary>The point stands on a global vision cell, which every team sees: <see cref="NavigationGrid.HasGlobalVision"/>.</summary>
+    bool HasGlobalVision(Position2 point) => false;
 }
 
 /// <summary>Adapter that keeps the authoritative navigation implementation in Data.</summary>
@@ -281,6 +283,7 @@ public sealed class NavigationGridVisionEnvironment : IVisionEnvironment
             turretGameplayRadius);
     public bool CampMarkerLineOfSightTest(Position2 viewer, double viewerSelectionRadius, double viewerPathfindingRadius,
         Position2 marker) => _grid.CampMarkerLineOfSightTest(viewer, viewerSelectionRadius, viewerPathfindingRadius, marker);
+    public bool HasGlobalVision(Position2 point) => _grid.HasGlobalVision(point);
 }
 
 /// <summary>Low-cost evidence that raw visibility is calculated per team per frame.</summary>

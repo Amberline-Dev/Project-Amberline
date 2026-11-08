@@ -29,6 +29,11 @@ namespace Amberline.Simulation.Spells.Bb;
 /// On the step cadence a bare re-add with <c>BUFF_RENEW_EXISTING</c> (the utility mastery's marker, Talents/135.luaobj) sent one in-place
 /// renewal per 33 ms step, about 30 a second per observer (batch 241); on this line it is four.
 /// </para>
+/// <para>
+/// Batch 720 (owner decision, 8 November 2026; Reconstruction): the same line is every unit's buff update pass. A buff's bare
+/// <c>BuffOnUpdateActions</c> runs on its holder's line (<c>BbBuffRuntime.OnTick</c>), the first time on the holder's next pass after
+/// the add, and a unit no hero, pet or character poll steps gets its line from its first spell step (<c>SpellSystem.Tick</c>'s sweep).
+/// </para>
 /// </summary>
 internal static class BbSelfUpdate
 {

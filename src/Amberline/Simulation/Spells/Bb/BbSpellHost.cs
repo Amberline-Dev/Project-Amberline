@@ -146,8 +146,21 @@ internal sealed class BbSpellHost : IBbHost
     /// <summary>A unit handle or null for nil and for the <c>Nothing</c> slot.</summary>
     internal static Entity? UnitOrNull(object? unit) => unit as Entity;
 
-    internal BbTable Point(Position2 position) =>
-        BbTable.Point(position.X, Spells.Movement.Navigation.HeightAt(position), position.Z);
+    /// <summary>A script point at <paramref name="position"/>, <paramref name="height"/> above the terrain (a missile's flight height, a raised unit's).</summary>
+    internal BbTable Point(Position2 position, double height = 0.0) =>
+        BbTable.Point(position.X, Spells.Movement.Navigation.HeightAt(position) + height, position.Z);
+
+    /// <summary>
+    /// Batch 713: how far above the terrain a position operand stands: a point's y over the ground at its x and z, a unit's
+    /// <see cref="Entity.Height"/>. The script positions are the server's 3D points (the stock <c>BBGetUnitPosition</c> stores the unit's position
+    /// vector), so the height a missile end or a raised unit carries reaches the spawn and the cast that read it.
+    /// </summary>
+    internal double HeightAbove(object? operand) => operand switch
+    {
+        BbTable table when table["y"] is double y => y - Spells.Movement.Navigation.HeightAt(Ground(table)),
+        Entity unit => unit.Height,
+        _ => 0.0,
+    };
 
     /// <summary>
     /// A position variable. The client's shared position getter reads a vector from the variable and, when the variable

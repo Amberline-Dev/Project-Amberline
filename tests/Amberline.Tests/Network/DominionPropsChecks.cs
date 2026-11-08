@@ -83,11 +83,14 @@ public static class DominionPropsChecks
     [Check("network.odin-props-stair-stages-end-at-the-release")]
     public static void TheFourStairClipsRunBackToBackAndEndAtTheRelease()
     {
-        // Frames from each .anm header at 30 fps: Close1 286 frames, Close2 to Close4 301 frames (9.5333 s and 10.0333 s).
+        // Batch 715: each stage is time-synced over the length its closing sound puts the slam at (15 s for Close1, 20 s for Close2 to Close4),
+        // no longer the clips' own 30 fps (9.5333 s and 10.0333 s), which played each thump in the next stage.
         var release = OpeningCeremonyTiming.ReleaseSeconds;
         var stages = DominionProps.StairStages(release);
         TestAssert.Equal(4, stages.Count, "four stages");
-        TestAssert.Near(release - (286 + 3 * 301) / 30.0, stages[0].Start, 1e-9, "Close1 starts the sum of the four clips before the release");
+        TestAssert.Near(release - (15.0 + 3 * 20.0), stages[0].Start, 1e-9, "Close1 starts the sum of the four stages before the release");
+        TestAssert.Near(15.0, stages[0].Duration, 1e-9, "Close1 plays over 15 s");
+        TestAssert.Near(20.0, stages[3].Duration, 1e-9, "Close4 plays over 20 s");
         for (var index = 1; index < stages.Count; index++)
             TestAssert.Near(stages[index - 1].Start + stages[index - 1].Duration, stages[index].Start, 1e-9, "each stage starts when the previous one ends");
         TestAssert.Near(release, stages[3].Start + stages[3].Duration, 1e-9, "Close4 ends at the release");
@@ -132,7 +135,7 @@ public static class DominionPropsChecks
     {
         var animator = new DominionProps.StairAnimator();
         var release = OpeningCeremonyTiming.ReleaseSeconds;
-        var first = animator.Due(release - (286 + 3 * 301) / 30.0, DominionPropFacing.Z, release);
+        var first = animator.Due(DominionProps.StairStages(release)[0].Start, DominionPropFacing.Z, release);
         TestAssert.Equal(2, first.Count, "Close1 goes out for both stairs");
         TestAssert.Equal(0x204u, BinaryPrimitives.ReadUInt32LittleEndian(first[0].Plaintext.Span.Slice(81, 4)),
             "the stairs' stage flags at raw 81: hold the last frame (0x4), full weight (0x200)");
@@ -146,7 +149,8 @@ public static class DominionPropsChecks
         var stages = DominionProps.StairStages(release);
         var bounds = new NavigationBounds(-1000.0, 15000.0, -1000.0, 15000.0);
         var beams = new DominionProps.CrystalBeams();
-        var latch = stages[0].Start + 270 / 30.0;
+        // Batch 715: the clip is time-synced over its stage, so frame 270 of Close1's 286 comes 270/286 of the stage in.
+        var latch = stages[0].Start + 270 * stages[0].Duration / 286;
         TestAssert.Equal(0, beams.Due(latch - 0.01, DominionPropFacing.Z, release, bounds, _ => false).Count, "before Close1's frame 270: nothing");
         var first = beams.Due(latch, DominionPropFacing.Z, release, bounds, _ => false);
         TestAssert.Equal(6, first.Count, "at the latch: two lasers and a lit core per team");

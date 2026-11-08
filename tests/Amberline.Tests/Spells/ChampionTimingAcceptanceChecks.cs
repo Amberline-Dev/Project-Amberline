@@ -541,9 +541,10 @@ public static partial class ChampionLiveRegressionChecks
         clone.MaxHealth = clone.Health = 10000.0;
         victim.Position = lee.Position + new Position2(100.0, 0.0);
         match.Cast(0, 3, victim);
-        // Batch 175: BlindMonkRKick's BuffOnUpdateActions (the sweep that lands the secondary collision) runs on the bare hook's first
+        // Batch 175: BlindMonkRKick's BuffOnUpdateActions (the sweep that lands the secondary collision) ran on the bare hook's first
         // line, one ActionsUpdateInterval after the buff's add — 0.25 s of cast windup plus 0.25 s of line. The old 0.3 s pin was the
-        // per-step phase of batch 168.
+        // per-step phase of batch 168. Batch 720: the first run is the kicked unit's next 0.25 s pass, 0 to 0.25 s after the add, still
+        // inside the 0.6 s.
         runtime.Tick(0.6);
 
         TestAssert.True(owner.Alive && owner.YorickRevival is not null,

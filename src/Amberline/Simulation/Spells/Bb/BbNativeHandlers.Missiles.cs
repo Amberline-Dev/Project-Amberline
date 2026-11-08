@@ -76,6 +76,6 @@ internal sealed partial class BbNativeHandlers
     private void GetMissilePosFromId(BbCall call)
     {
         var id = IdParam(call, "TargetID");
-        if (id != 0 && _host.Router.Missiles.Find(id) is { } missile) StoreOut(call, "Result", _host.Point(missile.Position));
+        if (id != 0 && _host.Router.Missiles.Find(id) is { } missile) StoreOut(call, "Result", _host.Point(missile.Position, missile.Height));
     }
 }

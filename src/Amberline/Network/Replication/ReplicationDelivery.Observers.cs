@@ -38,14 +38,15 @@ public sealed partial class ReplicationDelivery
         return states;
     }
 
-    // A nearsighted hero's client keeps only its own sight list (VisibilityRules.BuildObserverProviders); every other observer gets its team's.
+    // A nearsighted hero's client keeps only its own sight list (VisibilityRules.BuildObserverProviders) and does not light the global vision
+    // cells; every other observer gets its team's.
     private TeamVisibilityState ObserverState(ReplicationObserver observer, Dictionary<Team, TeamVisibilityState> teamStates)
     {
         if (World.Get(observer.HeroNetId) is not { } hero || !VisibilityRules.IsNearSighted(hero)) return teamStates[observer.Team];
-        return VisibilityState(observer.Team, VisibilityRules.BuildObserverProviders(World, hero, Balls, AdditionalProviders));
+        return VisibilityState(observer.Team, VisibilityRules.BuildObserverProviders(World, hero, Balls, AdditionalProviders), globalVision: false);
     }
 
-    private TeamVisibilityState VisibilityState(Team team, IReadOnlyList<VisionProvider> providers)
+    private TeamVisibilityState VisibilityState(Team team, IReadOnlyList<VisionProvider> providers, bool globalVision = true)
     {
         var raw = VisibilityRules.ComputeRawVisibility(
             World,
@@ -53,8 +54,9 @@ public sealed partial class ReplicationDelivery
             Environment,
             providers,
             point => RevealsStealth(team, point),
-            Instrumentation);
-        var visibleBalls = VisibilityRules.ComputeVisibleBalls(team, Balls, Environment, providers);
+            Instrumentation,
+            globalVision);
+        var visibleBalls = VisibilityRules.ComputeVisibleBalls(team, Balls, Environment, providers, globalVision);
         return new TeamVisibilityState(providers, raw, visibleBalls);
     }
 

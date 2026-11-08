@@ -216,10 +216,28 @@ public static class BbStackChecks
                 25000.0, 0.0, false, vars));
         }
         TestAssert.Equal(3, Stacks(hero, name), "three stacks");
-        rig.Match.Advance(0.3);
+        // Batch 720 (owner decision, 8 November 2026): the update hook runs on the hero's 0.25 s pass, the first time on his first pass after
+        // the adds. The adds come before the match's first step, so that pass is the first step (his line's first poll) and the next is 8
+        // steps later, at +0.300, the end of the 0.3 s this check used to advance (batch 241's phase ran the first update at +0.267 and the
+        // next at +0.5). One pass is one update: the state the check reads is the first pass's, and the next pass is pinned as well.
+        var spells = rig.Match.Runtime.Spells;
+        double Runs() => rig.CharVars(hero)["Runs"] as double? ?? 0.0;
+        var steps = 0;
+        do { rig.Match.Advance(BbM3.Step); steps++; } while (!spells.SelfUpdateDue(hero) && steps < 30);
         rig.NoFailures();
-        TestAssert.Near(3.0, rig.CharVars(hero)["Runs"] as double? ?? 0.0, 1e-9, "the update hook ran once per stack");
+        TestAssert.Near(3.0, Runs(), 1e-9, "the update hook ran once per stack");
         TestAssert.Equal(1, Stacks(hero, name), "two of the runs removed a stack each");
         TestAssert.Near(2.0, rig.CharVars(hero)["Ended"] as double? ?? 0.0, 1e-9, "each erased stack ran its own deactivation");
+        // Nothing runs until his next pass; there the stack that stayed (the third add, Drop 1) runs alone and erases itself, the last stack.
+        do
+        {
+            rig.Match.Advance(BbM3.Step);
+            steps++;
+            if (!spells.SelfUpdateDue(hero)) TestAssert.Near(3.0, Runs(), 1e-9, $"no run off the hero's passes (step {steps})");
+        } while (!spells.SelfUpdateDue(hero) && steps < 60);
+        rig.NoFailures();
+        TestAssert.Near(4.0, Runs(), 1e-9, "the next pass ran the one stack left, once");
+        TestAssert.Equal(0, Stacks(hero, name), "its self-removal took the last stack");
+        TestAssert.Near(3.0, rig.CharVars(hero)["Ended"] as double? ?? 0.0, 1e-9, "with its own deactivation");
     }
 }

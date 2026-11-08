@@ -36,6 +36,9 @@ public sealed class PetLuaAiEngine : ILuaAiPetEngine
     /// <summary>The stop reason the scripts pass to <c>TurnOffAutoAttack</c> when the state is walking.</summary>
     public const double StoppedMoving = 101.0;
 
+    /// <summary>The stop reason Pet.lua passes to <c>TurnOffAutoAttack</c> before a re-target and when nothing is left to fight.</summary>
+    public const double StoppedTargetLost = 102.0;
+
     // The pet half of AiGlobals.Table, named here so the continuous pass and the checks read the
     // same ids the script writes (GetState/SetState/NetSetState carry these numbers).
     public const double StateHalted = 0.0;
@@ -261,17 +264,22 @@ public sealed class PetLuaAiEngine : ILuaAiPetEngine
     public void TurnOffAutoAttack(Entity unit, double stopReason)
     {
         // The stop reason (STOPREASON_*) is the engine's own; nothing in this build sends it.
-        // PET-01: the call turns the repeated swing off; it retires an unlaunched attack only where
-        // the fight ends outright (STOPREASON_IMMEDIATELY: fear and HaltAI). A re-targeting keeps
-        // the swing it is winding up — <see cref="SetTarget"/> is what retires it when the target
-        // actually changes — so a repeated attack order against one target lands its hits.
-        // The retained target survives the stop (Turret.luaobj's classified difference 2 is the
-        // same shape): STOPREASON_MOVING only drops the swing because the native state is chasing,
-        // and the states that must not keep a target take their replacement from
-        // <see cref="SetStateAndCloseToTarget"/> in the same callback.
+        // The attack ends and its clients are told, whatever the reason, the way the lane minions' native does
+        // (MinionAiNatives.NativeTurnOffAutoAttack): the stock client runs a pet as an obj_AI_Minion, whose attack state starts the
+        // last attack again every attack period and erases the path it follows (UpdatePimpl), and only a 0x39 (or the unit's own death)
+        // ends that state. Pet.lua's TimerFindEnemies turns the attack off with STOPREASON_MOVING once the target is out of its cancel
+        // range and leaves the chase to the native; a silent stop here kept every client swinging Tibbers at a target he no longer
+        // reached, rooted or walking after it (batch 716). CombatPackets.StopAttack sends the packet only to a client still in that state.
+        // PET-01: a re-targeting (STOPREASON_TARGET_LOST, before every ORDER_ATTACKTO/ORDER_PETHARDATTACK/ORDER_PETHARDSTOP) keeps the
+        // swing it is winding up, so a repeated attack order against one target lands its hits; <see cref="SetTarget"/> retires it when
+        // the target actually changes. STOPREASON_IMMEDIATELY (fear, HaltAI) drops it, and so does STOPREASON_MOVING, which Pet.lua
+        // passes only for a target outside the committed range the combat tick drops a windup at anyway: dropped first, the stop tells
+        // the client not to play it (0x10) rather than forcing the cast frame of a hit the server then drops.
+        // The retained target survives the stop (Turret.luaobj's classified difference 2 is the same shape): the native state chases
+        // it, and the states that must not keep a target take their replacement from <see cref="SetStateAndCloseToTarget"/> in the
+        // same callback.
         StateFor(unit).AutoAttack = false;
-        if (stopReason != StoppedImmediately) return;
-        _combat.CancelPendingWindups(unit.NetId);
+        if (stopReason != StoppedTargetLost) _combat.CancelPendingWindups(unit.NetId);
         if (unit.Created && _effects.IsReferenceReady(unit)) _effects.SendStopAttack(unit);
     }
 

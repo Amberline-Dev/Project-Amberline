@@ -610,7 +610,8 @@ public static partial class ChampionLiveRegressionChecks
             var hero = match.Hero(0); var near = match.Hero(reverse ? 2 : 1); var far = match.Hero(reverse ? 1 : 2);
             near.Position = hero.Position + new Position2(250, 0); far.Position = hero.Position + new Position2(450, 0);
             var nearHp = near.Health; var farHp = far.Health;
-            match.CastGround(0, hero.Position + new Position2(700, 0)); SpellStep(match, 1);
+            // Batch 713: an Instacast line flies from the step after its creation 0x41 (BbLineMissile.Tick), so the launch step is its own step here.
+            match.CastGround(0, hero.Position + new Position2(700, 0)); SpellStep(match, 0); SpellStep(match, 1);
             TestAssert.Near(60, (nearHp - near.Health) * (1 + near.SpellBlock / 100), .001, "first physical contact is full damage");
             TestAssert.Near(54, (farHp - far.Health) * (1 + far.SpellBlock / 100), .001, "second contact receives falloff");
         }
@@ -631,7 +632,8 @@ public static partial class ChampionLiveRegressionChecks
         // Outside the 145-unit line corridor, inside the burst.
         burstOnly.Position = landing + new Position2(0, 160);
         var struckHp = struck.Health; var burstHp = burstOnly.Health;
-        match.CastGround(0, landing); SpellStep(match, 1);
+        // Batch 713: an Instacast line flies from the step after its creation 0x41 (BbLineMissile.Tick), so the launch step is its own step here.
+        match.CastGround(0, landing); SpellStep(match, 0); SpellStep(match, 1);
         TestAssert.Near(60, struckHp - struck.Health, .001, "the line contact is full damage");
         TestAssert.Near(60 * .9 * .9, burstHp - burstOnly.Health, .001,
             "the burst walk spends one step on the struck unit before the unit it hits");
