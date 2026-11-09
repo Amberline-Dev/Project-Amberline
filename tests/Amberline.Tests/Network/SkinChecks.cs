@@ -93,4 +93,37 @@ public static partial class ChampionLiveRegressionChecks
             }
         }
     }
+
+    // Batch 730 (owner, 9 November 2026: "Astronaut Teemo still uses the mushroom model of the base skin for his R"). The Noxious Trap is the
+    // shipped BantamTrap's BBSpawnMinion Skin='TeemoMushroom' with no variant argument, and TeemoMushroom.inibin has MeshSkin4..6 (the astronaut
+    // satellite trap, the easter bunny trap and the super trap) for Teemo's skins 4..6. The trap wears its owner's variant on the 0x80 creation.
+    // Reconstruction: the native's rule is not recovered; the Orianna ball, the pets and the clones already copy the owner's variant.
+    [Check("skins.spawned-unit-owner-variant")]
+    public static void SpawnedUnitWearsItsOwnersVariant()
+    {
+        using var match = new BbM3.Match("Teemo");
+        var teemo = match.Hero;
+        teemo.SkinId = 4;
+        match.Learn(1);
+        match.Module.OnRankUp(match.Runtime.Spells, teemo, 3, 1);
+        match.Refill();
+        var own = new BbM3.WireCapture(() => match.Now);
+        match.Runtime.Delivery.AddObserver(new ReplicationObserver(1, Team.Order, teemo.NetId, own, ready: true));
+        TestAssert.True(match.Cast(3, at: match.Foe.Position), "Noxious Trap is accepted");
+        match.Advance(match.CastFrameOf(3) + 0.5);
+        match.Runtime.Delivery.Flush();
+        var trap = match.Runtime.World.Entities.Values.Single(unit => unit.Alive && unit.ChampionName == "TeemoMushroom");
+        TestAssert.Equal(4, trap.SkinId, "Astronaut Teemo's Noxious Trap wears variant 4 (TeemoMushroom MeshSkin4, the astronaut trap)");
+        var creation = own.Packets.Select(entry => entry.Packet).Single(packet => Opcode(packet) == 0x80 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[5..9]) == trap.NetId);
+        TestAssert.Equal(4, BinaryPrimitives.ReadInt32LittleEndian(creation.Plaintext.Span.Slice(22, 4)),
+            "the trap's 0x80 creation carries the owner's variant");
+        var fresh = new Capture();
+        match.Runtime.Delivery.AddObserver(new ReplicationObserver(99, Team.Order, teemo.NetId, fresh, ready: true));
+        match.Runtime.Delivery.Flush();
+        var reconstructed = fresh.Packets.Single(packet => Opcode(packet) == 0x80 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[5..9]) == trap.NetId);
+        TestAssert.Equal(4, BinaryPrimitives.ReadInt32LittleEndian(reconstructed.Plaintext.Span.Slice(22, 4)),
+            "observer reconstruction keeps the trap's variant");
+    }
 }

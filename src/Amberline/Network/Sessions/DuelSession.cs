@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Simulation.Combat;

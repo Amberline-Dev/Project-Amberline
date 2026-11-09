@@ -589,6 +589,147 @@ public static class AttackCadenceChecks
     }
 
     /// <summary>
+    /// Batch 733 (owner, 9 November 2026: "People still report turrets shooting too quickly, let's do one last research"). One continuous
+    /// fight of the front Chaos lane turret, on maps 1 and 4, through every situation the brief names: a minion and a champion as its target,
+    /// with its allied champion beside it (150 units) and in its fountain, and the switches between them (a target last-hit in the turret's
+    /// wind-up, walking out, a call for help, turning untargetable in the wind-up, a taunt, a target's death). What the shipped files give:
+    /// the record's 1.6 x (1 - 0.25) = 1.2 s over 1.3, PersonalTurretAssistBonus's IncPermanentPercentAttackSpeedMod +0.3, which
+    /// TurretAssistManager adds once from the turret's CharOnActivate with no condition on allies, targets or time (its only update adds
+    /// TurretBackdoorBonus, armour and magic resist); IndividualTurretAssistBonus, the per-ally +0.05 that V1.0.0.114 removed, ships unreferenced.
+    /// So 0.9231 s, 0.9333 s in whole 30 Hz steps. A shot the turret launches is a 0x0D no 0x39 stops before its cast frame (a swing cancelled in
+    /// its wind-up launches nothing); between two launched shots there is never less than the period, at either client, and each server swing is
+    /// one 0x0D to each client. A row per situation: shots launched in it, their intervals and targets.
+    /// </summary>
+    [Check("combat.lane-turret-shots-keep-the-shipped-period-in-every-situation", Serial = true, TimeoutSeconds = 600)]
+    public static void LaneTurretShotsKeepTheShippedPeriodInEverySituation()
+    {
+        var failures = new List<string>();
+        try
+        {
+            foreach (var mapId in new[] { GameMaps.Normal, GameMaps.TwistedTreeline })
+            {
+                try { TurretShotStream(mapId); }
+                catch (Exception failure) { failures.Add(failure.Message); }
+            }
+        }
+        finally
+        {
+            GameData.ConfigureDefault(GameDataPaths.Default);
+        }
+        TestAssert.True(failures.Count == 0, string.Join(" | ", failures));
+    }
+
+    private static void TurretShotStream(int mapId)
+    {
+        using var scene = new TurretScene(mapId);
+        var turret = scene.Turret;
+        var period = RecordPeriod(scene.Character, 1.3);
+        var whole = Math.Ceiling(period / Step - 1e-6) * Step;
+        var fountain = MapDefinitions.Layout.ChaosSpawn;
+        var phases = new List<(string Label, double From)>();
+        void Phase(string label, double seconds, Action setup)
+        {
+            setup();
+            phases.Add((label, scene.Now));
+            scene.Advance(seconds);
+            // The script's +0.3 is the turret's one permanent amount: no ally, target or switch moves it.
+            TestAssert.Near(1.3, turret.AttackSpeedMod, 1e-9, $"map {mapId} {label}: {turret.Name}'s attack-speed multiplier");
+            TestAssert.Near(period, turret.AttackPeriod, 1e-9, $"map {mapId} {label}: {turret.Name}'s period");
+            TestAssert.Equal(1, turret.Buffs.Count(buff => buff.Name == "PersonalTurretAssistBonus"),
+                $"map {mapId} {label}: {turret.Name} holds one PersonalTurretAssistBonus");
+            TestAssert.Equal(0, turret.Buffs.Count(buff => buff.Name == "IndividualTurretAssistBonus"),
+                $"map {mapId} {label}: no script adds IndividualTurretAssistBonus");
+        }
+
+        var first = scene.Minion(450.0);
+        Entity? second = null;
+        Phase("a minion, its allied champion in its fountain", 8.0, () =>
+        {
+            scene.Diver.Position = scene.Toward(1400.0);
+            scene.Ally.Position = fountain;
+        });
+        Phase("a minion, its allied champion beside it", 8.0, () => scene.Ally.Position = scene.Toward(-150.0));
+        Phase("its allied champion last-hits the minion in the turret's wind-up; the champion in range", 8.0, () =>
+        {
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.NextSwing(first);
+            scene.Runtime.Combat.ApplyHit(scene.Ally.NetId, first.NetId, 2e7, DamageType.True, DamageSourceKind.Basic);
+        });
+        Phase("the champion, its allied champion in its fountain", 8.0, () => scene.Ally.Position = fountain);
+        Phase("the champion walks out; a minion", 6.0, () =>
+        {
+            second = scene.Minion(450.0);
+            scene.Diver.Position = scene.Toward(3000.0);
+        });
+        Phase("the champion walks back in and hits its allied champion beside it (call for help)", 6.0, () =>
+        {
+            scene.Ally.Position = scene.Toward(-150.0);
+            scene.Diver.Position = scene.Toward(450.0);
+            scene.CallForHelp();
+        });
+        Phase("the champion turns untargetable in the turret's wind-up at him", 6.0, () =>
+        {
+            scene.NextSwing(scene.Diver);
+            scene.Runtime.Buffs.AddBuff(scene.Diver, "B733Untargetable", BuffType.Internal, 3.0, scene.Diver.NetId,
+                new BuffPayload { Untargetable = true }, canMitigateDuration: false);
+        });
+        Phase("the champion taunts it", 6.0, () =>
+            scene.Runtime.Buffs.AddBuff(turret, "B733Taunt", BuffType.Taunt, 1.5, scene.Diver.NetId, canMitigateDuration: false));
+        Phase("its minion dies", 6.0, () => second!.Alive = false);
+
+        var streams = new[] { false, true }.Select(chaosClient =>
+        {
+            var shots = scene.FromTurret(0x0D, chaosClient);
+            var stops = scene.FromTurret(0x39, chaosClient);
+            // A swing whose 0x39 comes after its 0x0D and by its cast frame is cancelled in its wind-up: its client launches nothing.
+            var launched = shots.Where(shot => !stops.Any(stop => stop.Index > shot.Index &&
+                stop.At <= scene.ClientLaunch((shot.At, shot.Bytes)) + 1e-9)).ToList();
+            return (Shots: shots, Launched: launched);
+        }).ToArray();
+        string Target(byte[] bytes) => BitConverter.ToUInt32(bytes, 5) == scene.Diver.NetId ? "champion" : "minion";
+        var order = streams[0];
+        for (var index = 0; index < phases.Count; index++)
+        {
+            var (label, from) = phases[index];
+            var to = index + 1 < phases.Count ? phases[index + 1].From : scene.Now;
+            var inPhase = order.Launched.Where(shot => shot.At > from + 1e-9 && shot.At <= to + 1e-9).ToList();
+            var intervals = inPhase.Select(shot => (Shot: shot, Earlier: order.Launched.LastOrDefault(earlier => earlier.At < shot.At - 1e-9)))
+                .Where(pair => pair.Earlier.Bytes is not null).Select(pair => pair.Shot.At - pair.Earlier.At).ToList();
+            var dropped = order.Shots.Count(shot => shot.At > from + 1e-9 && shot.At <= to + 1e-9) - inPhase.Count;
+            Console.WriteLine($"map {mapId} {turret.Name} ({scene.Character}) {label}: {inPhase.Count} shots launched " +
+                              $"({string.Join(", ", inPhase.Select(shot => Target(shot.Bytes)).Distinct())}), {dropped} cancelled in the wind-up; " +
+                              $"intervals min {(intervals.Count > 0 ? intervals.Min() : double.NaN):0.0000} s, " +
+                              $"median {(intervals.Count > 0 ? intervals.OrderBy(x => x).ElementAt(intervals.Count / 2) : double.NaN):0.0000} s, " +
+                              $"max {(intervals.Count > 0 ? intervals.Max() : double.NaN):0.0000} s");
+        }
+        var all = order.Launched.Zip(order.Launched.Skip(1), (earlier, later) => (From: earlier.At, Interval: later.At - earlier.At)).ToList();
+        Console.WriteLine($"map {mapId} {turret.Name}: {order.Launched.Count} shots launched in {scene.Now - phases[0].From:0.0} s, " +
+                          $"{order.Shots.Count - order.Launched.Count} cancelled; shortest interval {all.Min(item => item.Interval):0.0000} s; " +
+                          $"shipped period {period:0.0000} s ({1.0 / period:0.000}/s), {whole:0.0000} s in whole steps");
+        // A swing cancelled in its wind-up gives its attack timer back (CombatService.CancelPendingBasicWindups, Reconstruction), so the next 0x0D
+        // may follow it within the period; it never follows a launched shot that soon.
+        var cancelled = order.Shots.Where(shot => !order.Launched.Contains(shot)).Select(shot => shot.Index).ToHashSet();
+        var soon = order.Shots.Zip(order.Shots.Skip(1), (earlier, later) => (Earlier: earlier, Interval: later.At - earlier.At))
+            .Where(pair => pair.Interval < whole - 1e-6).ToList();
+        Console.WriteLine($"map {mapId} {turret.Name}: 0x0D sooner than the period after the 0x0D before: {soon.Count}" +
+                          string.Concat(soon.Select(pair => $"; {pair.Interval:0.0000} s after a " +
+                                                            $"{(cancelled.Contains(pair.Earlier.Index) ? "swing cancelled in its wind-up" : "launched shot")}")));
+        TestAssert.True(soon.All(pair => cancelled.Contains(pair.Earlier.Index)),
+            $"map {mapId}: a 0x0D within the period of the one before follows only a swing cancelled in its wind-up");
+
+        TestAssert.True(order.Launched.Count >= 40, $"map {mapId}: {turret.Name} keeps shooting through the fight ({order.Launched.Count} shots)");
+        var early = all.Where(item => item.Interval < whole - 1e-6).ToList();
+        TestAssert.True(early.Count == 0, $"map {mapId}: no shot leaves {turret.Name} sooner than its period after the one before " +
+            $"({string.Join(", ", early.Select(item => $"{item.Interval:0.0000} s after +{item.From - phases[0].From:0.000} s"))})");
+        TestAssert.Equal(string.Join(",", order.Shots.Select(shot => $"{shot.At:0.000}:{BitConverter.ToUInt32(shot.Bytes, 5)}")),
+            string.Join(",", streams[1].Shots.Select(shot => $"{shot.At:0.000}:{BitConverter.ToUInt32(shot.Bytes, 5)}")),
+            $"map {mapId}: both clients receive the same 0x0D stream");
+        TestAssert.Equal(string.Join(",", scene.SwingTimes.Where(time => time > phases[0].From + 1e-9).Select(time => time.ToString("0.000"))),
+            string.Join(",", order.Shots.Where(shot => shot.At > phases[0].From + 1e-9).Select(shot => shot.At.ToString("0.000"))),
+            $"map {mapId}: one 0x0D per server swing");
+    }
+
+    /// <summary>
     /// A two-seat production match around the front Chaos lane turret (the nearest to the map's centre): the Order champion is the diver, the
     /// Chaos champion stands beside the turret. Both are 1e7-health and acquire nothing; the client of the Order seat records the wire.
     /// </summary>
@@ -621,8 +762,15 @@ public static class AttackCadenceChecks
             var seat = Runtime.Session.Participants[0];
             Runtime.Delivery.AddObserver(new Amberline.Network.Replication.ReplicationObserver(seat.PlayerId, seat.Team, Diver.NetId, _wire,
                 ready: true, view: seat.View));
+            // Batch 733: the turret's own side's client too, so both clients' streams are compared.
+            _allyWire = new BbM3.WireCapture(() => Runtime.World.Clock.Now());
+            var allySeat = Runtime.Session.Participants[1];
+            Runtime.Delivery.AddObserver(new Amberline.Network.Replication.ReplicationObserver(allySeat.PlayerId, allySeat.Team, Ally.NetId,
+                _allyWire, ready: true, view: allySeat.View));
         }
 
+        private readonly BbM3.WireCapture _allyWire;
+        private double _cooldown;
         private readonly (double X, double Z) _direction;
         public MatchRuntime Runtime { get; }
         public Entity Turret { get; }
@@ -632,6 +780,8 @@ public static class AttackCadenceChecks
         public Entity Ally { get; }
         /// <summary>The steps on which the turret's TimerFindEnemies ran.</summary>
         public List<double> ScanTimes { get; } = [];
+        /// <summary>The steps on which the server started a turret swing (its attack timer restarted).</summary>
+        public List<double> SwingTimes { get; } = [];
         public double Now => Runtime.World.Clock.Now();
         public int PacketCount => _wire.Packets.Count;
 
@@ -645,6 +795,8 @@ public static class AttackCadenceChecks
         {
             Runtime.Tick(Step);
             if (((Amberline.Simulation.Ai.LuaAiService)Runtime.Combat.AiHost).TimerFired(Turret)) ScanTimes.Add(Now);
+            if (Turret.AttackCooldown > _cooldown + 1e-9) SwingTimes.Add(Now);
+            _cooldown = Turret.AttackCooldown;
         }
 
         public void Advance(double seconds)
@@ -689,6 +841,12 @@ public static class AttackCadenceChecks
             .Select(entry => (entry.At, Bytes: entry.Packet.Plaintext.ToArray()))
             .Where(entry => entry.Bytes.Length >= 9 && entry.Bytes[0] == opcode &&
                             BitConverter.ToUInt32(entry.Bytes, 1) == Turret.NetId && BitConverter.ToUInt32(entry.Bytes, 5) == target.NetId);
+
+        /// <summary>Every packet of <paramref name="opcode"/> the turret sent one client (the Order seat's, or the Chaos seat's), in wire order.</summary>
+        public List<(int Index, double At, byte[] Bytes)> FromTurret(byte opcode, bool chaosClient) => (chaosClient ? _allyWire : _wire).Packets
+            .Select((entry, index) => (Index: index, entry.At, Bytes: entry.Packet.Plaintext.ToArray()))
+            .Where(entry => entry.Bytes.Length >= 5 && entry.Bytes[0] == opcode && BitConverter.ToUInt32(entry.Bytes, 1) == Turret.NetId)
+            .ToList();
 
         public void Dispose() => Runtime.Dispose();
     }

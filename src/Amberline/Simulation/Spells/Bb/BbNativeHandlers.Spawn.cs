@@ -1,10 +1,8 @@
 using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 using Amberline.Simulation.Pets;
-using Amberline.Simulation.Spells.Champions;
 
 namespace Amberline.Simulation.Spells.Bb;
 
@@ -38,6 +36,12 @@ internal sealed partial class BbNativeHandlers
     /// follows her shipped script and is visible to the enemy team (owner decision, 28 October 2026).
     /// </summary>
     internal const string TrapUnitName = "Noxious Trap";
+
+    /// <summary>
+    /// The trigger range of Bushwhack's trap (<c>Spells/Bushwhack.luaobj</c>, the <c>BBForEachUnitInTargetArea</c> of its <c>BuffOnUpdateActions</c>:
+    /// Range 150, enemies). A hidden trap shown at its spring (<see cref="Entity.SpringRevealRadius"/>) uses it for the units it hit.
+    /// </summary>
+    internal const double TrapSpringRange = 150.0;
 
     /// <summary>Runs <paramref name="call"/> when it belongs to this family; false lets the main switch go on.</summary>
     private bool ExecuteSpawn(BbCall call)
@@ -221,6 +225,10 @@ internal sealed partial class BbNativeHandlers
             unit = CreateNidaleeTrap(owner, position);
             unit.Team = team;
             ApplyFlags(unit, flags);
+            // NOT RETAIL, batch 729 follow-up (owner's batch 113 request: "stepping on one shows it"): the hidden trap springs visibly. Its spring
+            // (BBSpellBuffRemoveCurrent) shows it in that flush to the teams that see its spot or hold a unit it hit (ReplicationDelivery.SpringRevealsTo).
+            // Only the hidden trap has the rule: a trap that is not stealthed (the ward or the placemarker of this name) keeps 0.
+            if (flags.Stealthed) unit.SpringRevealRadius = TrapSpringRange;
             // The trap's replication template carries the invulnerable, magic-immune, rooted and ignore-collision state of the call
             // (the shipped Bushwhack passes exactly those flags).
             if (Spells.Effects.IsReferenceReady(unit)) Spells.Effects.SendNidaleeTrap(unit, team);
@@ -370,8 +378,13 @@ internal sealed partial class BbNativeHandlers
             Visible = false,
             NodeId = 0x40,
         };
-        // The ball is shown in its owner's skin (the 0x80 SkinId of the hand-written ball).
-        if (skin == BallSkin) unit.SkinId = (redirect ?? owner ?? unit).SkinId;
+        // Reconstruction: a script-spawned unit wears its owner's variant when its own record has a MeshSkin section for it; the 0x80 SkinId
+        // picks that section. TeemoMushroom.inibin has MeshSkin4..6 (the astronaut, easter bunny and super traps) for Teemo's skins 4..6, and the
+        // Heimerdinger, Malzahar, Jarvan, Maokai, Wukong, Olaf and Swain units have sections for their owners' skins. The Orianna ball, the pets
+        // and the clones copy the variant as well. A record without the section keeps variant 0: the client's fallback is not recovered.
+        var variantSource = redirect ?? owner;
+        unit.SkinId = variantSource is { SkinId: > 0 } && data.Raw.TryGetValue(InibinReader.KeyHash($"MeshSkin{variantSource.SkinId}*SimpleSkin"), out _)
+            ? variantSource.SkinId : 0;
         unit.MinionUse = MinionUseOf(data.Raw);
         // Batch 660: the stock CharacterData loader gives every character its record's attack timing, whatever AI it runs. Before this only a
         // unit with a fighting or pet script took it, so the encounter units (ai null: the Crystal Scar's wave minions) kept period 0 and windup
@@ -499,8 +512,10 @@ internal sealed partial class BbNativeHandlers
     /// Yorick use; the pet family follows the call's <c>Buff</c> (Hallucinate: Shaco's clone; YorickRARevive: the revenant) because the
     /// family is named by the controller buff the script adds next (<c>HallucinateFull</c>, <c>YorickRAPetBuff2</c>), which Pet.lua's tick
     /// looks for. The clone copies <c>UnitToClone</c>: its model, level, maximum health, mana, damage, defences, speed, ranks and
-    /// inventory; Reconstruction: it starts at the source's current health (Hallucinate adds no health; Omen of Death heals the revenant
-    /// itself right after). <c>HealthBonus</c>/<c>DamageBonus</c> are 0 in every shipped call and are refused otherwise. LeBlanc's image
+    /// inventory. It starts at the source's current health and mana (Hallucinate adds no health; Omen of Death heals the revenant itself
+    /// right after): batch 734, the client (the client, which <c>DoSpawnPet</c> in the shared clientServer code runs
+    /// on the unit the 0x3C names at offset 0xAA) copies the source's mHP, mMaxHP, mMP and mMaxMP; the same link makes the client draw the clone
+    /// with the champion bar and the source's level. <c>HealthBonus</c>/<c>DamageBonus</c> are 0 in every shipped call and are refused otherwise. LeBlanc's image
     /// (<c>LeblancMI</c>, controller <c>LeblancMIFull</c>), Wukong's decoy (<c>MonkeyKingDecoyDummy</c>, no controller) and Mordekaiser's ghost
     /// (<c>MordekaiserCotgPetSlow</c>, controller <c>MordekaiserCOTGPetBuff2</c>; the source is a fallen enemy) are the families of W26c (<see cref="CloneFamilies"/>);
     /// any other buff name is refused. The clone is on the team of its owner. Reconstruction: when the script of the <c>Buff</c> name defines buff hooks

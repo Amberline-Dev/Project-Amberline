@@ -203,8 +203,9 @@ public static class BbUrgotChecks
             "the enemy is suppressed and marked during the channel");
         TestAssert.True(Dist(match.Hero.Position, urgotStart) < 5.0, "Urgot cannot move during the channel");
         match.Advance(1.5);
-        // The two stand where the other stood, within the collision margin: the teleports end about 50 units short of the exact spots.
-        TestAssert.True(Dist(match.Hero.Position, foeStart) < 60.0 && Dist(match.Foe.Position, urgotStart) < 60.0,
+        // The two stand where the other stood. Batch 728: the teleport has no actor test (the client's own BBTeleportToPosition body), so each
+        // lands on the other's point, on the two-unit lattice; the server's old backoff from the other body left each about 50 units short.
+        TestAssert.True(Dist(match.Hero.Position, foeStart) < 3.0 && Dist(match.Foe.Position, urgotStart) < 3.0,
             "the two swap places");
         TestAssert.Near(armour + 80.0, match.Hero.Armor, 0.05, "he gains 80 armour (the rank-one defence)");
         TestAssert.Near(magicResist + 80.0, match.Hero.SpellBlock, 0.05, "and 80 magic resistance");

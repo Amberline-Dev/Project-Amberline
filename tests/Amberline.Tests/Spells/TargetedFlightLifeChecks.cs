@@ -226,7 +226,7 @@ public static partial class ChampionLiveRegressionChecks
             // Model an observer whose late first-sight refresh owns this ID,
             // so its native impact retirement is visible as one 0x5D.
             lateView.Effects.Add(firstMissile);
-            lateView.LateMissiles.Add(firstMissile);
+            lateView.LateCopies.Add(firstMissile);
             earlier.Clear();
             const double step = 1.0 / 30.0;
             for (var frame = 0; frame < 30 &&

@@ -1,11 +1,7 @@
 using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Network.Protocol;
-using Amberline.Simulation.Combat;
-using Amberline.Simulation.Items;
 using Amberline.Simulation.Movement;
 using Amberline.Simulation.Spells;
-using System.IO;
 
 namespace Amberline.Simulation.Bots;
 

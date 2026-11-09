@@ -1,8 +1,6 @@
 using Amberline.Core;
 using Amberline.Network.Protocol;
 using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Neutral;
-using Amberline.Simulation.Pets;
 using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Champions;
 
@@ -126,6 +124,13 @@ public sealed partial class ReplicationDelivery
                 seenNow = true;
             if (!entity.Alive)
                 seenNow = isOwnHero || observer.View.Visible.Contains(entity.NetId);
+            // NOT RETAIL, batch 729 follow-up: a hidden trap that sprang this step is already dead, and is shown in this flush to the teams that see
+            // its spot or hold a unit it hit (SpringRevealsTo). Its first sight goes out here, before the creates that name it are routed.
+            if (!seenNow && entity.SprungThisFlush && SpringRevealsTo(observer.Team, entity, teamState))
+            {
+                seenNow = true;
+                _springRevealed.Add((observer, entity.NetId));
+            }
 
             if (seenNow)
             {
@@ -227,6 +232,24 @@ public sealed partial class ReplicationDelivery
         }
 
         SyncTerrain(observer);
+    }
+
+    // NOT RETAIL (owner request, batch 113: "stepping on one shows it"; batch 729 follow-up): a hidden trap that sprang this step is shown to the teams
+    // that see its spot now, and to a team that holds a unit the spring hit (the victim, which its own team sees: it is within the trap's range of
+    // the spot). The trap is dead by the flush, so this is the one first sight of a dead unit. The trapper's team already holds its own trap.
+    // Shared rule: any unit with SpringRevealRadius (set only for Nidalee's hidden trap) reveals this way; nothing else changes its sight.
+    private bool SpringRevealsTo(Team team, Entity trap, TeamVisibilityState teamState)
+    {
+        if (team == trap.Team || trap.SpringRevealRadius <= 0.0) return false;
+        if (VisibilityRules.ProvidersReveal(Environment, teamState.Providers, trap.Position, trap.SelectionRadius)) return true;
+        var range = trap.SpringRevealRadius * trap.SpringRevealRadius;
+        return World.Entities.Values.Any(unit =>
+        {
+            if (!unit.Alive || unit.Team != team || unit.UnitType == UnitType.Missile) return false;
+            var dx = unit.Position.X - trap.Position.X;
+            var dz = unit.Position.Z - trap.Position.Z;
+            return dx * dx + dz * dz <= range;
+        });
     }
 
     private void RefreshNeutralEmpty(

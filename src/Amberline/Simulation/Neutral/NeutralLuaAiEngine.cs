@@ -1,6 +1,5 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
-using Amberline.Network.Replication;
 using Amberline.Simulation.Ai;
 using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Combat;

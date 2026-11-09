@@ -63,7 +63,6 @@ public sealed class PetLuaAiEngine : ILuaAiPetEngine
     private readonly MovementSystem _movement;
     private readonly CombatService _combat;
     private readonly ISpellEffectSink _effects;
-    private readonly GameData _data;
     private readonly IRandomSource _random;
     private readonly IMinionVisionService? _vision;
     private readonly Func<Entity, Entity, bool>? _canSee;
@@ -84,7 +83,6 @@ public sealed class PetLuaAiEngine : ILuaAiPetEngine
             throw new ArgumentException("MovementSystem must belong to the pet world", nameof(movement));
         _combat = combat ?? throw new ArgumentNullException(nameof(combat));
         _effects = effects ?? throw new ArgumentNullException(nameof(effects));
-        _data = data ?? GameData.Default;
         _random = random ?? new SystemRandomSource();
         _vision = vision;
         _canSee = canSee;

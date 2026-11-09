@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security;
-using System.IO;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
@@ -928,7 +927,6 @@ public sealed class AirXmppHost : IAsyncDisposable
         private Task _runTask = Task.CompletedTask;
         private bool _streamStarted;
         private bool _authenticated;
-        private string _domain = ChatDomain;
         private long? _accountId;
         private string _username = "";
         private string _chatPassword = "";
@@ -1001,10 +999,9 @@ public sealed class AirXmppHost : IAsyncDisposable
             {
                 var requested = ParseStreamDomain(raw);
                 if (requested != ChatDomain && requested != MucDomain) { Abort(); return; }
-                _domain = requested;
                 _streamStarted = true;
             }
-            await SendAsync(StreamHeader(_domain)).ConfigureAwait(false);
+            await SendAsync(StreamHeader()).ConfigureAwait(false);
             await SendAsync(StreamFeatures(_authenticated)).ConfigureAwait(false);
         }
 
@@ -1125,7 +1122,7 @@ public sealed class AirXmppHost : IAsyncDisposable
             return reader.GetAttribute("to")?.Trim().ToLowerInvariant() ?? ChatDomain;
         }
 
-        private static string StreamHeader(string domain) => $"<stream:stream from='{ChatDomain}' id='{Guid.NewGuid():N}' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>";
+        private static string StreamHeader() => $"<stream:stream from='{ChatDomain}' id='{Guid.NewGuid():N}' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>";
         private static string StreamFeatures(bool authenticated) => authenticated
             ? $"<stream:features><bind xmlns='{BindNamespace}'/><session xmlns='{SessionNamespace}'/></stream:features>"
             : "<stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>";

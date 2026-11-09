@@ -1,23 +1,13 @@
-using System.Buffers.Binary;
 using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Network.Replication;
-using Amberline.Simulation.Ai;
-using Amberline.Simulation.BehaviorTrees;
 using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Bots;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Items;
-using Amberline.Simulation.Movement;
-using Amberline.Simulation.Minions;
 using Amberline.Simulation.Neutral;
 using Amberline.Simulation.Pets;
-using Amberline.Simulation.Runtime;
 using Amberline.Simulation.Spells;
-using Amberline.Simulation.Spells.Bb;
-using Amberline.Simulation.Spells.Champions;
 using Amberline.Simulation.Stats;
 
 namespace Amberline.Network.Sessions;
@@ -31,7 +21,6 @@ internal sealed class ProductionServices
     public HeroStatsService? HeroStats { get; set; }
     public CombatService? Combat { get; set; }
     public BuffEffectService? BuffEffects { get; set; }
-    public SpellSystem? Spells { get; set; }
     public ItemVisionService ItemVision { get; set; } = null!;
     public JungleScheduler? Scheduler { get; set; }
     public DuelSession? Session { get; set; }
@@ -132,6 +121,9 @@ internal sealed class ProductionServices
             // SpawnPet creates the native minion itself. Sending SpawnMinion
             // first registers two objects under one ID and corrupts teardown.
             // Rebuild the same ownership on first sight and on reconnect.
+            // Batch 734: CloneNetId (offset 0xAA) is the champion the clone copies. The client's DoSpawnPet links the pet to it
+            //, and its minion bar draw then draws the champion bar with that champion's level: this is
+            // what makes Wukong's decoy, Shaco's clone and LeBlanc's image look like their champion to both teams.
             var duration = pet.SpawnDuration == 0.0 ? 0.0 : Math.Max(0.0,
                 pet.SpawnDuration - ((Combat?.CurrentTime ?? pet.BornAt) - pet.BornAt));
             return CreationWithStats(entity, SpawnPackets.SpawnPet(new SpawnPetSnapshot(
@@ -347,20 +339,9 @@ internal sealed class ProductionServices
                 packets.Add(SpellPackets.PlayAnimation(entity.NetId, "Spell1",
                     lockAnimation: true, blend: false));
         }
-        // Batch 179: Recall's TeleportHome is the summoner module's channel effect, not a buff's, so the buff loop below cannot replay it. A late
-        // observer gets it here, once per unit: the removed BuffEffectService arm gave it to the Recall buff, and the script keeps it persistent
-        // (BBSpellEffectRemove of its EffectIDVar), so the replication layer replays it like any persistent visual.
-        // Reconstruction: how retail's client replays an effect a channel owns to a late observer is not in the exe; this applies the buff rule.
-        if (BuffEffects is not null && Spells?.RecallEffectId(entity) is { } recallFx && recallFx != 0 &&
-            !Delivery.IsEffectPending(recallFx) && observer.View.Effects.Add(recallFx))
-        {
-            observer.View.Known.Add(recallFx);
-            packets.Add(FxPackets.CreateGroup(SpellPackets.BuffNameHash("TeleportHome"), recallFx,
-                entity.Position, new NavigationBounds(_navigation.MinX, _navigation.MaxX,
-                _navigation.MinZ, _navigation.MaxZ),
-                (x, z) => _navigation.HeightAt(new Position2(x, z)),
-                targetNetId: entity.NetId, bindNetId: entity.NetId));
-        }
+        // Recall's TeleportHome (the channel's effect, not a buff's) reaches a late observer through the persistent-effect replay of the
+        // replication layer, like every effect a script removes later. Batch 726 retired the batch 179 replay of it here: that copy was not
+        // marked late, so a completed channel (whose script removes nothing) could not end it.
         foreach (var buff in entity.Buffs)
         {
             // A server-only marker is a buff the client must never hold (BuffPayload.ServerOnlyMarker: a name whose
@@ -371,7 +352,9 @@ internal sealed class ProductionServices
                 var slot = checked((byte)buff.Slot);
                 var hash = SpellPackets.BuffNameHash(_data.ClientBuffName(buff.Name));
                 var count = checked((byte)Math.Clamp(buff.Stacks > 0 ? buff.Stacks : 1, 1, byte.MaxValue));
-                var duration = Float(Math.Max(0.0, buff.ExpiresAt));
+                // The time left as the live packets carry it (ProtocolSpellEffectSink.WireDuration): a periodically re-added buff's copy
+                // keeps its margin, or it lapses before the next re-add, which then goes out as a second add (batch 726).
+                var duration = Float(Math.Max(0.0, buff.ExpiresAt + buff.Payload.WireDurationMargin));
                 // A fog re-entry must not re-add a buff this client still
                 // holds: 0xBF renews it and replays its activation sound
                 // (playtest B2 YV8). First sight, reconnect and adds missed in

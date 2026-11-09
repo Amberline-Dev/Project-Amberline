@@ -3,7 +3,6 @@ using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Combat;
 using Amberline.Simulation.Spells.Bb;
 
 namespace Amberline.Simulation.Spells;
@@ -42,7 +41,7 @@ public sealed partial class SpellSystem
         // Batch 142 step 2: the cast runs the shipped Summoner*.luaobj bound to (hero, summoner slot). What the engine
         // still decides is what no script does — that the unit is a legal target and in reach, the cast announcement and
         // the cooldown clock. Everything the spell does is the script's SelfExecute / TargetExecute.
-        return RunSummonerScript(hero, request, spellName, now);
+        return RunSummonerScript(hero, request, spellName);
     }
 
     /// <summary>
@@ -64,7 +63,7 @@ public sealed partial class SpellSystem
     /// after them: it is the spell's rule, not the request's.
     /// </para>
     /// </summary>
-    private bool RunSummonerScript(Entity hero, SpellCastRequest request, string spellName, double now)
+    private bool RunSummonerScript(Entity hero, SpellCastRequest request, string spellName)
     {
         var module = SummonerScripts;
         if (module is null || LoadoutHooks?.OwnerFor(hero) is not { } owner) return false;
@@ -93,7 +92,7 @@ public sealed partial class SpellSystem
             landing = FlashDestination(hero, point);
             if (landing is not { } flashLanding) return false;
             if (_effects.IsReferenceReady(hero) && !OutsideTeleportDeadband(hero.Position, flashLanding) &&
-                TeleportStagingPoint(hero, flashLanding) is null) return false;
+                TeleportStagingPoint(hero, hero.Position, flashLanding) is null) return false;
         }
 
         if (!module.CanCast(hero, request.Slot, binding)) return false;
@@ -337,7 +336,7 @@ public sealed partial class SpellSystem
     /// of the cast. The windup, the channel, its cancels on damage, on a fresh order or a spell and on a stop, the teleport home and the
     /// effects are the script's: <see cref="BbSummonerModule.BeginRecall"/> starts the channel at the cast frame (ChannelingStart).
     /// </summary>
-    private bool HandleRecall(Entity hero, SpellCastRequest request, double now)
+    private bool HandleRecall(Entity hero, double now)
     {
         if (!hero.Alive || RecallRemaining(hero) > 0.0 || RecallDisabled(hero) ||
             !BuffLifecycle.CanAddNamedBuffs(hero, _data.RecallSpellName))
@@ -417,8 +416,8 @@ public sealed partial class SpellSystem
     }
 
     /// <summary>
-    /// Resolves a BBTeleportToPosition landing (Flash, Ezreal E, Shaco Q/R)
-    /// after the caller applies its own spell range.
+    /// Resolves a BBTeleportToPosition landing (Flash, Ezreal E, Shaco Q/R, Riftwalk, Urgot's swap ...)
+    /// after the caller applies its own spell range: terrain only, never the units on it.
     /// </summary>
     internal Position2 CorrectTeleportDestination(Entity hero, Position2 requested, double maxRange = double.PositiveInfinity)
     {
@@ -439,30 +438,12 @@ public sealed partial class SpellSystem
         // B2 BJ4/YV11) and a pocket too tight for the body all take the
         // nearest client-grid point that fits the whole body (owner decision,
         // playtest B3 #3/#9, 26 Sept 2026); an open point is unchanged.
-        var grid = _movement.Navigation;
-        var body = _movement.MovementRadius(hero);
-        var landing = grid.ClosestSummonPlacement(target, body);
-        if (FlashPointClear(hero, landing)) return landing;
-        if (landing != target)
-        {
-            dx = landing.X - origin.X;
-            dz = landing.Z - origin.Z;
-            travel = Math.Sqrt(dx * dx + dz * dz);
-            if (travel <= 1e-9) return ClientPoint(origin);
-            ux = dx / travel;
-            uz = dz / travel;
-        }
-        // Reconstruction: a unit on the landing keeps the 10-unit backoff toward the caster, limited to floor that fits the body
-        // (the native BBTeleportToPosition correction is only known to spiral-search, its occupied-landing rule is not recovered).
-        for (travel = Math.Max(0.0, travel - 10.0); travel > 0.0;
-             travel = Math.Max(0.0, travel - 10.0))
-        {
-            var candidate = ClientPoint(new Position2(origin.X + ux * travel,
-                origin.Z + uz * travel));
-            if (FlashPointClear(hero, candidate) && grid.FitsSummonPlacement(candidate, body))
-                return candidate;
-        }
-        return ClientPoint(origin);
+        // A unit standing on the landing changes nothing (batch 728): the client's own BBTeleportToPosition body gives its
+        // nearest-walkable search the flags {1, AIManager +0x285, 1}, and byte 2 turns the actor test off (the client answers
+        // false at once). The emulator's 10-unit backoff toward the caster left Urgot's swap (UrgotSwapExecute teleports each onto the other's
+        // point) and a Riftwalk onto an adjacent enemy where they stood; the scripts that land beside a unit compute that point themselves
+        // (Shunpo 225 and Cutthroat 175 past it, Safeguard's and Stand United's offsets, Infinite Duress's 150 ring).
+        return _movement.Navigation.ClosestSummonPlacement(target, _movement.MovementRadius(hero));
     }
 
     private bool FlashPointClear(Entity hero, Position2 candidate)
@@ -480,21 +461,22 @@ public sealed partial class SpellSystem
     /// landing, clear of bodies and terrain, that the move can be sent through in two packets. Null when the move is not
     /// short (nothing to stage), or when no such point exists — the caller refuses the move then.
     /// <para>
-    /// Reconstruction: the stock client applies a teleport packet only when its teleport id is new and the unit is not within
-    /// <c>ClientTeleportDeadband</c> of the packet's point (the teleport branch of the waypoint handler in the client,
-    /// the waypoint handler loads the literal 50.0, not the grid cell size, passes it to the
-    /// unit's position setter and tests the result through the distance helper, whose form was not read), so a shorter
-    /// move sent as one packet is dropped on the client. Retail's server packet for such a
-    /// move is not in the shipped files, so the two-packet staging (the first point outside the dead band) is kept as the form
-    /// every client applies. The rule is the wire's, so every script teleport goes through it (<c>BbScriptMoves.Teleport</c>),
-    /// not only Flash's.
+    /// Reconstruction: the stock client applies a teleport entry only when its teleport id is new and its actor stands outside the
+    /// <c>ClientTeleportDeadband</c> box of the entry's point (HandleWaypoint's teleport branch, -: the actor's position
+    /// getter, vtable +0xc, and the point go to the client with the literal 50.0, which answers 1 when |dx| and |dz| are both within
+    /// it; only an answer of 0 stores the id and sets the position), so a shorter move sent as one entry is dropped on the client. Retail's
+    /// server packet for such a move is not in the shipped files, so the two-packet staging (the first point outside the dead band) is kept as
+    /// the form every client applies. The rule is the wire's, so every script teleport goes through it (<c>BbScriptMoves.Teleport</c>),
+    /// not only Flash's. The box the first entry has to leave is the one around <paramref name="launch"/>, where every client's actor still
+    /// stands, not the server's unit, which a script teleport has already put on <paramref name="destination"/> (batch 728: a stage tested
+    /// against the landing lay inside the launch's box for a Riftwalk of 20 to 70 units toward half the compass, and no client moved Kassadin).
     /// </summary>
     internal Position2? ShortTeleportStaging(Entity unit, Position2 launch, Position2 destination) =>
         _effects.IsReferenceReady(unit) && !OutsideTeleportDeadband(launch, destination)
-            ? TeleportStagingPoint(unit, destination)
+            ? TeleportStagingPoint(unit, launch, destination)
             : null;
 
-    private Position2? TeleportStagingPoint(Entity hero, Position2 destination)
+    private Position2? TeleportStagingPoint(Entity hero, Position2 launch, Position2 destination)
     {
         var grid = _movement.Navigation;
         var center = grid.WorldToCell(destination);
@@ -515,7 +497,7 @@ public sealed partial class SpellSystem
             {
                 if (!grid.IsInBounds(cell)) continue;
                 var candidate = ClientPoint(grid.CellToWorld(cell));
-                if (!OutsideTeleportDeadband(hero.Position, candidate) ||
+                if (!OutsideTeleportDeadband(launch, candidate) ||
                     !OutsideTeleportDeadband(candidate, destination) ||
                     Math.Max(Math.Abs(candidate.X - destination.X),
                         Math.Abs(candidate.Z - destination.Z)) > FlashRange ||

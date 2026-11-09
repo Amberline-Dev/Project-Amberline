@@ -37,9 +37,13 @@ internal static class BbM3
 
     internal sealed class Match : IDisposable
     {
-        /// <summary>Batch 469: <paramref name="navigation"/> is the map's grid; null is map 1's (the default for every champion check).</summary>
+        /// <summary>
+        /// Batch 469: <paramref name="navigation"/> is the map's grid; null is map 1's (the default for every champion check). Batch 736:
+        /// <paramref name="mapId"/> composes that map's match (its movement engine reads the map's grid); a map other than 1 also needs
+        /// <c>GameData.ConfigureDefault</c> of its paths for its layout, and its own <paramref name="navigation"/>.
+        /// </summary>
         public Match(string champion, string allyChampion = "Annie", string foeChampion = "Orianna", Team team = Team.Order,
-            NavigationGrid? navigation = null)
+            NavigationGrid? navigation = null, int mapId = GameMaps.Normal)
         {
             Champion = champion;
             var other = team == Team.Order ? Team.Chaos : Team.Order;
@@ -48,7 +52,8 @@ internal static class BbM3
                 new(1, 0, "Hero", champion, team), new(2, 1, "Ally", allyChampion, team),
                 new(3, 2, "Enemy", foeChampion, other), new(4, 3, "FarEnemy", "Ezreal", other),
             };
-            Runtime = MatchRuntime.CreateProduction(navigation ?? NavigationGrid.LoadDefault(), GameData.Default, readySettleSeconds: 0, roster: roster);
+            Runtime = MatchRuntime.CreateProduction(navigation ?? NavigationGrid.LoadDefault(), GameData.Default, readySettleSeconds: 0, roster: roster,
+                mapId: mapId);
             Runtime.World.Clock.SetVirtual(0);
             Runtime.Session.CreateWorld();
             for (var i = 0; i < roster.Count; i++)

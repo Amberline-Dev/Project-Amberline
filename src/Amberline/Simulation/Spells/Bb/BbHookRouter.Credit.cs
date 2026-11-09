@@ -1,6 +1,4 @@
 using Amberline.Core;
-using Amberline.Scripting.BuildingBlocks;
-using Amberline.Scripting.BuildingBlocks.Runtime;
 
 namespace Amberline.Simulation.Spells.Bb;
 

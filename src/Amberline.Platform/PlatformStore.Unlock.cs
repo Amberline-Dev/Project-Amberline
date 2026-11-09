@@ -41,7 +41,7 @@ public static partial class PlatformStore
             {
                 "CHAMPION" => "You already own this champion.",
                 "CHAMPION_SKIN" => "You already own this skin.",
-                "RUNE" => $"You already hold the most copies of this rune that you can ({OwnershipText(item, account, economy, catalog)}).",
+                "RUNE" => $"You already hold the most copies of this rune that you can ({OwnershipText(item, economy, catalog)}).",
                 "BUNDLE" => "You already own this bundle.",
                 "SPELL_BOOK_PAGE" or "RUNE_PAGE" => "You already own this rune page.",
                 _ => "You already own this item.",

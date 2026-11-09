@@ -219,6 +219,167 @@ public static class DominionReconnectChecks
         }
     }
 
+    /// <summary>
+    /// Batch 725 (owner, 9 November 2026: "after reconnecting the stairs vanished [...] Stairs vanishing possibly not sending packet on
+    /// reconnect"): a client that returns holds the Dominion props as a client that stayed. Three seats, the production composition: Order, a
+    /// Chaos seat that leaves and returns, and a Chaos seat that stays (the same team, so the same laser and core colours). The returning seat
+    /// leaves and comes back (a) before the stairs close, (b) during a closing stage, (c) after the release (the stairs raised and held) and
+    /// (d) after the Chaos nexus falls. A client's prop state is what its stream leaves it holding (<see cref="PropState"/>): the props it
+    /// created, each prop's last clip (the client plays the last 0xDA it got, seeking to now minus the clip's mission start) and the live
+    /// effects on the props (the lasers, the lit cores and the gems). The returning client's stream starts at its reconnect, as a restarted
+    /// client holds nothing: the session's reconnect bursts, the observer flush, then the reconnect burst, in production's order.
+    /// </summary>
+    [Check("dominion.reconnecting-client-sees-the-stairs-crystals-and-lasers-as-a-client-that-stayed", Serial = true, TimeoutSeconds = 900)]
+    public static void ReconnectingClientSeesTheDominionPropsAsAClientThatStayed()
+    {
+        GameData.ConfigureDefault(GameDataPaths.Default.ForMap(GameMaps.CrystalScar));
+        try
+        {
+            var roster = new[]
+            {
+                new SessionParticipantDefinition(1, 0, "Order", "Annie", Team.Order),
+                new SessionParticipantDefinition(2, 1, "Chaos", "Annie", Team.Chaos),
+                new SessionParticipantDefinition(3, 2, "Chaos2", "Annie", Team.Chaos),
+            };
+            using var runtime = MatchRuntime.CreateProduction(NavigationGrid.Load(GameDataPaths.Default.ForMap(GameMaps.CrystalScar)),
+                GameData.Default, readySettleSeconds: 0.0, roster: roster, mapId: GameMaps.CrystalScar);
+            runtime.World.Clock.SetVirtual(0.0);
+            runtime.Session.AfkTrackingDisabled = true;
+            runtime.Session.CreateWorld();
+            for (var id = 1; id <= roster.Length; id++)
+            {
+                TestAssert.True(runtime.Session.Authenticate(id, runtime.Session.BuildKeyCheck((ulong)id)) is not null, "authenticate");
+                runtime.Session.Spawn(id);
+                TestAssert.True(runtime.Session.MarkReady(id), "ready");
+            }
+            // The staying Chaos client: its map-ready burst (the props' creates, the crystals' holds and gems), built before the start as
+            // the session's scheduler builds it, then everything its observer gets.
+            var leaving = runtime.Session.Participants[1];
+            var staying = runtime.Session.Participants[2];
+            var stayed = new Capture();
+            foreach (var entity in runtime.Session.MapEntities) staying.View.Known.Add(entity.NetId);
+            stayed.Packets.AddRange(runtime.Session.BuildMapReadyPackets(3));
+            foreach (var seat in runtime.Session.Participants.Where(seat => seat != staying))
+                runtime.Delivery.AddObserver(new ReplicationObserver(seat.PlayerId, seat.Team, seat.Hero!.NetId, new Capture(), ready: true,
+                    view: seat.View));
+            runtime.Delivery.AddObserver(new ReplicationObserver(staying.PlayerId, staying.Team, staying.Hero!.NetId, stayed, ready: true,
+                view: staying.View));
+            TestAssert.True(runtime.Session.Start(), "the map 8 match starts");
+
+            var phases = new (string Name, double Leave, double Back, Action? Away)[]
+            {
+                ("(a) before the stairs close", 1.0, 3.0, null),
+                ("(b) during a closing stage", 25.0, 30.0, null),
+                ("(c) after the release, the stairs raised and held", 50.0, 90.0, null),
+                // DIAGNOSTICS: the Chaos nexus falls while the client is away (the nexus damage seam), which ends the match.
+                ("(d) after the Chaos nexus fell", 95.0, 105.0, () => runtime.Combat.DamageDominionNexus(Team.Chaos, 1000.0)),
+            };
+            // Every phase's differences are gathered first, so a failure lists what the returning client lacked in each phase.
+            var differences = new List<string>();
+            var connection = 2L;
+            Capture? back = null;
+            foreach (var (name, leave, backAt, away) in phases)
+            {
+                RunTo(runtime, leave);
+                if (back is not null) differences.AddRange(Differences($"{name}, before leaving", stayed, back));
+                TestAssert.True(runtime.Session.Disconnect(connection), $"{name}: the Chaos client disconnects");
+                TestAssert.True(runtime.Delivery.RemoveObserver(leaving.PlayerId), $"{name}: its observer is removed");
+                away?.Invoke();
+                RunTo(runtime, backAt);
+                connection = 900 + (long)backAt;
+                back = Reconnect(runtime, leaving, connection);
+                differences.AddRange(Differences(name, stayed, back));
+            }
+            RunTo(runtime, 112.0);
+            differences.AddRange(Differences("(d), later", stayed, back!));
+            TestAssert.True(differences.Count == 0, "the returning Chaos client holds the props as the Chaos client that stayed:\n"
+                + string.Join("\n", differences));
+
+            // The phases reached the states they name, on the client that stayed.
+            var final = PropState(stayed.Packets.Select(packet => packet.Plaintext.ToArray()));
+            TestAssert.True(final[Clip(DominionProps.OrderStairsNetId)].StartsWith("Raised_Idle ", StringComparison.Ordinal),
+                $"the Order stairs hold Raised_Idle ({final[Clip(DominionProps.OrderStairsNetId)]})");
+            TestAssert.True(final[Clip(DominionProps.ChaosStairsNetId)].StartsWith("Death ", StringComparison.Ordinal),
+                $"the fallen Chaos stairs hold their Death ({final[Clip(DominionProps.ChaosStairsNetId)]})");
+            TestAssert.True(final[Clip(DominionProps.ChaosCrystalNetId)].StartsWith("Explode ", StringComparison.Ordinal),
+                $"the fallen Chaos crystal holds its Explode ({final[Clip(DominionProps.ChaosCrystalNetId)]})");
+            TestAssert.Equal(13, final.Keys.Count(key => key.StartsWith("effect ", StringComparison.Ordinal)),
+                "the Order base's 8 lasers, 4 lit cores and gem stay lit; the fallen Chaos base's are out");
+        }
+        finally
+        {
+            GameData.ConfigureDefault(GameDataPaths.Default);
+        }
+    }
+
+    private static void RunTo(MatchRuntime runtime, double seconds)
+    {
+        while (runtime.Combat.CurrentTime + Step / 2 < seconds) runtime.Tick(Step);
+    }
+
+    // The returning client, as the session and MatchRuntimeNetwork.Tick serve it: the staged handshake (its spawn burst, then the map-ready
+    // burst on the scheduler pass after it is loaded), a new observer, one step (the flush) and the reconnect burst.
+    private static Capture Reconnect(MatchRuntime runtime, SessionParticipant seat, long connection)
+    {
+        TestAssert.True(runtime.Session.AuthenticateReconnect(connection, runtime.Session.BuildKeyCheck(seat.PlayerId)) == seat, "the seat reconnects");
+        var output = new List<SessionOutboundPacket>();
+        output.AddRange(runtime.Session.Receive(connection, 1, [0xC5]));
+        output.AddRange(runtime.Session.Receive(connection, 1, [0xC6, 0, 0, 0, 0]));
+        runtime.World.Clock.SetVirtual(seat.SpawnAt ?? throw new InvalidOperationException("the reconnect armed no spawn"));
+        output.AddRange(runtime.Session.RunSchedulers());
+        output.AddRange(runtime.Session.Receive(connection, 1, [0xC6, 0, 0, 0, 0]));
+        output.AddRange(runtime.Session.RunSchedulers());
+        TestAssert.True(seat is { Spawned: true, Loaded: true, Ready: true }, "the returning seat reaches ready");
+        var back = new Capture();
+        back.Packets.AddRange(output.Where(item => item.ConnectionId == connection).Select(item => item.Packet));
+        runtime.Delivery.AddObserver(new ReplicationObserver(seat.PlayerId, seat.Team, seat.Hero!.NetId, back, ready: true, view: seat.View,
+            clientId: seat.ClientId));
+        runtime.Tick(Step);
+        foreach (var participant in runtime.Session.ConsumeReconnects())
+            back.Packets.AddRange(MatchRuntimeNetwork.BuildReconnectState(runtime, participant));
+        return back;
+    }
+
+    private static readonly uint[] PropNetIds =
+    [
+        DominionProps.OrderStairsNetId, DominionProps.ChaosStairsNetId, DominionProps.OrderCrystalNetId, DominionProps.ChaosCrystalNetId,
+    ];
+
+    private static string Clip(uint prop) => $"clip {prop:X8}";
+
+    // What a stream leaves a client holding of the Dominion props: each prop it created (0xD9, the netid at 5), each prop's last clip (0xDA:
+    // the name at 5, the mission start at 69, the duration at 73, the netid at 77, the flags at 81) and the live effects bound to or aimed at
+    // a prop (0x8C: the effect at 6, the bind bone at 16, the target at 21, the effect's own netid at 25, the bind at 29), less those killed
+    // (0x3D, the effect's netid at 5).
+    private static SortedDictionary<string, string> PropState(IEnumerable<byte[]> stream)
+    {
+        var state = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var packet in stream)
+        {
+            if (packet.Length < 9) continue;
+            uint At(int offset) => BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(offset));
+            if (packet[0] == LevelPropPackets.CreateOpcode && PropNetIds.Contains(At(5)))
+                state[$"prop {At(5):X8}"] = Convert.ToHexString(packet);
+            else if (packet[0] == LevelPropPackets.AnimationOpcode && packet.Length == LevelPropPackets.AnimationLength && PropNetIds.Contains(At(77)))
+                state[Clip(At(77))] = $"{System.Text.Encoding.ASCII.GetString(packet, 5, 64).Split('\0')[0]} start "
+                    + $"{BinaryPrimitives.ReadSingleLittleEndian(packet.AsSpan(69)):0.000} duration {BinaryPrimitives.ReadSingleLittleEndian(packet.AsSpan(73)):0.000} flags 0x{At(81):X}";
+            else if (packet[0] == FxPackets.CreateGroupOpcode && packet.Length >= 33 && (PropNetIds.Contains(At(21)) || PropNetIds.Contains(At(29))))
+                state[$"effect {At(25):X8}"] = $"0x{At(6):X8} from bone 0x{At(16):X8} of {At(29):X8} to {At(21):X8}";
+            else if (packet[0] == FxPackets.KillOpcode && packet.Length == 9)
+                state.Remove($"effect {At(5):X8}");
+        }
+        return state;
+    }
+
+    private static IEnumerable<string> Differences(string phase, Capture stayed, Capture back)
+    {
+        var expected = PropState(stayed.Packets.Select(packet => packet.Plaintext.ToArray()));
+        var actual = PropState(back.Packets.Select(packet => packet.Plaintext.ToArray()));
+        return expected.Keys.Union(actual.Keys).Order(StringComparer.Ordinal)
+            .Where(key => expected.GetValueOrDefault(key) != actual.GetValueOrDefault(key))
+            .Select(key => $"{phase}: {key}: stayed {expected.GetValueOrDefault(key, "(none)")}, returned {actual.GetValueOrDefault(key, "(none)")}");
+    }
+
     // A Dominion record's identity: the opcode and the unit it names (0xDB, 0xDC, 0xDE), the native team (0xDD) or the quest id (0x90).
     private static (byte Opcode, uint Key)? RecordKey(byte[] packet) => packet.Length == 0 ? null : packet[0] switch
     {

@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using Amberline.Core;
 using Amberline.Core.Buffs;
 using Amberline.Data;
@@ -662,7 +661,6 @@ internal static class ProductionMatchComposition
         var summonerScripts = new BbSummonerModule(data);
         spells.LoadoutHooks = hooks.LoadoutHooks;
         spells.SummonerScripts = summonerScripts;
-        holder.Spells = spells;
         // Batch 419 (Reconstruction): an effect the wire sends unbound at a dead unit ends with that unit's corpse (SpellSystem.EndEffectWithUnitCorpse).
         delivery.UnboundEffectAtDeadUnit += spells.EndEffectWithUnitCorpse;
         hooks.SummonerHooks = summonerScripts.Bind(spells, hooks.LoadoutHooks, LogScriptException);

@@ -1,6 +1,5 @@
 using Amberline.Core;
 using Amberline.Network.Protocol;
-using Amberline.Simulation.Combat;
 
 namespace Amberline.Simulation.BehaviorTrees;
 

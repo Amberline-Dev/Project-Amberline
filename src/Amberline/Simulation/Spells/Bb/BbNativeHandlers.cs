@@ -1,6 +1,5 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
-using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Spells.Champions;
@@ -1081,6 +1080,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
                     !instance.SupersededEffects.Contains((uint)old))
                     instance.SupersededEffects.Add((uint)old);
                 table[idName] = (double)id;
+                // Batch 726: the instance whose table keeps the id owns a persistent effect; its end retires one it left (BbSpellHost.RetireOwnedEffects).
+                if (persistent && id != 0u) _host.OwnEffect(table, id);
             }
             // The retail pair has two ids (the own-team effect and the other-team effect); here it is one effect, so the second variable holds the
             // same id and a script that removes either one ends it (Monsoon removes both).

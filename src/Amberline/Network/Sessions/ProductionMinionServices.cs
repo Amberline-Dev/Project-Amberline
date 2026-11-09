@@ -1,19 +1,11 @@
-using System.Buffers.Binary;
 using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Network.Replication;
-using Amberline.Simulation.Ai;
-using Amberline.Simulation.BehaviorTrees;
 using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Bots;
 using Amberline.Simulation.Combat;
-using Amberline.Simulation.Items;
 using Amberline.Simulation.Movement;
 using Amberline.Simulation.Minions;
-using Amberline.Simulation.Neutral;
-using Amberline.Simulation.Pets;
 using Amberline.Simulation.Runtime;
 using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Bb;
@@ -45,7 +37,6 @@ internal sealed class ProductionMinionPacketSink : IMinionPacketSink
     // (the first-collision landing).
     private readonly Func<double>? _clock;
     private readonly Func<IEnumerable<Entity>>? _minions;
-    private readonly Func<Entity, ForcedMoveState, Position2>? _dashDestination;
     public ProductionMinionPacketSink(NavigationGrid navigation,
         ReplicationDelivery delivery, ReplicationSyncCounter sync,
         FidelityTrace? fidelityTrace = null, CollisionDiagnosticSink? movementTrace = null,
@@ -53,7 +44,7 @@ internal sealed class ProductionMinionPacketSink : IMinionPacketSink
         Func<IEnumerable<Entity>>? minions = null)
     { _navigation = navigation; _delivery = delivery; _sync = sync;
       _fidelityTrace = fidelityTrace; _movementTrace = movementTrace; _clock = clock;
-      _dashDestination = dashDestination; _minions = minions; }
+      _minions = minions; }
 
     public bool IsReferenceReady(Entity minion) => minion.Created;
     public bool TryGetClientPosition(Entity minion, out Position2 position)

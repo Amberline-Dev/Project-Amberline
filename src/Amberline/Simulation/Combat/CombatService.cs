@@ -1,9 +1,7 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
 using Amberline.Data;
-using Amberline.Simulation;
 using Amberline.Simulation.Ai;
-using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Stats;
 
 namespace Amberline.Simulation.Combat;
@@ -116,7 +114,6 @@ public sealed partial class CombatService : IEndOfGameEngine
     /// <summary>The losing team <c>SetMinionsNoRender</c> switched off, kept as manager state.</summary>
     private Team? _endGameNoRenderTeam;
     private Team _winner;
-    private double _gameOverAt;
 
     public CombatService(
         WorldState world,

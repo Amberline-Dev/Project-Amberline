@@ -1,6 +1,5 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
-using Amberline.Simulation.Combat;
 using Amberline.Simulation.Stats;
 
 namespace Amberline.Simulation.Buffs;

@@ -140,7 +140,7 @@ public static partial class ChampionLiveRegressionChecks
                 // A launched line ends with one DestroyMissile for everyone (BbLineMissile.Finish). A cast the caster's death cancelled in its
                 // windup never created a missile: the client makes it at its own cast frame, and a destroy that reaches it before the frame finds
                 // nothing (BbLineMissile.Launch), so the script engine sends that retirement only to views that missed the cast (RetireCastMissile,
-                // LateMissileOnly); the cast's viewers just forget the id, which the last loop below asserts (batch 103, row 18).
+                // LateCopiesOnly); the cast's viewers just forget the id, which the last loop below asserts (batch 103, row 18).
                 TestAssert.Equal(ending == "flight" ? 1 : 0, capture.Packets.Count(packet => IsB6Retirement(packet, missileId)),
                     ending == "flight" ? "one matching retirement" : "a cancelled windup's missile needs no retirement");
             }

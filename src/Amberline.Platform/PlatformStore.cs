@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Net;
 using Amberline.Data;
-using Microsoft.AspNetCore.Http;
 
 namespace Amberline.Platform;
 
@@ -556,7 +555,7 @@ public static partial class PlatformStore
         _ => IsOwned(item, account, economy, catalog),
     };
 
-    private static string OwnershipText(PlatformStoreItem item, PlatformAccount account,
+    private static string OwnershipText(PlatformStoreItem item,
         PlatformEconomyState economy, PlatformStoreCatalog catalog) => item.Kind switch
     {
         "SPELL_BOOK_PAGE" or "RUNE_PAGE" => "Owned",

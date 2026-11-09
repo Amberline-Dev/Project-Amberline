@@ -5,7 +5,6 @@ using System.Threading.RateLimiting;
 using Amberline.Host;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
 
 namespace Amberline.Platform;

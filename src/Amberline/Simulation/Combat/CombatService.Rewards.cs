@@ -1,6 +1,4 @@
 using Amberline.Core;
-using Amberline.Data;
-using Amberline.Simulation;
 using Amberline.Simulation.Ai;
 using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Stats;

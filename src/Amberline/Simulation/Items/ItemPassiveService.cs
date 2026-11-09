@@ -1,10 +1,6 @@
-using System;
-using System.Linq;
 using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Combat;
 using Amberline.Simulation.Spells;
 using Amberline.Simulation.Stats;
 
@@ -19,8 +15,6 @@ namespace Amberline.Simulation.Items;
 /// </summary>
 public sealed class ItemPassiveService
 {
-    private readonly BuffLifecycle _buffs;
-    private readonly IBuffEffectHooks _buffEffects;
 
     /// <summary>The scripted-item dependencies are gone with the twins (batch 149 step 5); the signature stays so the
     /// composition still hands over what the shared item-slow pair may one day need.</summary>
@@ -30,8 +24,8 @@ public sealed class ItemPassiveService
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(gameData);
-        _buffs = buffs ?? throw new ArgumentNullException(nameof(buffs));
-        _buffEffects = buffEffects ?? throw new ArgumentNullException(nameof(buffEffects));
+        ArgumentNullException.ThrowIfNull(buffs);
+        ArgumentNullException.ThrowIfNull(buffEffects);
         ArgumentNullException.ThrowIfNull(combat);
         ArgumentNullException.ThrowIfNull(effects);
         ArgumentNullException.ThrowIfNull(heroStats);

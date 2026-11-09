@@ -1,8 +1,6 @@
 using Amberline.Core;
 using Amberline.Network.Protocol;
 using Amberline.Simulation.Combat;
-using Amberline.Simulation.Pets;
-using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Champions;
 
 namespace Amberline.Network.Replication;

@@ -3,7 +3,6 @@ using Amberline.Core.Buffs;
 using Amberline.Simulation.Buffs;
 using Amberline.Data;
 using Amberline.Network.Protocol;
-using Amberline.Simulation.Spells;
 
 namespace Amberline.Simulation.Spells.Champions;
 

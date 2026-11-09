@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Diagnostics;
 using Amberline.Core;
 using Amberline.Network.Protocol;
@@ -132,8 +131,7 @@ public sealed class MatchRuntimeNetwork : IDisposable
             throw new InvalidOperationException("Cannot attach an observer before the peer connects.");
         var participant = _runtime.Session.Participant(connectionId)
             ?? throw new InvalidOperationException("Cannot attach an observer before authentication.");
-        var hero = participant.Hero
-            ?? throw new InvalidOperationException("Cannot attach an observer before hero creation.");
+        if (participant.Hero is null) throw new InvalidOperationException("Cannot attach an observer before hero creation.");
         if (_observers.TryGetValue(connectionId, out var existing))
         {
             existing.Ready = participant.Ready;

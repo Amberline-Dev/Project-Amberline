@@ -1,7 +1,5 @@
 using Amberline.Core;
-using Amberline.Data;
 using Amberline.Scripting.Lua;
-using LuaChunk = Amberline.Data.LuaChunk;
 using LuaValue = Amberline.Scripting.Lua.LuaValue;
 
 namespace Amberline.Simulation.Ai;

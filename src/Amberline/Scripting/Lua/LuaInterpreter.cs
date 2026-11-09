@@ -85,7 +85,7 @@ internal sealed class LuaInterpreter
                         break;
 
                     case (int)LuaOpcode.GetTable:
-                        registers[a] = _state.Index(registers[b], Rk(frame, registers, constants, c));
+                        registers[a] = _state.Index(registers[b], Rk(registers, constants, c));
                         break;
 
                     case (int)LuaOpcode.SetGlobal:
@@ -97,7 +97,7 @@ internal sealed class LuaInterpreter
                         break;
 
                     case (int)LuaOpcode.SetTable:
-                        _state.NewIndex(registers[a], Rk(frame, registers, constants, b), Rk(frame, registers, constants, c));
+                        _state.NewIndex(registers[a], Rk(registers, constants, b), Rk(registers, constants, c));
                         break;
 
                     case (int)LuaOpcode.NewTable:
@@ -108,32 +108,32 @@ internal sealed class LuaInterpreter
                     {
                         var target = registers[b];
                         registers[a + 1] = target;
-                        registers[a] = _state.Index(target, Rk(frame, registers, constants, c));
+                        registers[a] = _state.Index(target, Rk(registers, constants, c));
                         break;
                     }
 
                     case (int)LuaOpcode.Add:
-                        registers[a] = Arith(ArithOp.Add, Rk(frame, registers, constants, b), Rk(frame, registers, constants, c));
+                        registers[a] = Arith(ArithOp.Add, Rk(registers, constants, b), Rk(registers, constants, c));
                         break;
 
                     case (int)LuaOpcode.Sub:
-                        registers[a] = Arith(ArithOp.Sub, Rk(frame, registers, constants, b), Rk(frame, registers, constants, c));
+                        registers[a] = Arith(ArithOp.Sub, Rk(registers, constants, b), Rk(registers, constants, c));
                         break;
 
                     case (int)LuaOpcode.Mul:
-                        registers[a] = Arith(ArithOp.Mul, Rk(frame, registers, constants, b), Rk(frame, registers, constants, c));
+                        registers[a] = Arith(ArithOp.Mul, Rk(registers, constants, b), Rk(registers, constants, c));
                         break;
 
                     case (int)LuaOpcode.Div:
-                        registers[a] = Arith(ArithOp.Div, Rk(frame, registers, constants, b), Rk(frame, registers, constants, c));
+                        registers[a] = Arith(ArithOp.Div, Rk(registers, constants, b), Rk(registers, constants, c));
                         break;
 
                     case (int)LuaOpcode.Mod:
-                        registers[a] = Arith(ArithOp.Mod, Rk(frame, registers, constants, b), Rk(frame, registers, constants, c));
+                        registers[a] = Arith(ArithOp.Mod, Rk(registers, constants, b), Rk(registers, constants, c));
                         break;
 
                     case (int)LuaOpcode.Pow:
-                        registers[a] = Arith(ArithOp.Pow, Rk(frame, registers, constants, b), Rk(frame, registers, constants, c));
+                        registers[a] = Arith(ArithOp.Pow, Rk(registers, constants, b), Rk(registers, constants, c));
                         break;
 
                     case (int)LuaOpcode.Unm:
@@ -152,7 +152,7 @@ internal sealed class LuaInterpreter
 
                     case (int)LuaOpcode.Concat:
                     {
-                        var value = Rk(frame, registers, constants, b);
+                        var value = Rk(registers, constants, b);
                         for (var i = b + 1; i <= c; i++) value = _state.Concat(value, registers[i]);
                         registers[a] = value;
                         break;
@@ -165,17 +165,17 @@ internal sealed class LuaInterpreter
                     // A is the jump-condition flag: `if ((RK(B) op RK(C)) ~= A) then PC++`, so the
                     // following JMP runs when the comparison equals A and is skipped when it does not.
                     case (int)LuaOpcode.Equal:
-                        if (_state.Equal(Rk(frame, registers, constants, b), Rk(frame, registers, constants, c)) != (a != 0))
+                        if (_state.Equal(Rk(registers, constants, b), Rk(registers, constants, c)) != (a != 0))
                             frame.Pc++;
                         break;
 
                     case (int)LuaOpcode.LessThan:
-                        if (_state.OrderLess(Rk(frame, registers, constants, b), Rk(frame, registers, constants, c)) != (a != 0))
+                        if (_state.OrderLess(Rk(registers, constants, b), Rk(registers, constants, c)) != (a != 0))
                             frame.Pc++;
                         break;
 
                     case (int)LuaOpcode.LessEqual:
-                        if (_state.OrderLessEqual(Rk(frame, registers, constants, b), Rk(frame, registers, constants, c)) != (a != 0))
+                        if (_state.OrderLessEqual(Rk(registers, constants, b), Rk(registers, constants, c)) != (a != 0))
                             frame.Pc++;
                         break;
 
@@ -405,7 +405,7 @@ internal sealed class LuaInterpreter
         return (remainder > 0 ? y < 0 : remainder < 0 && y > 0) ? remainder + y : remainder;
     }
 
-    private static LuaValue Rk(LuaFrame frame, LuaValue[] registers, IReadOnlyList<LuaConstant> constants, int operand) =>
+    private static LuaValue Rk(LuaValue[] registers, IReadOnlyList<LuaConstant> constants, int operand) =>
         (operand & 0x100) != 0 ? Constant(constants, operand & 0xff) : registers[operand];
 
     private static LuaValue Constant(IReadOnlyList<LuaConstant> constants, int index)

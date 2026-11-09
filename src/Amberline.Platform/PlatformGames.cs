@@ -790,14 +790,22 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     /// Batch 500 (NOT RETAIL, see <see cref="AirGameDtos.SpellNamesFor"/>): a seat's saved spells must be ones the game's map offers. A saved pair
     /// the map does not offer (Teleport, Fortify or Rally on Dominion) gives the seat the platform default pair instead, so the match never names
     /// a spell its map refuses. The saved loadout itself is not changed.
+    /// <para>
+    /// Batch 727 (owner report, 9 November 2026: the champion-select Spells box showed two empty slots): the seat's spells must also be
+    /// unlocked at the summoner's level. A level-one economy summoner who saved Teleport (level one, not on the Crystal Scar) was given
+    /// Flash and Dot, which unlock at 12 and 7. The default is the platform pair where the summoner may use it, else the economy pair
+    /// (Heal, Haste: unlocked at every level, offered on every map). Reconstruction: retail's fallback is not recovered from the shipped files.
+    /// </para>
     /// </summary>
     private static Member OfferedSeat(Member member, int mapId)
     {
-        var offered = AirGameDtos.SpellNamesFor(mapId);
-        if (!offered.ContainsKey(member.Spell1) || !offered.ContainsKey(member.Spell2))
+        var level = member.Account.Loadout.SummonerLevel;
+        if (!AirGameDtos.SpellUsable(member.Spell1, mapId, level) || !AirGameDtos.SpellUsable(member.Spell2, mapId, level))
         {
-            member.Spell1 = AirGameDtos.SpellId(SummonerLoadout.DefaultFirst);
-            member.Spell2 = AirGameDtos.SpellId(SummonerLoadout.DefaultSecond);
+            var flash = AirGameDtos.SpellId(SummonerLoadout.DefaultFirst);
+            var dot = AirGameDtos.SpellId(SummonerLoadout.DefaultSecond);
+            (member.Spell1, member.Spell2) = AirGameDtos.SpellUsable(flash, mapId, level) && AirGameDtos.SpellUsable(dot, mapId, level)
+                ? (flash, dot) : (AirGameDtos.SpellId("SummonerHeal"), AirGameDtos.SpellId("SummonerHaste"));
         }
         return member;
     }
@@ -830,6 +838,15 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                 !(game.State == "POST_CHAMP_SELECT" && _clock.GetUtcNow() < game.Deadline))
                 throw AirFault.SpellsClosed();
             var member = MemberFor(game, account);
+            // Batch 727: the summoner's level unlocks each spell (SpellGeneratedData minLevel), Dominion's included. The classic save below
+            // enforces it through SaveLoadout; a Dominion pick is never saved, so it is checked here, before any state changes.
+            var level = accounts.Get(account).Loadout.SummonerLevel;
+            foreach (var spell in new[] { first, second })
+                if (!AirGameDtos.SpellUsable(spell, game.MapId, level))
+                {
+                    var name = AirGameDtos.AllSpellNames[spell];
+                    throw new ArgumentException($"Summoner level {level} cannot select {name}; level {AirDtos.SpellMinimumLevel(name)} is required.");
+                }
             // The saved default loadout keeps the CLASSIC spells: a Dominion pick is for this game only.
             if (!AirGameDtos.DominionSpellNames.ContainsKey(first) && !AirGameDtos.DominionSpellNames.ContainsKey(second))
                 accounts.SaveLoadout(account, accounts.Get(account).Loadout with

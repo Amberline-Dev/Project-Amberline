@@ -1,4 +1,3 @@
-using Amberline.Data;
 using LuaChunk = Amberline.Data.LuaChunk;
 
 namespace Amberline.Simulation.Ai;

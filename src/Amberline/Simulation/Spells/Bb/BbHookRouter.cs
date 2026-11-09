@@ -1,6 +1,5 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
-using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
@@ -446,7 +445,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
         // (the hand-written item missiles of the old code drew their impact effect only inside the same gate as their damage
         // and their slow; the script is silent about the inibin's effects, so the old gate is kept). The hook body above has
         // run anyway and its damage and buff adds are refused by the shield window.
-        if (!absorbed) DrawDefaultHitEffects(script, hero, target, frame);
+        if (!absorbed) DrawDefaultHitEffects(script, target, frame);
         RunSpellHit(script, hero, position, end, target, targetsHit, missileNetId);
     }
 
@@ -497,7 +496,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// Reconstruction: the effect is bound to the unit (the stock pass places it at the hit bone or at the side facing the caster),
     /// the hit pass runs after the script and neither repeats an effect the script drew on the same unit.
     /// </summary>
-    private void DrawDefaultHitEffects(BbScript script, Entity hero, Entity target, BbHookFrame frame)
+    private void DrawDefaultHitEffects(BbScript script, Entity target, BbHookFrame frame)
     {
         var data = DefaultEffects(script.Name);
         if (data is null) return;

@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Linq;
 using Amberline.Core;
 using Amberline.Core.Buffs;
@@ -500,14 +498,21 @@ public sealed partial class BuffLifecycle
         // own TimerFeared wander stops with it), and defines neither OnCanMove nor OnCanAttack, so
         // a plain release raises nothing for it. A fear that leaves another fear restarts the
         // wander instead of ending it, as the pet path does.
-        if (unit.Alive && Heroes is { } heroes && heroes.Drives(unit))
+        // Batch 724 (owner, 9 November 2026: Mordekaiser died feared by Nocturne's E and respawned feared for good): a hero lives again, so
+        // the release of a control its death removes reaches its Hero.luaobj too, and a dead hero's fear only ends. OnFearEnd (proto 0.7) is
+        // the script's one stop of TimerFeared besides HaltAI, and TimerFeared (proto 0.8) wanders with SetStateAndMove(AI_FEARED) every
+        // second without asking for a fear: a fear that ended with the death left the next life wandering, and OnOrder (proto 0.2) refuses
+        // every order in AI_FEARED. Reconstruction: the server's dispatch of the AI callbacks is not in the client; the death removes the
+        // fear (Fear.luaobj has no PersistsThroughDeath) and runs its OnBuffDeactivate (SetFeared false), whose end is what OnFearEnd answers.
+        // Units of the other classes do not come back, so their releases stay with the living.
+        if (Heroes is { } heroes && heroes.Drives(unit))
         {
             if (buff.Type == BuffType.Taunt && !_renewingTaunt) heroes.OnTauntEnd(unit);
             else if (buff.Type == BuffType.Fear || buff.Name == "Fear" || buff.Payload.FearOrigin is not null)
             {
                 var remainingFear = unit.Buffs.LastOrDefault(active => active.Type == BuffType.Fear ||
                     active.Name == "Fear" || active.Payload.FearOrigin is not null);
-                if (remainingFear is null) heroes.OnFearEnd(unit);
+                if (remainingFear is null || !unit.Alive) heroes.OnFearEnd(unit);
                 else heroes.OnFearBegin(unit);
             }
         }

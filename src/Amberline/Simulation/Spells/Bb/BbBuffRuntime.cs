@@ -1452,7 +1452,11 @@ internal sealed class BbBuffRuntime
             ApplyForeign(instance, taken.Foreign);
         }
         if (!_host.Spells.Buffs.DropScriptStack(target, buff, sample?.Payload ?? new BuffPayload(), count)) return;
-        foreach (var stack in ended) RunStackHook(instance, stack, "OnBuffDeactivate", scope => scope.Vars["Expired"] = false);
+        foreach (var stack in ended)
+        {
+            RunStackHook(instance, stack, "OnBuffDeactivate", scope => scope.Vars["Expired"] = false);
+            _host.RetireOwnedEffects(stack.Vars);
+        }
     }
 
     private readonly Dictionary<(BbScript Script, string Hook), bool> _removesItself = new();
@@ -1521,7 +1525,12 @@ internal sealed class BbBuffRuntime
         if (_host.HasFrame && _host.Frame.PreActivation) return;
         var instance = _host.Frame.Buff ?? throw new BbRuntimeException("BBSpellBuffRemoveCurrent runs outside a buff hook");
         if (instance.State.Slot >= 0 && target.Buffs.Contains(instance.State))
+        {
+            // NOT RETAIL, batch 729 follow-up: a hidden trap's own script removing its buff is its spring (Bushwhack's trigger), which the flush shows
+            // (Entity.SpringRevealRadius). The removal is the spring only for that trap: its expiry ends the buff on the lifecycle's timer instead.
+            if (target.SpringRevealRadius > 0.0) target.SprungThisFlush = true;
             _host.Spells.Buffs.Remove(target, instance.State.Slot);
+        }
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -2101,6 +2110,9 @@ internal sealed class BbBuffRuntime
             RunStackHook(instance, stack, "OnBuffDeactivate", scope => scope.Vars["Expired"] = expired);
         foreach (var id in instance.SupersededEffects)
             if (_host.KilledEffects.Add(id)) _host.Spells.Effects.KillEffect(id);
+        // Batch 726: what the buff's tables still own outlived it (BbSpellHost.RetireOwnedEffects).
+        _host.RetireOwnedEffects(instance.InstanceVars);
+        foreach (var stack in instance.Stacks) _host.RetireOwnedEffects(stack.Vars);
     }
 
     /// <summary>

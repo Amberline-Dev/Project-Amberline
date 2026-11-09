@@ -399,7 +399,7 @@ public sealed partial class SpellSystem
             hero.MatchStatistics.RecordCast(req.Slot, summoner: true);
             return true;
         }
-        if (req.Slot == RecallSlot) return HandleRecall(hero, req, now);
+        if (req.Slot == RecallSlot) return HandleRecall(hero, now);
         if ((uint)req.Slot >= ChampionSlotCount) return false;
         var validation = CanCast(hero, req.Slot, req.TargetNetId, req.Position, now, req.EndPosition);
         if (!validation.Allowed || moving)
@@ -1091,15 +1091,6 @@ public sealed partial class SpellSystem
         if ((uint)slot >= ChampionSlotCount || !_championDispatcher.Handles(hero)) return false;
         try { return CastSpellData(hero, slot).RawFlag("SpellData*CanCastWhileDisabled"); }
         catch (InibinException) { return false; }
-    }
-
-    private static Position3 Direction(Position3 from, Position3 to)
-    {
-        var dx = to.X - from.X;
-        var dz = to.Z - from.Z;
-        var length = Math.Sqrt(dx * dx + dz * dz);
-        return length <= 1e-9 ? new Position3(1.0, 0.0, 0.0) :
-            new Position3(dx / length, 0.0, dz / length);
     }
 
     private static double Distance(Position2 first, Position2 second) =>

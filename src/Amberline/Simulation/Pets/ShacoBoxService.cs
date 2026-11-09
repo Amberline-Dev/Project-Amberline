@@ -3,7 +3,6 @@ using Amberline.Data;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Movement;
-using Amberline.Simulation.Minions;
 using Amberline.Simulation.Spells;
 
 namespace Amberline.Simulation.Pets;
@@ -21,7 +20,6 @@ namespace Amberline.Simulation.Pets;
 public sealed class ShacoBoxService
 {
     private readonly WorldState _world;
-    private readonly CombatService _combat;
     private readonly ISpellEffectSink _effects;
     private readonly IRandomSource _random;
     private readonly NavigationGrid _navigation;
@@ -36,7 +34,7 @@ public sealed class ShacoBoxService
     {
         _world = world ?? throw new ArgumentNullException(nameof(world));
         _movement = movement ?? throw new ArgumentNullException(nameof(movement));
-        _combat = combat ?? throw new ArgumentNullException(nameof(combat));
+        ArgumentNullException.ThrowIfNull(combat);
         _effects = effects ?? throw new ArgumentNullException(nameof(effects));
         _random = random ?? throw new ArgumentNullException(nameof(random));
         _navigation = navigation ?? throw new ArgumentNullException(nameof(navigation));

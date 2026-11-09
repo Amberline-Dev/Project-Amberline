@@ -5,7 +5,6 @@ using Amberline.Network.Replication;
 using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Combat;
 
 namespace Amberline.Simulation.Spells.Bb;
 
@@ -114,6 +113,49 @@ internal sealed class BbSpellHost : IBbHost
     /// <summary>Batch 398 (Reconstruction): the unbound placemarker effects a script never removes, by the cube they were sent for. The cube's death
     /// kills them (BbBuffRuntime.OnUnitDeath): the client's bound emitter ends with its unit.</summary>
     internal Dictionary<uint, List<uint>> PlacemarkerEffects { get; } = new();
+
+    /// <summary>
+    /// Batch 726: the persistent effects (<c>BBSpellEffectCreate</c> whose id the script removes later) by the table that keeps their id, a channel's
+    /// or a buff stack's <c>InstanceVars</c>. Weak keys: a table that never ends (a character's, an item's, a frame's locals) takes its entries with it.
+    /// ponytail: an id created straight into NextBuffVars (Amumu's Bandage Toss) is owned by that table, not by the buff's copy of it, so that buff's
+    /// end does not retire it; every shipped buff that gets one removes it in its OnBuffDeactivate. Own the copy too if a script ever leaves one.
+    /// </summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<BbTable, List<uint>> _ownedEffects = new();
+
+    internal void OwnEffect(BbTable vars, uint id)
+    {
+        var ids = _ownedEffects.GetOrCreateValue(vars);
+        ids.RemoveAll(KilledEffects.Contains);
+        ids.Add(id);
+    }
+
+    /// <summary>
+    /// Batch 726 (owner report, 9 November 2026: an enemy entering vision still showed a recall effect): the instance whose <paramref name="vars"/>
+    /// kept these ids has ended (a channel's stop, a buff stack's deactivation), so no script can remove what it left. Recall.luaobj removes
+    /// TeleportHome only in <c>ChannelingCancelStop</c>; its <c>ChannelingSuccessStop</c> removes nothing, and the effect stayed in the late-sight
+    /// replay for the rest of the match. A left effect is retired (<see cref="ISpellEffectSink.RetireEffect"/>): it leaves the replay, a copy a
+    /// late sight replayed is killed, and a client that saw it created lets it run out on its own clock, the script sending no removal.
+    /// An id the instance handed on (<c>BBSetVarInTable</c> into <c>NextBuffVars</c>: Malzahar's Call of the Void at its deactivation,
+    /// Mordekaiser's Children of the Grave) belongs to the live instance that holds it now, which can still remove it.
+    /// Reconstruction: retail's late-observer replay is not recovered; this bounds the replay by the life of the script instances that hold the id.
+    /// </summary>
+    internal void RetireOwnedEffects(BbTable vars)
+    {
+        if (!_ownedEffects.TryGetValue(vars, out var ids)) return;
+        _ownedEffects.Remove(vars);
+        foreach (var id in ids)
+        {
+            if (KilledEffects.Contains(id)) continue;
+            if (LiveInstanceTables().FirstOrDefault(table => table.Entries.Any(entry => entry.Value is double held && held == id)) is { } heir)
+                OwnEffect(heir, id);
+            else if (KilledEffects.Add(id)) Spells.Effects.RetireEffect(id);
+        }
+    }
+
+    // The InstanceVars of the channels and buff stacks this host still runs (an ended instance has left both collections).
+    private IEnumerable<BbTable> LiveInstanceTables() =>
+        Channels.Active.Select(channel => channel.InstanceVars)
+            .Concat(Buffs.Instances.SelectMany(instance => instance.Stacks.Select(stack => stack.Vars).Append(instance.InstanceVars)));
 
     public void Push(BbHookFrame frame) => _frames.Push(frame);
     public void Pop() => _frames.Pop();

@@ -171,11 +171,13 @@ public static class DominionProps
     /// Which retail code spawned the gem is not recovered: no shipped script or inibin names <c>Odin_Crystal_blue</c> (only the stairs'
     /// AnimEffects, commented out, on their <c>center_crystal</c> bone at Close1 with k:0). The stand from the spawn follows the owner's
     /// retail picture (a big crystal in each base from the start).
+    /// Batch 725: a crystal whose nexus has fallen (<paramref name="fallen"/>, a client that returns after the fall) gets neither: its gem was
+    /// killed at the fall, and its fallen clip follows in the reconnect burst (BehaviorTreeQuestHost.ReconnectState).
     /// </summary>
-    public static IReadOnlyList<PlaintextPacket> CrystalStandPackets(NavigationBounds bounds)
+    public static IReadOnlyList<PlaintextPacket> CrystalStandPackets(NavigationBounds bounds, Func<Team, bool> fallen)
     {
         var packets = new List<PlaintextPacket>(4);
-        foreach (var nexus in MapDefinitions.CrystalScarNexusList)
+        foreach (var nexus in MapDefinitions.CrystalScarNexusList.Where(nexus => !fallen(nexus.Team)))
         {
             var team = nexus.Team;
             var gemHeight = CrystalSceneHeight(team) + RaisedCoreHeight;
@@ -192,7 +194,7 @@ public static class DominionProps
     /// <c>Close1 Crystal_r_4_aim Odin_crystal_beam_green.troy center_crystal s:270 l:0 k:0</c>, the same for <c>Crystal_l_4_aim</c>, and
     /// <c>Close1 center_crystal Odin_Crystal_beam_hit_green.troy s:270 l:0 k:0</c>; Close2 s:280 with the _3 pieces, Close3 s:285 with _2,
     /// Close4 s:290 with _1). The frame is the latch: the clip moves that stage's piece (<c>Crystal_r_4</c> in Close1, <c>Crystal_l_1</c> in
-    /// Close4, .anm tracks) and slams its dust at 260/270. Both stairs skeletons carry the eight <c>Crystal_{r,l}_{1..4}_aim</c> bones.
+    /// Close4, .anm tracks) and slams its dust at 260/270. The bones are Order's; the Chaos stairs start from their own set (<see cref="StairBone"/>).
     /// </summary>
     public static readonly (int Stage, int Frame, string RightBone, string LeftBone)[] BeamStages =
     [
@@ -201,6 +203,18 @@ public static class DominionProps
         (2, 285, "Crystal_r_2_aim", "Crystal_l_2_aim"),
         (3, 290, "Crystal_r_1_aim", "Crystal_l_1_aim"),
     ];
+
+    /// <summary>
+    /// Batch 725 (owner, 9 November 2026: the Chaos lasers were off the walls): the bone a laser starts from on a team's stairs. The two
+    /// stairs are one model mirrored across X, and each skeleton (<c>DATA/Characters/Odin_SoG_{Order,Chaos}/*.skl</c>, 126 bones) holds two
+    /// sets of the eight pieces and their aim bones: the plain <c>Crystal_{r,l}_{n}</c> (each aim a child of its piece) and the <c>chaos_</c>
+    /// set (root bones). Each skin draws one set (the .skl influence list): Order's the plain pieces, Chaos's the <c>chaos_</c> pieces, and the
+    /// Chaos AnimEffects names its own set too (<c>chaos_dust{n}</c>, <c>chaos_LAYOUT</c>). In the Chaos clips the plain pieces' rotations are
+    /// lost (their quaternions have length 0.707), so each plain aim bone sits 88 to 197 units off the drawn piece in every latched pose,
+    /// while each <c>chaos_</c> aim bone is the X-mirror of Order's (<c>.artifacts/b725/aims.py</c>, record of batch 725). Reconstruction: the
+    /// shipped laser lines (commented out) exist only in the Order list.
+    /// </summary>
+    public static string StairBone(Team team, string bone) => team == Team.Chaos ? "chaos_" + bone : bone;
 
     /// <summary>
     /// Batch 507: the laser (<c>DATA/Particles/odin_crystal_beam_green.troybin</c>: emitters flare1, flare2, beam-green, beam-green-refract,
@@ -240,7 +254,7 @@ public static class DominionProps
     /// Reconstruction (batch 507): one stage's two lasers and its lit core at one team's base. Retail's sender is not recovered: the shipped lines are
     /// commented out (the Chaos list has none) and no script, inibin or the client EXE names the beam.
     /// <list type="bullet">
-    /// <item>Laser: bound to the stairs' netid on the stair piece's aim bone, aimed at the crystal prop's netid on its gem bone
+    /// <item>Laser: bound to the stairs' netid on the stair piece's aim bone (the base's own set, <see cref="StairBone"/>), aimed at the crystal prop's netid on its gem bone
     /// (<see cref="CrystalGemBone"/>), so it ends where the gem is drawn. The shipped line aims at the stairs' own <c>center_crystal</c>, which
     /// sits 220 units below the held gem until the Raise. The 0x8C handler moves a
     /// target object that is not a unit (its unit test is false) to the packet's third position; that position is the crystal's own
@@ -263,7 +277,7 @@ public static class DominionProps
         var gemBone = SpellPackets.BuffNameHash(CrystalGemBone(team));
         PlaintextPacket Beam(string effect, string bone) => FxPackets.CreateGroup(SpellPackets.BuffNameHash(effect),
             BeamNetId(team, bone), nexus.Position, bounds, (_, _) => height, targetPosition: nexus.Position, ownerPosition: nexus.Position,
-            targetNetId: CrystalNetId(team), bindNetId: stairs, targetBoneHash: gemBone, boneHash: SpellPackets.BuffNameHash(bone));
+            targetNetId: CrystalNetId(team), bindNetId: stairs, targetBoneHash: gemBone, boneHash: SpellPackets.BuffNameHash(StairBone(team, bone)));
         PlaintextPacket Core(string effect) => FxPackets.CreateGroup(SpellPackets.BuffNameHash(effect), BeamHitNetId(team, stage),
             nexus.Position, bounds, (_, _) => height + RaisedCoreHeight, bindNetId: CrystalNetId(team), boneHash: gemBone);
         EffectCreateReplicationMessage Message(PlaintextPacket own, PlaintextPacket enemy, uint effectNetId) =>

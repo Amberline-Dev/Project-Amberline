@@ -313,6 +313,9 @@ public interface ISpellEffectSink
     uint CreateHitEffect(string effectName, Position2 position, uint bindNetId, double height) =>
         CreateEffect(effectName, position, bindNetId: bindNetId, flags: 0x08);
     void KillEffect(uint effectNetId);
+    /// <summary>Batch 726: a persistent effect whose owner ended without removing it stops replaying on late sight; only a copy a late sight
+    /// replayed is killed (<c>BbSpellHost.RetireOwnedEffects</c>). Capture-only sinks have no views.</summary>
+    void RetireEffect(uint effectNetId) { }
     void SendBuffDelta(Entity unit, BuffState buff, bool added, int count = 1);
     void SendBuffTooltip(Entity unit, BuffState buff) { }
     void RenewBuff(Entity unit, BuffState buff) => SendBuffDelta(unit, buff, true);

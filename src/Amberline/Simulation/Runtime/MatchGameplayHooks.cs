@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Linq;
 using Amberline.Core;
 using Amberline.Core.Buffs;
@@ -11,7 +9,6 @@ using Amberline.Simulation.Neutral;
 using Amberline.Simulation.Pets;
 using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Bb;
-using Amberline.Simulation.Spells.Champions;
 using Amberline.Simulation.Stats;
 
 namespace Amberline.Simulation.Runtime;
@@ -75,11 +72,14 @@ public sealed partial class MatchGameplayHooks : ICombatHooks, IHeroStatsHooks, 
 
     // Shipped nonpersistent displacement/action locks, including the global
     // Stun that Condemn and Pyromania apply.
+    // Batch 724: and the global Taunt that BBApplyTaunt adds (Taunt.luaobj has no PersistsThroughDeath). Galio's Idol of Durand taunts from a
+    // buff on Galio, so nothing on the victim took the taunt away when the victim died: the corpse kept the row and the status bit, and a revive
+    // inside the taunt brought it back taunted.
     private static readonly HashSet<string> RecipientDeathControls =
     [
         "BlindMonkRKick", "BlindMonkRDamage", "OrianaStun",
         "MoveAwayCollision", "RocketGrab2", "PowerFistSlow",
-        "VayneCondemnMissile", "Stun",
+        "VayneCondemnMissile", "Stun", "Taunt",
         "SweepingBlow", "Propel",
     ];
 
@@ -96,7 +96,6 @@ public sealed partial class MatchGameplayHooks : ICombatHooks, IHeroStatsHooks, 
     private JungleScheduler? _jungle;
     private NeutralAiService? _neutral;
     private SpellSystem? _spells;
-    private HeroStatsService? _heroStats;
     private CombatService? _combat;
 
     public MatchGameplayHooks(WorldState world, GameData data,
@@ -236,7 +235,7 @@ public sealed partial class MatchGameplayHooks : ICombatHooks, IHeroStatsHooks, 
         JungleScheduler jungle,
         SpellSystem spells)
     {
-        _heroStats = heroStats ?? throw new ArgumentNullException(nameof(heroStats));
+        ArgumentNullException.ThrowIfNull(heroStats);
         _combat = combat ?? throw new ArgumentNullException(nameof(combat));
         _buffs = buffs ?? throw new ArgumentNullException(nameof(buffs));
         _buffEffects = buffEffects ?? throw new ArgumentNullException(nameof(buffEffects));
@@ -260,7 +259,6 @@ public sealed partial class MatchGameplayHooks : ICombatHooks, IHeroStatsHooks, 
     private JungleScheduler Jungle => Required(_jungle, nameof(JungleScheduler));
     private NeutralAiService Neutral => Required(_neutral, nameof(NeutralAiService));
     private SpellSystem Spells => Required(_spells, nameof(SpellSystem));
-    private HeroStatsService HeroStats => Required(_heroStats, nameof(HeroStatsService));
     private CombatService Combat => Required(_combat, nameof(CombatService));
 
     // IHeroStatsHooks ------------------------------------------------------

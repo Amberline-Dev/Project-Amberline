@@ -1,15 +1,10 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
 using Amberline.Data;
-using Amberline.Network.Protocol;
-using Amberline.Network.Replication;
 using Amberline.Simulation.Ai;
 using Amberline.Simulation.Combat;
-using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Items;
 using Amberline.Simulation.Movement;
 using Amberline.Simulation.Spells;
-using Amberline.Simulation.Spells.Champions;
 
 namespace Amberline.Simulation.Neutral;
 
@@ -30,12 +25,8 @@ public sealed class NeutralAiService
 {
     private readonly WorldState _world;
     private readonly JungleScheduler _scheduler;
-    private readonly MovementSystem _movement;
     private readonly CombatService _combat;
     private readonly INeutralPacketSink _wire;
-    private readonly ISpellEffectSink _effects;
-    private readonly ISpellBuffService _spellBuffs;
-    private readonly GameData _gameData;
     private readonly IRandomSource _random;
     private readonly NeutralLuaAiEngine _jungle;
     private readonly LuaAiService _host;
@@ -56,12 +47,11 @@ public sealed class NeutralAiService
     {
         _world = world ?? throw new ArgumentNullException(nameof(world));
         _scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
-        _movement = movement ?? throw new ArgumentNullException(nameof(movement));
+        ArgumentNullException.ThrowIfNull(movement);
         _combat = combat ?? throw new ArgumentNullException(nameof(combat));
         _wire = wire ?? throw new ArgumentNullException(nameof(wire));
-        _effects = effects ?? throw new ArgumentNullException(nameof(effects));
-        _spellBuffs = spellBuffs ?? throw new ArgumentNullException(nameof(spellBuffs));
-        _gameData = gameData ?? GameData.Default;
+        ArgumentNullException.ThrowIfNull(effects);
+        ArgumentNullException.ThrowIfNull(spellBuffs);
         _random = random ?? new SystemRandomSource();
         _jungle = new NeutralLuaAiEngine(world, movement, combat, wire, _random, targetVisible);
         _host = new LuaAiService(world, _jungle);

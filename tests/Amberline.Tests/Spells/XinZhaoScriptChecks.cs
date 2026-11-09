@@ -1,6 +1,7 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
 using Amberline.Data;
+using Amberline.Network.Protocol;
 using Amberline.Network.Sessions;
 using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
@@ -149,6 +150,61 @@ public static partial class ChampionLiveRegressionChecks
                 TestAssert.Near(20.0 - elapsed - 1.0, xin.SpellCooldowns[slot], 0.1, $"{team}: slot {slot} lost the time and one second for the landed attack");
             TestAssert.Near(w0 - elapsed, xin.SpellCooldowns[1], 0.1, $"{team}: W only runs down");
         }
+    }
+
+    /// <summary>
+    /// Batch 735 (9 November 2026, the Battle Cry buff tooltip report): the buffs the W puts on the client go out under their shipped script
+    /// names, and each buff the client draws has its tooltip key in the shipped data. Training the rank sends the Aura passive
+    /// <c>XenZhaoBattleCryPassive</c> visible; the cast sends the five-second <c>XenZhaoBattleCry</c> (a CombatEnhancer, visible, the portrait
+    /// icon) and the cooldown placeholder <c>XenZhaoBattleCryPH</c> (Internal: the client never draws it, and no shipped <c>DATA/Buffs</c>
+    /// record holds a tooltip key for it, so retail has none either).
+    /// </summary>
+    [Check("scripting.bb-xinzhao-battle-cry-buffs-go-out-under-their-shipped-names")]
+    public static void XinZhaoBattleCryBuffsGoOutUnderTheirShippedNames()
+    {
+        var data = GameData.Default;
+        using var match = new Match("XinZhao", Team.Order);
+        var xin = match.Hero(0);
+        XinTrain(match, 1);
+        var trained = XinBattleCryWireAdds(match.Captures[0].Packets, xin.NetId);
+        var passive = trained.Where(add => add.BuffNameHash == SpellPackets.BuffNameHash("XenZhaoBattleCryPassive")).ToList();
+        TestAssert.True(passive.Count >= 1, "training the rank sends the passive under its shipped name");
+        TestAssert.Equal((byte)BuffType.Aura, passive[^1].BuffType, "the passive is an Aura");
+        TestAssert.Equal((byte)0, passive[^1].IsHidden, "and it is visible");
+
+        match.Clear();
+        match.Cast(0, 1, xin);
+        match.Runtime.Tick(0.4);
+        match.Runtime.Delivery.Flush();
+        var cast = XinBattleCryWireAdds(match.Captures[0].Packets, xin.NetId);
+        var active = cast.Where(add => add.BuffNameHash == SpellPackets.BuffNameHash("XenZhaoBattleCry")).ToList();
+        TestAssert.True(active.Count >= 1, "the cast sends the five-second buff under XenZhaoBattleCry");
+        TestAssert.Equal((byte)BuffType.CombatEnhancer, active[^1].BuffType, "as a CombatEnhancer");
+        TestAssert.Equal((byte)0, active[^1].IsHidden, "visible on the bar");
+        var placeholder = cast.Where(add => add.BuffNameHash == SpellPackets.BuffNameHash("XenZhaoBattleCryPH")).ToList();
+        TestAssert.True(placeholder.Count >= 1, "the cast sends the cooldown placeholder under XenZhaoBattleCryPH");
+        TestAssert.Equal((byte)BuffType.Internal, placeholder[^1].BuffType, "as an Internal buff, which the client never draws");
+
+        // The client keys a drawn buff's icon, tooltip and removal on the name it is sent: that name's DATA/Buffs record holds the tooltip
+        // key, and the shipped string table holds the key's title and description.
+        var strings = System.IO.File.ReadAllText(data.Paths.Data("Menu/fontconfig_en_US.txt"));
+        foreach (var name in new[] { "XenZhaoBattleCry", "XenZhaoBattleCryPassive" })
+        {
+            var key = $"game_buff_tooltip_{name}";
+            TestAssert.True(data.HasBuffData(name), $"{name} has a DATA/Buffs record");
+            var record = InibinReader.LoadData($"Buffs/{name}.inibin");
+            TestAssert.True(record.Values.Any(value => value.Kind == InibinValueKind.String && value.AsString() == key), $"{name}'s record holds {key}");
+            TestAssert.True(strings.Contains($"tr \"{key}\" = \"", StringComparison.Ordinal), $"the shipped string table holds {key}");
+        }
+        TestAssert.False(data.HasBuffData("XenZhaoBattleCryPH"), "the placeholder has no DATA/Buffs record, so it has no tooltip key (the shipped data is retail's)");
+    }
+
+    private static List<BuffAdd> XinBattleCryWireAdds(IEnumerable<PlaintextPacket> packets, uint holder)
+    {
+        var adds = new List<BuffAdd>();
+        foreach (var packet in packets)
+            if (SpellPackets.TryReadBuffAdd(packet.Plaintext.Span, out var add) && add.TargetNetId == holder) adds.Add(add);
+        return adds;
     }
 
     [Check("scripting.bb-xinzhao-three-talon-strike-replaces-three-attacks-and-knocks-up")]
@@ -389,5 +445,36 @@ public static partial class ChampionLiveRegressionChecks
             var timing = HeroAttackTimings.For(hero, GameData.Default);
             TestAssert.Equal(flies, timing.MissileSpeed > 0.0, $"{name}: a missile only for CastType 1, 2 and 3 (speed {timing.MissileSpeed})");
         }
+    }
+
+    /// <summary>
+    /// Batch 732 (owner report, 9 November 2026: "Xin Zhao has a broken tooltip (correct HUD icon but no description)"). The server names
+    /// each champion slot with <c>Data*Spell1..4</c> (SetSpellData, no script renames him). The client's tooltip text of a slot is the
+    /// spell's <c>SpellData*DisplayName</c> and <c>SpellData*Description</c> keys, which must be keys of the shipped string table, and the
+    /// passive's name and description keys are the character's. Every slot name, and the passive, carries its text in the shipped
+    /// fontconfig: nothing here is a wrong name.
+    /// </summary>
+    [Check("scripting.bb-xinzhao-slot-spell-names-carry-their-tooltip-text")]
+    public static void SlotSpellNamesCarryTheirTooltipText()
+    {
+        var paths = GameData.Default.Paths;
+        var fontconfig = System.IO.File.ReadAllText(paths.Data("Menu/fontconfig_en_US.txt"));
+        var names = GameData.Default.Champion("XinZhao").SpellNames;
+        TestAssert.Equal(new[] { "XenZhaoComboTarget", "XenZhaoBattleCry", "XenZhaoSweep", "XenZhaoParry" }, names.ToArray(),
+            "the four champion slots Q, W, E, R (Data*Spell1..4)");
+        for (var slot = 0; slot < names.Count; slot++)
+        {
+            var spell = InibinReader.Load(paths, $"Spells/{names[slot]}.inibin");
+            foreach (var key in new[] { "SpellData*DisplayName", "SpellData*Description" })
+            {
+                TestAssert.True(spell.TryGetValue(InibinReader.KeyHash(key), out var value) && value.Kind == InibinValueKind.String,
+                    $"slot {slot} {names[slot]} names its {key} as a string key");
+                var text = value.AsString();
+                TestAssert.True(fontconfig.Contains($"tr \"{text}\"", StringComparison.Ordinal),
+                    $"slot {slot} {names[slot]}: {text} is in the shipped string table");
+            }
+        }
+        foreach (var key in new[] { "game_character_passiveName_XinZhao", "game_character_passiveDescription_XinZhao", "game_buff_tooltip_XenZhaoPuncture" })
+            TestAssert.True(fontconfig.Contains($"tr \"{key}\"", StringComparison.Ordinal), $"the passive's {key} is in the shipped string table");
     }
 }

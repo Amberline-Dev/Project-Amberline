@@ -3,8 +3,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 
 namespace Amberline.Platform;
 

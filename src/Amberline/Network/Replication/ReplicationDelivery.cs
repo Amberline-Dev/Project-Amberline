@@ -1,10 +1,7 @@
 using Amberline.Core;
 using Amberline.Network.Protocol;
-using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Neutral;
-using Amberline.Simulation.Pets;
-using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Champions;
 using System.Buffers.Binary;
 
@@ -30,6 +27,9 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
     // per shrine so a target-valid reveal does not get immediately undone by
     // the ordinary raw-visibility pass in the same flush.
     private readonly HashSet<(ulong ObserverId, uint NetId)> _preparedShrines = new();
+    // NOT RETAIL (batch 729 follow-up): the units a spring showed to an observer in this flush (RefreshObserver). Their death reaches that observer
+    // in the same flush, as it would reach one that knew the unit before the step.
+    private readonly HashSet<(ReplicationObserver Observer, uint NetId)> _springRevealed = new();
     private readonly HashSet<uint> _managedBallIds = new();
     private readonly HashSet<Team> _noRenderBallTeams = new();
     private readonly HashSet<uint> _queuedTemplateIds = new();
@@ -153,6 +153,7 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         _revealedMinionRoutes.Clear();
         _leeDashSent.Clear();
         _spellTooltipsSent.Clear();
+        _springRevealed.Clear();
         foreach (var packet in _pending.OfType<PacketReplicationMessage>())
         {
             var opcode = packet.Packet.Plaintext.Span.Length == 0
@@ -193,9 +194,11 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             {
                 foreach (var observer in active)
                 {
-                    // Known before the step, and still known (a retirement earlier in the step already ended the unit on this client).
+                    // Known before the step, and still known (a retirement earlier in the step already ended the unit on this client). A hidden trap
+                    // that this step's spring showed to the observer (RefreshObserver) counts as known: its death reaches that observer too.
                     var known = knownBefore![observer];
-                    if (!known.Contains(lifecycle.VictimNetId) || !observer.View.Known.Contains(lifecycle.VictimNetId))
+                    if (!known.Contains(lifecycle.VictimNetId) && !_springRevealed.Contains((observer, lifecycle.VictimNetId)) ||
+                        !observer.View.Known.Contains(lifecycle.VictimNetId))
                         continue;
                     var killer = lifecycle.KillerNetId;
                     if (killer == 0 || !known.Contains(killer))
@@ -230,12 +233,18 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
 
         // Only explicitly retained live effects may appear on late sight or
         // reconnect. Destroy removes them before this replay, even if creation
-        // and retirement were queued in the same frame.
+        // and retirement were queued in the same frame. A copy this replay
+        // creates is a late copy: the view missed the creation, which the
+        // step's own routing above gives every view that sees it.
         foreach (var effect in _persistentEffects.Values)
         {
             var routed = OnWire(effect);
             foreach (var observer in active)
-                Route(routed, observer, teamState[observer.Team], observer.View.Visible);
+                if (!observer.View.Effects.Contains(effect.EffectNetId))
+                {
+                    Route(routed, observer, teamState[observer.Team], observer.View.Visible);
+                    if (observer.View.Effects.Contains(effect.EffectNetId)) observer.View.LateCopies.Add(effect.EffectNetId);
+                }
         }
 
         if (FirstSightStateProvider is { } owed)
@@ -291,6 +300,9 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         _freshReplication.Clear();
         _preparedShrines.Clear();
         _spellTooltipsSent.Clear();
+        // The spring is one flush's news: a trap sprung in this step is shown by this flush only (RefreshObserver), and its flag ends with it.
+        foreach (var entity in World.Entities.Values) entity.SprungThisFlush = false;
+        _springRevealed.Clear();
         try { AfterVisibilityFlush?.Invoke(); }
         catch { /* diagnostics never affect observer delivery */ }
     }
@@ -445,7 +457,7 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
                     missile.Info with { Targets = missileTargets }));
                 TrackMissile(observer.View, missile.Info.MissileNetId);
                 if (missile.RefreshOnly && missile.Info.MissileNetId != 0)
-                    observer.View.LateMissiles.Add(missile.Info.MissileNetId);
+                    observer.View.LateCopies.Add(missile.Info.MissileNetId);
                 break;
             case ChainMissileSyncReplicationMessage chain:
                 {
@@ -507,11 +519,13 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             case EffectDestroyReplicationMessage destroy:
                 if (observer.View.Effects.Remove(destroy.EffectNetId))
                 {
-                    var lateMissile = observer.View.LateMissiles.Remove(destroy.EffectNetId);
+                    var lateCopy = observer.View.LateCopies.Remove(destroy.EffectNetId);
                     // Cast-created homing missiles already retire on native
-                    // impact. Only viewers that missed that cast need the
-                    // additional destroy; every view still drops bookkeeping.
-                    if (!destroy.LateMissileOnly || lateMissile)
+                    // impact, and a persistent effect its script never removed
+                    // runs out on the clock of the client that saw it created.
+                    // Only late copies need the destroy; every view still drops
+                    // bookkeeping.
+                    if (!destroy.LateCopiesOnly || lateCopy)
                         Send(observer, destroy.Packet);
                     observer.View.Known.Remove(destroy.EffectNetId);
                 }

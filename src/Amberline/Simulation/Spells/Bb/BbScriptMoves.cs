@@ -10,6 +10,8 @@ internal sealed class BbScriptMove
 {
     public required Entity Unit { get; init; }
     public required ForcedMoveState Move { get; init; }
+    /// <summary>Where the unit stood when the move began: with <see cref="ForcedMoveState.Destination"/>, the heading its contacts are read along.</summary>
+    public Position2 Origin { get; init; }
     /// <summary>
     /// The script buff of the moved unit whose hook started the move: its <c>BuffOnMove*</c> hooks run when the move is over. Null when a spell's
     /// own hook started it (<c>BBMove</c> in a <c>SelfExecute</c>): the unit's script buffs that have the hooks are told then.
@@ -211,7 +213,7 @@ internal sealed class BbScriptMoves
             buff.State.ExpiresAt = time + TripStep;
         _moves.Add(new BbScriptMove
         {
-            Unit = unit, Move = move, Buff = buff, Postponed = postponed,
+            Unit = unit, Move = move, Buff = buff, Postponed = postponed, Origin = unit.Position,
             // The buffs the unit held before the running hook: a buff the same hook added before its BBMove (Riven's Broken Wings adds RivenTriCleaveDamage, then moves)
             // is as fresh as one added after it (LifeTime 0, no update has run), so it is not "held" and hears the move too.
             // Not conditioned on the move having a length: a request the landing search brings back to the origin (Broken Wings
@@ -317,6 +319,10 @@ internal sealed class BbScriptMoves
     /// <c>BuffOnCollision</c> of a tracking script (<c>BBStartTrackingCollisions</c>): every unit whose body the moving unit touches, once
     /// per move (Renekton's, Shen's, Gragas's and Tryndamere's dashes strike what they pass). Reconstruction: the hook exists only in the
     /// scripts; the contact test is the sum of the two movement radii at the end of the step, as the client's actor collision pairs them.
+    /// Reconstruction (batch 728, "Gragas E sometimes does not dash"): a body in contact counts only while the move carries the unit toward it
+    /// (the contact closes: the other's centre lies ahead of the line through the unit across its heading). Heroes move at 20 Hz against the 30 Hz
+    /// step, so in one step in three after a cast the test met the unit where it started, and a unit touching Gragas's side or back (a minion he
+    /// was fighting) stopped Body Slam before it moved; in the other steps the first frame had carried him off it.
     /// Reconstruction (Tryndamere, 19 October 2026): only units of another team are reported. Four of the five shipped scripts with the hook (Renekton's two
     /// dashes, Shen's and Gragas's) open with <c>CO_DIFFERENT_TEAM</c>, and Spinning Slash's does not: with allies reported its dash would damage them and give
     /// Tryndamere rage for each, which no retail description of the spell has.
@@ -324,11 +330,14 @@ internal sealed class BbScriptMoves
     private void ReportCollisions(BbScriptMove entry, BbBuffInstance buff)
     {
         var unit = entry.Unit;
+        var headingX = entry.Move.Destination.X - entry.Origin.X;
+        var headingZ = entry.Move.Destination.Z - entry.Origin.Z;
         foreach (var other in _host.Spells.World.Entities.Values.ToArray())
         {
             if (ReferenceEquals(other, unit) || other.Team == unit.Team || !other.Alive || other.IsWard || other.Radius <= 0.0 ||
                 other.UnitType is not (UnitType.Hero or UnitType.Minion or UnitType.Monster or UnitType.Turret or UnitType.Structure)) continue;
             if (BbSpellHost.Distance(unit.Position, other.Position) > unit.Radius + other.Radius) continue;
+            if ((other.Position.X - unit.Position.X) * headingX + (other.Position.Z - unit.Position.Z) * headingZ <= 0.0) continue;
             if (entry.Collided.Add(other.NetId)) _host.Router.RunCollision(buff, other);
         }
     }

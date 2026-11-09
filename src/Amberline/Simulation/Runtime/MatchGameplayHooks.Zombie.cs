@@ -1,7 +1,4 @@
-using System;
-using System.Linq;
 using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Spells.Champions;
 

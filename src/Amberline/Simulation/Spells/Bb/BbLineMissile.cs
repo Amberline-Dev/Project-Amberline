@@ -175,7 +175,7 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         if (_flight.Destroyed) return Finish(system);
         // A launched missile survives its caster's death (stock missile updates need the caster object, not a living caster).
         var remainingDistance = left * _speed;
-        if (_tracked is not null) return Track(system, left, remainingDistance);
+        if (_tracked is not null) return Track(system, remainingDistance);
         // Reconstruction: a pass can turn and meet the first units of the next in one step; the loop keeps the step's leftover.
         for (var pass = 0; pass < 3 && remainingDistance > 1e-9; pass++)
         {
@@ -203,7 +203,6 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
                     _direction = new Position2(toward.X, toward.Z);
                 }
                 Advance(system, distance <= 1e-9 ? _position : _position + new Position2(_direction.X * step, _direction.Z * step), step);
-                remainingDistance -= step;
                 if (_flight.Destroyed || distance - step <= 1e-9) return Finish(system);
                 break;
             }
@@ -264,7 +263,7 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     /// until its caster dies or its hit budget ends it, as in the client.
     /// A line that tracks does not bounce (no shipped spell sets both).
     /// </summary>
-    private bool Track(SpellSystem system, double elapsed, double remainingDistance)
+    private bool Track(SpellSystem system, double remainingDistance)
     {
         if (system.World.Get(_tracked!.NetId) is null || system.World.Get(Caster.NetId) is null)
             return Finish(system);

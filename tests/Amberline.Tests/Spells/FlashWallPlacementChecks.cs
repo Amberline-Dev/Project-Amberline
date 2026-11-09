@@ -68,6 +68,8 @@ public static class FlashWallPlacementChecks
                 "accepted short Flash starts cooldown");
         }
 
+        // Batch 728: a body on the landing no longer refuses Flash. The client's own BBTeleportToPosition body turns its
+        // nearest-walkable search's actor test off, so only terrain corrects the landing; this case used to expect a rejection.
         using (var runtime = CreateRuntime())
         {
             var hero = Hero(runtime, new Position2(7001, 7001));
@@ -76,10 +78,26 @@ public static class FlashWallPlacementChecks
             {
                 Alive = true, Created = true, Radius = 10000.0,
             });
+            TestAssert.True(Cast(runtime, hero, new Position2(7101, 7001)),
+                "Flash onto a point a body covers is accepted");
+            TestAssert.Equal(new Position2(7101, 7001), hero.Position, "and lands on the point");
+        }
+
+        // The rejection keeps its contract on terrain: the hero stands on the body-fitting point nearest a wall point, and a Flash aimed into
+        // the wall there corrects back onto its own start.
+        using (var runtime = CreateRuntime())
+        {
+            var grid = runtime.Navigation;
+            var wall = new Position2(7001, 7001);
+            for (var step = 0; step < 2000 && grid.IsMovementWalkable(wall); step++) wall = new Position2(wall.X + 5.0, wall.Z);
+            wall = new Position2(wall.X + 30.0, wall.Z);
+            var hero = Hero(runtime, new Position2(7001, 7001));
+            hero.Position = grid.ClosestSummonPlacement(runtime.Movement.ClientAnchor(wall), runtime.Movement.MovementRadius(hero));
             var position = hero.Position;
             var id = hero.TeleportId;
-            TestAssert.False(Cast(runtime, hero, new Position2(7101, 7001)),
-                "Flash rejects when no passable landing clears an occupied area");
+            TestAssert.False(grid.IsMovementWalkable(wall), "the aim lies inside the wall");
+            TestAssert.False(Cast(runtime, hero, wall),
+                "Flash rejects a landing the wall corrects back onto its start");
             TestAssert.Equal(position, hero.Position,
                 "rejected Flash leaves position unchanged");
             TestAssert.Equal(id, hero.TeleportId,

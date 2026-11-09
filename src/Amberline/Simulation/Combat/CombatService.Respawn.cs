@@ -1,7 +1,5 @@
 using Amberline.Core;
 using Amberline.Data;
-using Amberline.Simulation.Ai;
-using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Stats;
 
 namespace Amberline.Simulation.Combat;

@@ -1,7 +1,5 @@
 using Amberline.Core;
 using Amberline.Network.Protocol;
-using Amberline.Simulation.Combat;
-using Amberline.Simulation.Neutral;
 using Amberline.Simulation.Pets;
 using Amberline.Simulation.Spells;
 using System.Buffers.Binary;
@@ -145,7 +143,13 @@ public sealed partial class ReplicationDelivery
         // (VayneTumbleFade, Deceive), which until now was the one push let through to repair a viewer that lost sight during a stealth.
         // 0x53 FaceDirection (FacePosition, BBFaceDirection): a direction, no position; the handler only
         // turns the unit (the face-vector and SetTargetFacing routines).
-        return global || packet.Plaintext.Span[0] is 0x7F or 0x2B or 0x34 or 0x35 or 0x1A or 0x99 or 0x9E or 0xBA or 0x53 ||
+        // Batch 737: 0xD7 ShowHealthBar (BBShowHealthBar) is DefaultPacketMixin<217, PolicyBroadcast> (217 is its AntiBot-build
+        // opcode), and the client's BBShowHealthBar sends it through the unit's NetVisibilityObject (SendVariableSizeInternal). Its handler,
+        // The client, stores show == false in the hide flag the champion bar reads, with no
+        // visibility test, and nothing else writes that flag (the stock client's constructor zeroes it); the reveal's 0xC2 carries none. A
+        // show routed by sight was lost for good on an enemy that saw a zombie life begin and not end (KogMawIcathianSurprise,
+        // DeathDefiedBuff: Show=false at the start, Show=true at the end): that client drew the hero with no bar after his respawn.
+        return global || packet.Plaintext.Span[0] is 0x7F or 0x2B or 0x34 or 0x35 or 0x1A or 0x99 or 0x9E or 0xBA or 0x53 or 0xD7 ||
             IsOwnerClientOnly(packet) || required.Any(reference => routeVisible.Contains(reference.NetId));
     }
 

@@ -121,8 +121,12 @@ public sealed class ReplicationView
     public HashSet<uint> Effects { get; } = new();
     public HashSet<(uint Actor, short FadeId)> CharacterFades { get; } = new();
     public HashSet<(uint Actor, uint Change)> CharacterData { get; } = new();
-    /// <summary>Missiles created from a live snapshot after this view missed the cast.</summary>
-    public HashSet<uint> LateMissiles { get; } = new();
+    /// <summary>
+    /// Copies this view was given late: missiles created from a live snapshot after it missed the cast, and (batch 726) persistent effects the
+    /// late-sight replay created after it missed their creation. Their client clock started late, so a destroy for late copies only
+    /// (<see cref="EffectDestroyReplicationMessage.LateCopiesOnly"/>) ends them.
+    /// </summary>
+    public HashSet<uint> LateCopies { get; } = new();
     public Dictionary<uint, double> LostAt { get; } = new();
     public HashSet<uint> TerrainIds { get; } = new();
     public HashSet<uint> TimedTerrainIds { get; } = new();
@@ -191,7 +195,7 @@ public sealed class ReplicationView
         Effects.Clear();
         CharacterFades.Clear();
         CharacterData.Clear();
-        LateMissiles.Clear();
+        LateCopies.Clear();
         LostAt.Clear();
         TerrainIds.Clear();
         TimedTerrainIds.Clear();
@@ -444,7 +448,10 @@ public sealed record EffectCreateReplicationMessage(
     Team? FowTeam = null)
     : ReplicationMessage(ReplicationMessageKind.EffectCreate);
 
+/// <summary>Ends an effect or missile on every view that holds it. <paramref name="LateCopiesOnly"/>: every view drops it, and only a view that holds a
+/// late copy (<see cref="ReplicationView.LateCopies"/>) is sent the packet; the others end it on their own (a cast missile's native impact, a
+/// persistent effect its script never removed, batch 726).</summary>
 public sealed record EffectDestroyReplicationMessage(
     PlaintextPacket Packet,
     uint EffectNetId,
-    bool LateMissileOnly = false) : ReplicationMessage(ReplicationMessageKind.EffectDestroy);
+    bool LateCopiesOnly = false) : ReplicationMessage(ReplicationMessageKind.EffectDestroy);

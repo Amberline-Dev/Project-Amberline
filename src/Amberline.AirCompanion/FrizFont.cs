@@ -30,7 +30,6 @@ public static class FrizFont
     /// <summary>Part of the cache file names; bump it when the converter output changes.</summary>
     public const int ConverterVersion = 1;
 
-    private const int SwfEm = 20480;
     private const int TtEm = 2048;
     private const long MaxSwfFileBytes = 32L * 1024 * 1024;
     private const int MaxUncompressedBytes = 64 * 1024 * 1024;

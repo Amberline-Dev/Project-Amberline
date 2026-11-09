@@ -1,7 +1,5 @@
 using Amberline.Core;
-using Amberline.Data;
 using Amberline.Simulation.Ai;
-using Amberline.Simulation.Stats;
 
 namespace Amberline.Simulation.Combat;
 
@@ -56,7 +54,6 @@ public sealed partial class CombatService
         _deathRecapHistories.Clear();
         _lastDeathRecaps.Clear();
         _winner = nexus.Team == Team.Order ? Team.Chaos : Team.Order;
-        _gameOverAt = _time;
         _hooks.OnEndGame(_winner);
         // Map1's HandleDestroyedObject hands a fallen HQ to EndOfGameCeremony(winner, obj)
         // (LevelScript.txt proto 0.14 pc 0016-0024), so the engine calls that same global. The

@@ -4,7 +4,6 @@ using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Network.Sessions;
 using Amberline.Network.Transport;
-using Amberline.Simulation.Combat;
 
 namespace Amberline.Server;
 

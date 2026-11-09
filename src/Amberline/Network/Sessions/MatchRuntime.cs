@@ -3,16 +3,13 @@ using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Network.Replication;
-using Amberline.Network.Transport;
 using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Bots;
 using Amberline.Simulation.Combat;
-using Amberline.Simulation.Items;
 using Amberline.Simulation.Movement;
 using Amberline.Simulation.Minions;
 using Amberline.Simulation.Pets;
 using Amberline.Simulation.Spells;
-using Amberline.Simulation.Spells.Champions;
 using Amberline.Simulation.Stats;
 using Amberline.Simulation.Runtime;
 

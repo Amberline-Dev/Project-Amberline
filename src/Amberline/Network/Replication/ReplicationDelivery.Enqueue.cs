@@ -1,7 +1,5 @@
 using Amberline.Core;
 using Amberline.Network.Protocol;
-using Amberline.Simulation.Neutral;
-using Amberline.Simulation.Pets;
 using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Champions;
 

@@ -217,6 +217,17 @@ public sealed partial class Entity
     public byte TeleportId { get; set; }
     public bool StealthHidden { get; set; }
     /// <summary>
+    /// NOT RETAIL (owner request, batch 113: a hidden Bushwhack trap is shown to whoever steps on it; batch 729 follow-up): the trigger range of a
+    /// hidden trap that springs when an enemy steps on it. In the flush of its spring the trap is shown to every team that sees its spot or holds
+    /// a unit within this range of it (ReplicationDelivery.SpringRevealsTo). 0 for every other unit. Set by BBSpawnMinion for Nidalee's trap.
+    /// </summary>
+    public double SpringRevealRadius { get; set; }
+    /// <summary>
+    /// Set when the unit's own script removes its current buff (BBSpellBuffRemoveCurrent) while <see cref="SpringRevealRadius"/> is set: the spring
+    /// of a hidden trap. The replication flush reads it and clears it. Expiry does not set it (the buff ends on its own timer).
+    /// </summary>
+    public bool SprungThisFlush { get; set; }
+    /// <summary>
     /// Latched client render state for an actor covered by the end-game
     /// minion no-render phase. This is an actor state, not a buff, so late
     /// visibility and reconnect snapshots retain the native CharacterState

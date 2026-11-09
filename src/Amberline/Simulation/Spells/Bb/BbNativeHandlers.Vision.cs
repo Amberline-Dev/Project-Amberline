@@ -1,6 +1,5 @@
 using Amberline.Core;
 using Amberline.Network.Replication;
-using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 
 namespace Amberline.Simulation.Spells.Bb;

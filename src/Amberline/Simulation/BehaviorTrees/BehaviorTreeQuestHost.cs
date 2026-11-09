@@ -2,7 +2,6 @@ using System.Globalization;
 using Amberline.Core;
 using Amberline.Data;
 using Amberline.Network.Protocol;
-using Amberline.Simulation.Combat;
 using Amberline.Simulation.Encounters;
 using Amberline.Simulation.Minions;
 
@@ -152,7 +151,23 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
                 replicate(removal);
         if (Context.Capture?.Send is not { } send) return;
         foreach (var packet in _nexusDeath.Due(now, DominionProps.FromEnvironment(), NexusFallen))
-            send(packet);
+            SendProp(send, packet);
+    }
+
+    /// <summary>
+    /// Batch 725 (owner, 9 November 2026: "after reconnecting the stairs vanished"): the last clip (0xDA) each prop was sent, by the prop's
+    /// netid: the stairs' Close stages, Raise and Raised_Idle, and the fall's Death and Explode. The 0xDA carries the clip's mission start and
+    /// The client seeks to now minus it, clamped to the clip's last frame, which the hold flag keeps,
+    /// so the same packet shows a returning client the pose the clients that stayed hold (<see cref="ReconnectState"/>). Before this, a client
+    /// that returned got the props' creates (their Idle1: the stairs hidden) and no clip. Reconstruction: retail's reconnect burst is not
+    /// recovered; the packet's absolute start is what lets one clip serve a late client.
+    /// </summary>
+    private readonly Dictionary<uint, PlaintextPacket> _propClips = new();
+
+    private void SendProp(Action<PlaintextPacket> send, PlaintextPacket packet)
+    {
+        if (LevelPropPackets.AnimatedNetId(packet) is uint prop) _propClips[prop] = packet;
+        send(packet);
     }
 
     /// <summary>
@@ -180,7 +195,7 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
         if (Context.Capture?.Send is { } sendPacket)
         {
             foreach (var packet in _stairs.Due(now, DominionProps.FromEnvironment(), OpeningCeremonyTiming.ReleaseSeconds))
-                sendPacket(packet);
+                SendProp(sendPacket, packet);
             // Batch 507 (Reconstruction): each stage's two lasers into the crystal and its lit core, at the stage's latch frame. Batch 523:
             // through the delivery, green to the base's own team and red to the other (persistent, so late and returning clients get them).
             if (Navigation is { } grid && Replicate is { } replicate)
@@ -197,7 +212,7 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
         // Reconstruction (batches 477d and 483): the release's Raise and Raised_Idle on the stairs (the Odin_SoG prop carries the nexus clips).
         if (Context.Capture?.Send is { } stairSend)
             foreach (var packet in _stairRaiser.Due(now, DominionProps.FromEnvironment(), OpeningCeremonyTiming.ReleaseSeconds))
-                stairSend(packet);
+                SendProp(stairSend, packet);
         SpawnWaves(now);
         for (var index = 0; index < _captures.Count; index++)
         {
@@ -233,11 +248,12 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     /// the records of each point whose guardian it holds (<see cref="PointRecords"/>), both 0xDD meters as last sent, and its team's open
     /// quests (the 0x90 adds; the announcement is not repeated). A point whose guardian it does not hold yet (an owned guardian gives sight to
     /// its own team only) is owed until the guardian's first sight (<see cref="FirstSightState"/>): its records name the guardian, and the
-    /// client applies a 0xDB or 0xDC only to a unit it holds.
+    /// client applies a 0xDB or 0xDC only to a unit it holds. Batch 725: first, each prop's last clip (<see cref="_propClips"/>), for the props
+    /// its map-ready burst created again.
     /// </summary>
     public IReadOnlyList<PlaintextPacket> ReconnectState(uint heroNetId, Team team, IReadOnlySet<uint> known)
     {
-        var packets = new List<PlaintextPacket>();
+        var packets = _propClips.Where(clip => known.Contains(clip.Key)).Select(clip => clip.Value).ToList();
         var owed = _owedPoints[heroNetId] = [];
         for (var point = 1; point <= CapturePointNames.Length; point++)
         {

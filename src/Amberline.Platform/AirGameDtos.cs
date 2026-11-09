@@ -55,6 +55,12 @@ public static class AirGameDtos
     public static IReadOnlyDictionary<int, string> SpellNamesFor(int mapId) => mapId == Amberline.Core.GameMaps.CrystalScar
         ? AllSpellNames.Where(pair => OdinSpellIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value)
         : SpellNames;
+    /// <summary>
+    /// Batch 727: a spell a seat may hold is on the game's map list (<see cref="SpellNamesFor"/>) and unlocked at the summoner's level
+    /// (<see cref="AirDtos.SpellMinimumLevel"/>, the shipped SpellGeneratedData minLevel).
+    /// </summary>
+    public static bool SpellUsable(int spellId, int mapId, int summonerLevel) =>
+        SpellNamesFor(mapId).TryGetValue(spellId, out var name) && AirDtos.SpellMinimumLevel(name) <= summonerLevel;
     // AirGeneratedContent.swf: ChampionGeneratedData (ChampionCatalog.SkinCount). The catalogs are
     // contiguous, with global skinId = championId * 1000 + native skinIndex.
     public static IEnumerable<int> SkinIds(int champion) => !ChampionNames.TryGetValue(champion, out var playable)

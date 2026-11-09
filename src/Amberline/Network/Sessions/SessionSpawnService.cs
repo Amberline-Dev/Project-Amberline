@@ -384,7 +384,9 @@ public sealed class SessionSpawnService
         if (odinProps != DominionPropFacing.Off)
         {
             var grid = NavigationGrid.Load(_gameData.Paths);
-            packets.AddRange(DominionProps.CrystalStandPackets(new NavigationBounds(grid.MinX, grid.MaxX, grid.MinZ, grid.MaxZ)));
+            // Batch 725: a reconnect after a nexus fell does not stand that crystal again (its fallen clip follows in the reconnect burst).
+            packets.AddRange(DominionProps.CrystalStandPackets(new NavigationBounds(grid.MinX, grid.MaxX, grid.MinZ, grid.MaxZ),
+                team => mapEntities.Any(entity => entity.Kind == EntityKind.Nexus && entity.Team == team && !entity.Alive)));
             // The gems' kill at a nexus fall (0x3D) names them, and the delivery routes a packet only to a client that holds what it names.
             recipient.View.Known.Add(DominionProps.CrystalGemNetId(Team.Order));
             recipient.View.Known.Add(DominionProps.CrystalGemNetId(Team.Chaos));

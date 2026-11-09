@@ -1,7 +1,5 @@
 using Amberline.Core;
 using Amberline.Core.Buffs;
-using Amberline.Simulation.Ai;
-using Amberline.Simulation.Combat;
 using Amberline.Simulation.Stats;
 using Amberline.Simulation.Minions;
 
@@ -24,7 +22,4 @@ public sealed partial class BuffLifecycle
     private static bool IsLaneMinion(Entity unit) =>
         unit.UnitType == UnitType.Minion && (unit.MinionType is not null || OdinWaves.ScriptOf(unit) is not null);
 
-    private static double DistanceSquared(Position2 first, Position2 second) =>
-        (first.X - second.X) * (first.X - second.X) +
-        (first.Z - second.Z) * (first.Z - second.Z);
 }

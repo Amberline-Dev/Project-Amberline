@@ -170,7 +170,7 @@ public static partial class ChampionLiveRegressionChecks
             TestAssert.Equal(1, lateCapture.Packets.Count(p => Opcode(p) == 0x41), $"{context}: one creation per ID");
             runtime.Tick(12);
             TestAssert.False(late.View.Effects.Contains(launched.Id), $"{context}: retirement clears view");
-            TestAssert.False(late.View.LateMissiles.Contains(launched.Id), $"{context}: retirement clears late-flight bookkeeping");
+            TestAssert.False(late.View.LateCopies.Contains(launched.Id), $"{context}: retirement clears late-flight bookkeeping");
             TestAssert.Equal(1, lateCapture.Packets.Count(p => Opcode(p) == 0x5D &&
                 BinaryPrimitives.ReadUInt32LittleEndian(p.Plaintext.Span[1..]) == launched.Id),
                 $"{context}: exactly one destroy");

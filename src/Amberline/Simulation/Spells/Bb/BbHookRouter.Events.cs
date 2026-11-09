@@ -1,6 +1,4 @@
 using Amberline.Core;
-using Amberline.Core.Buffs;
-using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 using Amberline.Simulation.Combat;
 

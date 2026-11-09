@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Amberline.Core;
@@ -8,7 +6,6 @@ using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
-using Amberline.Simulation.Spells;
 
 namespace Amberline.Simulation.Spells.Bb;
 

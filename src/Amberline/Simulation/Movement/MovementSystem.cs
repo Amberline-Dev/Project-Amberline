@@ -740,7 +740,7 @@ public sealed partial class MovementSystem
     /// (<see cref="NavigationGrid.IsMovementWalkable(Position2)"/>), so the floor point itself is a landing the client accepts. A short bounce
     /// keeps the whole-ray preference (playtest B3 #3: a knocked-up body lands clear of the wall). Reconstruction: the native floor search is
     /// not recovered; the budget and the split are this server's, in the body margin the preference already used. The follow form's terminal
-    /// (<see cref="FollowingLanding"/>) keeps the whole-ray preference with its own placement fallback.
+    /// (<see cref="FollowingLanding"/>) does not search this ray (batch 736): it takes the nearest body-fitting placement around its point.
     /// </para>
     /// </summary>
     public Position2 FurthestWalkableLanding(Position2 origin, Position2 requested, Entity? unit = null, bool dash = false)
@@ -950,8 +950,6 @@ public sealed partial class MovementSystem
         state.StartedAt = Math.Max(_simulationElapsed, entity.UnitType == UnitType.Hero
             ? _heroMovementElapsed : _nonHeroMovementElapsed);
         entity.ForcedMove = state;
-        if (state.FollowNetId is not null)
-            state.Destination = FollowingLanding(entity, state.Destination);
         state.CollisionOrigin = null;
         return true;
     }
@@ -1122,12 +1120,14 @@ public sealed partial class MovementSystem
                 ResetMinionForcedMoveAnchor(entity);
                 return;
             }
+            // The follow runs for the point of contact as it is, terrain or not: the client drags the dash's
+            // end to the tracked unit's position less m_TrackUnitBackDist (+0xf0) along the approach, with no terrain test. Only the terminal
+            // goes onto floor (FollowingLanding, batch 736).
             var followDx = target.Position.X - entity.Position.X;
             var followDz = target.Position.Z - entity.Position.Z;
             move.Destination = ClientWaypoints([new Position2(
                 target.Position.X - followDx / targetDistance * arrivalDistance,
                 target.Position.Z - followDz / targetDistance * arrivalDistance)])[0];
-            move.Destination = FollowingLanding(entity, move.Destination);
             Geometry.FaceTowards(entity, target.Position);
         }
 
@@ -1172,17 +1172,23 @@ public sealed partial class MovementSystem
         }
     }
 
-    internal Position2 FollowingLanding(Entity entity, Position2 requested)
-    {
-        if (_navigation.IsMovementWalkable(requested)) return requested;
-        // PATH-01, 27 Sept 2026 base-game sweep: BBMoveToUnit may cross walls,
-        // but the native terminal assignment requires movement floor.
-        // Retain the existing backoff/body margin; they are emulator policy.
-        var landing = FurthestWalkableLanding(entity.Position, requested, entity);
-        return _navigation.FitsSummonPlacement(landing, MovementRadius(entity))
-            ? landing
-            : _navigation.ClosestSummonPlacement(requested, MovementRadius(entity));
-    }
+    /// <summary>
+    /// The terminal of a follow dash (<c>BBMoveToUnit</c>: contact, target lost, time out): the unit's point when its cell is movement floor
+    ///,
+    /// else the nearest point around it where the body fits.
+    /// <para>
+    /// Batch 736 (owner, 9 November 2026: "Lee sin can't go through walls on TT"): this searched back toward the dasher
+    /// (<see cref="FurthestWalkableLanding"/> from the unit's position) and ran on the follow's running destination from its start, so a point
+    /// of contact inside a wall (a target within a body of the wall's far side) became a floor point on the dasher's side: Resonating Strike,
+    /// Twisted Advance and Paranoia stopped short of the wall, and the script's landing still ran. The follow now runs for the point of contact
+    /// (<c>TrackTargetUnit</c>) and only this terminal goes onto floor.
+    /// </para>
+    /// Reconstruction: the retail server's terminal is not in the client, whose arrival puts its own actor on floor with the client
+    /// (the nearest walkable cell of a square spiral, the centre only); the body-fitting placement is the rule of every landing in terrain
+    /// (owner decision, playtest B3 #3/#9, 26 September 2026), the one <c>SpellSystem.CorrectTeleportDestination</c> uses.
+    /// </summary>
+    internal Position2 FollowingLanding(Entity entity, Position2 requested) =>
+        _navigation.IsMovementWalkable(requested) ? requested : _navigation.ClosestSummonPlacement(requested, MovementRadius(entity));
 
     private void ResetMinionForcedMoveAnchor(Entity entity)
     {

@@ -11,7 +11,6 @@ using Amberline.Network.Protocol;
 using Amberline.Network.Replication;
 using Amberline.Network.Sessions;
 using Amberline.Simulation.Bots;
-using Amberline.Simulation.Combat;
 using Amberline.Simulation.Spells;
 using Amberline.Tools.Scenarios;
 

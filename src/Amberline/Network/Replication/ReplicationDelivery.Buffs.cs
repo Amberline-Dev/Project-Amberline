@@ -1,6 +1,4 @@
 using Amberline.Network.Protocol;
-using Amberline.Simulation.Combat;
-using Amberline.Simulation.Pets;
 using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Champions;
 using System.Buffers.Binary;

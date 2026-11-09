@@ -1,8 +1,6 @@
 using Amberline.Core;
 using Amberline.Scripting.Lua;
-using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Bb;
-using System.IO;
 
 namespace Amberline.Simulation.Bots;
 

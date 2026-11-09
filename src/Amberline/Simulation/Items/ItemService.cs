@@ -1,14 +1,10 @@
-using System;
-using System.Collections.Generic;
 using System.Linq;
 using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Combat;
 using Amberline.Simulation.Spells;
 using Amberline.Simulation.Spells.Bb;
 
@@ -49,7 +45,6 @@ public sealed partial class ItemService
     private readonly WorldState _world;
     private readonly ItemCatalog _catalog;
     private readonly BuffLifecycle _buffs;
-    private readonly IBuffEffectHooks _buffEffects;
     private readonly ISpellCombatService _combat;
     private readonly ISpellEffectSink _effects;
     private readonly IItemRuntimeTransport _transport;
@@ -72,7 +67,7 @@ public sealed partial class ItemService
         _world = world ?? throw new ArgumentNullException(nameof(world));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _buffs = buffs ?? throw new ArgumentNullException(nameof(buffs));
-        _buffEffects = buffEffects ?? throw new ArgumentNullException(nameof(buffEffects));
+        ArgumentNullException.ThrowIfNull(buffEffects);
         _combat = combat ?? throw new ArgumentNullException(nameof(combat));
         _effects = effects ?? throw new ArgumentNullException(nameof(effects));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));

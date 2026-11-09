@@ -1,4 +1,3 @@
-using System;
 using Amberline.Core;
 using Amberline.Data;
 using Amberline.Network.Protocol;
@@ -11,8 +10,6 @@ public sealed class ProtocolItemRuntimeTransport : IItemRuntimeTransport
 {
     private readonly ICombatPacketQueue _queue;
     private readonly Func<Entity, bool> _wireReady;
-    private readonly NavigationGrid _navigation;
-    private readonly ReplicationSyncCounter _syncIds;
 
     public ProtocolItemRuntimeTransport(
         ICombatPacketQueue queue,
@@ -22,8 +19,8 @@ public sealed class ProtocolItemRuntimeTransport : IItemRuntimeTransport
     {
         _queue = queue ?? throw new ArgumentNullException(nameof(queue));
         _wireReady = wireReady ?? throw new ArgumentNullException(nameof(wireReady));
-        _navigation = navigation ?? throw new ArgumentNullException(nameof(navigation));
-        _syncIds = syncIds ?? throw new ArgumentNullException(nameof(syncIds));
+        ArgumentNullException.ThrowIfNull(navigation);
+        ArgumentNullException.ThrowIfNull(syncIds);
     }
 
     public bool IsWireReady(Entity unit)

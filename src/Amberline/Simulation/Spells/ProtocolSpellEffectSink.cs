@@ -5,7 +5,6 @@ using Amberline.Network.Protocol;
 using Amberline.Network.Replication;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Movement;
 
 namespace Amberline.Simulation.Spells;
 
@@ -195,7 +194,7 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
     {
         if (_queue is IReplicationIntentQueue typed)
             typed.EnqueueEffectDestroy(new EffectDestroyReplicationMessage(
-                SpellPackets.DestroyMissile(missileNetId), missileNetId, LateMissileOnly: true));
+                SpellPackets.DestroyMissile(missileNetId), missileNetId, LateCopiesOnly: true));
     }
 
     public void SendDestroyMissile(uint missileNetId)
@@ -684,6 +683,12 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
             return;
         }
         Enqueue(packet);
+    }
+
+    public void RetireEffect(uint effectNetId)
+    {
+        if (effectNetId != 0 && _queue is IReplicationIntentQueue typed)
+            typed.EnqueueEffectDestroy(new EffectDestroyReplicationMessage(FxPackets.Kill(effectNetId), effectNetId, LateCopiesOnly: true));
     }
 
     /// <summary>

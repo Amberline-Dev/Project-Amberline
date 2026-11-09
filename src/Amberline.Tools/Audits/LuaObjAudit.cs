@@ -4,8 +4,6 @@ using System.Text.RegularExpressions;
 using Amberline.Core;
 using Amberline.Data;
 using Amberline.Simulation.Minions;
-using Amberline.Simulation.Pets;
-using Amberline.Simulation.Spells;
 using Amberline.Simulation.Combat;
 
 namespace Amberline.Tools.Audits;

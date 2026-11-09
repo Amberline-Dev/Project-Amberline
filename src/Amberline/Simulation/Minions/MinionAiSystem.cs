@@ -2,8 +2,6 @@ using Amberline.Core;
 using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Simulation.Ai;
-using Amberline.Simulation.Combat;
-using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Movement;
 
 namespace Amberline.Simulation.Minions;

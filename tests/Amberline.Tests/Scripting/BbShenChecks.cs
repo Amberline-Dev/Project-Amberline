@@ -137,8 +137,10 @@ public static class BbShenChecks
     }
 
     /// <summary>
-    /// Stand United's channel lasts 2.5 seconds, then Shen teleports beside the ally (BBGetPointByUnitFacingOffset, Distance 150, a point off the walkable
-    /// grid steps back toward her). The shield is on the ally from the cast, for 7.5 seconds (batch 220: the arrival is one teleport, not a staged pair).
+    /// Stand United's channel lasts 2.5 seconds, then Shen teleports beside the ally (BBGetPointByUnitFacingOffset, Distance 150 behind her; here that
+    /// point lies in the wall east of her, so he takes the nearest floor his body fits). The shield is on the ally from the cast, for 7.5 seconds (batch 220:
+    /// the arrival is one teleport, not a staged pair). Batch 728: the ally's body near that floor does not move the landing (the client's teleport has no
+    /// actor test); the server's old backoff toward Shen's start kept him 100 to 160 units from her.
     /// </summary>
     [Check("scripting.bb-shen-stand-united-teleports-to-the-ally-after-the-channel")]
     public static void StandUnitedTeleportsHimToTheAllyAndShieldsHer()
@@ -157,8 +159,10 @@ public static class BbShenChecks
         AdvanceToClock(match, castAt + 2.0);
         TestAssert.Near(0.0, Distance(start, match.Hero.Position), 1.0, "still channeling 2 s in");
         AdvanceToClock(match, castAt + 3.2);
-        var gap = Distance(match.Hero.Position, match.Ally.Position);
-        TestAssert.True(gap >= 100.0 && gap <= 160.0, $"Shen arrives beside the ally after the channel, {gap:0.0} units from her");
+        var behind = match.Runtime.Movement.ClientAnchor(new Position2(7950.0, 7000.0));
+        var floor = match.Runtime.Navigation.ClosestSummonPlacement(behind, match.Runtime.Movement.MovementRadius(match.Hero));
+        TestAssert.True(Distance(match.Hero.Position, floor) < 3.0,
+            $"Shen arrives on the floor nearest the point 150 behind the ally after the channel ({match.Hero.Position}, floor {floor})");
         TestAssert.Near(7.5, Vanishes(match, match.Ally, "ShenStandUnitedShield", 9.0) - shieldSeen, 0.15, "the ally's shield runs 7.5 seconds");
     }
 

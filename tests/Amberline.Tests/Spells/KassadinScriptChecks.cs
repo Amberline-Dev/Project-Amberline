@@ -217,8 +217,7 @@ public static partial class ChampionLiveRegressionChecks
             kassadin.SpellCooldowns[3] = 0.0;
             kassadin.Mana = kassadin.MaxMana;
             var from = kassadin.Position;
-            // The foe stands where the blink lands (inside the 270 of the burst).
-            // 120 past the landing (inside the 270 of the burst), not on it: the landing keeps clear of the bodies it would overlap.
+            // The foe stands 120 past the landing, inside the 270 of the burst (batch 728: a foe on the landing would not move it either).
             annie.Position = new Position2(from.X + dir.X * 370.0, from.Z + dir.Z * 370.0);
             annie.Health = annie.MaxHealth;
             var health = annie.Health;

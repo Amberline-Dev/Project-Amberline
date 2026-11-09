@@ -101,7 +101,6 @@ public sealed partial class NavigationGrid
     // exposing mutable grid state.
     public ReadOnlyMemory<byte> Walkable => _walkable;
     public ReadOnlyMemory<byte> WalkablePathing => _walkablePathing;
-    internal ReadOnlyMemory<byte> WalkableHeroPathing => _walkableHeroPathing;
     public ReadOnlyMemory<byte> WalkableMovement => _walkableMovement;
     public ReadOnlyMemory<byte> VisionBlocking => _visionBlocking;
     public ReadOnlyMemory<byte> Grass => _grass;

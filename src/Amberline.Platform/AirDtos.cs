@@ -596,14 +596,4 @@ public static class AirDtos
 
     private static string InternalName(PlatformAccount account) => $"sum{account.SummonerId}";
 
-    private static IEnumerable<int> LoadoutRuneIds(this MatchPlayer player) =>
-        Pad(player.RedRunes, RunePage.RedSlots)
-            .Concat(Pad(player.YellowRunes, RunePage.YellowSlots))
-            .Concat(Pad(player.BlueRunes, RunePage.BlueSlots))
-            .Concat(Pad(player.BlackRunes, RunePage.BlackSlots));
-
-    private static IEnumerable<int> Pad(IEnumerable<int>? values, int capacity) =>
-        (values ?? Array.Empty<int>()).Take(capacity)
-            .Concat(Enumerable.Repeat(0, capacity))
-            .Take(capacity);
 }

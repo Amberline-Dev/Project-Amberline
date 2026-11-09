@@ -177,6 +177,78 @@ public static class DominionPropsChecks
         TestAssert.Equal(0, beams.Removals(DominionPropFacing.Z, team => team == Team.Chaos).Count, "once");
     }
 
+    /// <summary>
+    /// Batch 725 (owner, 9 November 2026: "The lasers on chaos side in dominion are misaligned from the walls"): each laser starts on its
+    /// stair piece. The two stairs are one model mirrored across X, and each skeleton holds two sets of the eight pieces and their aim
+    /// bones: the plain <c>Crystal_{r,l}_{n}</c> and the <c>chaos_</c> set. Each skin draws one set (the .skl influence list): Order's the
+    /// plain pieces, Chaos's the <c>chaos_</c> pieces, which sit at the X-mirror of Order's. So the bone a Chaos laser starts from must sit at
+    /// the X-mirror of the bone the matching Order laser starts from, in the pose the laser fires in (its Close clip at the latch frame) and
+    /// in the held pose (Raised_Idle, the stairs' <c>Crystal_Idle</c> frame 0). The bone is read back from each laser's 0x8C (its bone hash
+    /// at 16) and placed through the clip's tracks (r3d2anmd v3: per frame a quaternion and a position, each track local to its .skl parent).
+    /// </summary>
+    [Check("network.odin-props-chaos-lasers-start-at-the-mirror-of-the-order-lasers")]
+    public static void TheChaosLasersStartAtTheMirrorOfTheOrderLasers()
+    {
+        foreach (var (team, piece, other) in new[] { (Team.Order, "Crystal_r_4", "chaos_Crystal_r_4"), (Team.Chaos, "chaos_Crystal_r_4", "Crystal_r_4") })
+        {
+            var drawn = Skeleton(team).Influences;
+            TestAssert.True(drawn.Contains(piece) && !drawn.Contains(other), $"the {team} skin draws {piece}, not {other}");
+        }
+        var bounds = new NavigationBounds(-1000.0, 15000.0, -1000.0, 15000.0);
+        foreach (var (stage, frame, _, _) in DominionProps.BeamStages)
+        {
+            var order = DominionProps.BeamMessages(stage, Team.Order, bounds);
+            var chaos = DominionProps.BeamMessages(stage, Team.Chaos, bounds);
+            for (var laser = 0; laser < 2; laser++)
+                foreach (var (clip, at) in new[] { ($"Close_{stage + 1}", frame), ("Crystal_Idle", 0) })
+                {
+                    var (orderBone, from) = BoneAt(Team.Order, clip, at, BinaryPrimitives.ReadUInt32LittleEndian(order[laser].Packet.Plaintext.Span.Slice(16, 4)));
+                    var (chaosBone, start) = BoneAt(Team.Chaos, clip, at, BinaryPrimitives.ReadUInt32LittleEndian(chaos[laser].Packet.Plaintext.Span.Slice(16, 4)));
+                    var apart = System.Numerics.Vector3.Distance(start, from * new System.Numerics.Vector3(-1f, 1f, 1f));
+                    TestAssert.True(apart < 1.0f, $"stage {stage + 1}, {clip} frame {at}: the Chaos laser's {chaosBone} {start} sits {apart:0.0} units off the "
+                        + $"mirror of the Order laser's {orderBone} {from}");
+                }
+        }
+    }
+
+    // A stairs skeleton (r3d2sklt v2): 88-byte records from 20 (name[32], parent int32), then the skin's influence list (a count, then bone indices).
+    private static (string[] Names, int[] Parents, string[] Influences) Skeleton(Team team)
+    {
+        var character = team == Team.Order ? "Odin_SoG_Order" : "Odin_SoG_Chaos";
+        var skl = File.ReadAllBytes(Amberline.Data.GameDataPaths.Default.Data($"Characters/{character}/{character}.skl"));
+        var count = BinaryPrimitives.ReadInt32LittleEndian(skl.AsSpan(16));
+        var names = Enumerable.Range(0, count).Select(bone => Ascii(skl, 20 + bone * 88, 32)).ToArray();
+        var parents = Enumerable.Range(0, count).Select(bone => BinaryPrimitives.ReadInt32LittleEndian(skl.AsSpan(20 + bone * 88 + 32))).ToArray();
+        var tail = 20 + count * 88;
+        var influences = Enumerable.Range(0, BinaryPrimitives.ReadInt32LittleEndian(skl.AsSpan(tail)))
+            .Select(index => names[BinaryPrimitives.ReadInt32LittleEndian(skl.AsSpan(tail + 4 + 4 * index))]).ToArray();
+        return (names, parents, influences);
+    }
+
+    // The bone with this hash, and its model position in one frame of the team's stairs clip (r3d2anmd v3: from 28, per track name[32], flags,
+    // then per frame a quaternion x, y, z, w and a position; a track is local to its parent).
+    private static (string Bone, System.Numerics.Vector3 Position) BoneAt(Team team, string clip, int frame, uint boneHash)
+    {
+        var character = team == Team.Order ? "Odin_SoG_Order" : "Odin_SoG_Chaos";
+        var (names, parents, _) = Skeleton(team);
+        var anm = File.ReadAllBytes(Amberline.Data.GameDataPaths.Default.Data($"Characters/{character}/Animations/{character}_{clip}.anm"));
+        var (tracks, frames) = (BinaryPrimitives.ReadInt32LittleEndian(anm.AsSpan(16)), BinaryPrimitives.ReadInt32LittleEndian(anm.AsSpan(20)));
+        float F(int offset) => BinaryPrimitives.ReadSingleLittleEndian(anm.AsSpan(offset));
+        var pose = new Dictionary<string, (System.Numerics.Quaternion Rotation, System.Numerics.Vector3 Position)>(StringComparer.OrdinalIgnoreCase);
+        for (var track = 0; track < tracks; track++)
+        {
+            var name = 28 + track * (36 + 28 * frames);
+            var at = name + 36 + 28 * frame;
+            pose[Ascii(anm, name, 32)] = (new(F(at), F(at + 4), F(at + 8), F(at + 12)), new(F(at + 16), F(at + 20), F(at + 24)));
+        }
+        var index = Array.FindIndex(names, name => SpellPackets.BuffNameHash(name) == boneHash);
+        TestAssert.True(index >= 0, $"the {team} stairs have the laser's bone 0x{boneHash:X8}");
+        var point = System.Numerics.Vector3.Zero;
+        for (var bone = index; bone >= 0; bone = parents[bone])
+            point = System.Numerics.Vector3.Transform(point, System.Numerics.Quaternion.Normalize(pose[names[bone]].Rotation)) + pose[names[bone]].Position;
+        return (names[index], point);
+    }
+
     [Check("dominion.opening-announcement-plays-thirty-seconds-before-the-release")]
     public static void TheFirstStartMessageIsThirtySecondsBeforeTheRelease()
     {

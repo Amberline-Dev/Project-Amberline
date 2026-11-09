@@ -94,6 +94,11 @@ public static class LevelPropPackets
             encrypt: true, LeaguePacketReliability.Reliable);
     }
 
+    /// <summary>Batch 725: the netid a 0xDA animates (raw 77), or null for any other packet.</summary>
+    public static uint? AnimatedNetId(PlaintextPacket packet) =>
+        packet.Plaintext.Length == AnimationLength && packet.Plaintext.Span[0] == AnimationOpcode
+            ? System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[77..]) : null;
+
     private static void WriteVector(BinaryWriter writer, Position3 vector)
     {
         writer.Write(ProtocolEncoding.Float32(vector.X, nameof(vector)));

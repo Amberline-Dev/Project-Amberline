@@ -1,10 +1,6 @@
-using System.Buffers.Binary;
 using Amberline.Core;
-using Amberline.Core.Buffs;
-using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Network.Replication;
-using Amberline.Simulation.Ai;
 using Amberline.Simulation.BehaviorTrees;
 using Amberline.Simulation.Buffs;
 using Amberline.Simulation.Bots;
@@ -16,8 +12,6 @@ using Amberline.Simulation.Neutral;
 using Amberline.Simulation.Pets;
 using Amberline.Simulation.Runtime;
 using Amberline.Simulation.Spells;
-using Amberline.Simulation.Spells.Bb;
-using Amberline.Simulation.Spells.Champions;
 using Amberline.Simulation.Stats;
 
 namespace Amberline.Network.Sessions;
@@ -58,7 +52,6 @@ internal sealed class ProductionSimulationDriver : IMatchSimulationDriver
     private readonly PetAiService _pets;
     private readonly ShacoBoxService _boxes;
     private readonly ShopService _shop;
-    private readonly ItemPassiveService _itemPassives;
     private readonly HeroAttackOrderSystem _heroOrders;
     private readonly BotController _bots;
     private readonly bool _visibilityBaseline;
@@ -102,7 +95,7 @@ internal sealed class ProductionSimulationDriver : IMatchSimulationDriver
         _pets = pets ?? throw new ArgumentNullException(nameof(pets));
         _boxes = boxes ?? throw new ArgumentNullException(nameof(boxes));
         _shop = shop ?? throw new ArgumentNullException(nameof(shop));
-        _itemPassives = itemPassives ?? throw new ArgumentNullException(nameof(itemPassives));
+        ArgumentNullException.ThrowIfNull(itemPassives);
         _heroOrders = heroOrders;
         _bots = bots ?? throw new ArgumentNullException(nameof(bots));
         _fidelityTrace = fidelityTrace;

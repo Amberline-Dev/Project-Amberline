@@ -651,7 +651,6 @@ public sealed partial class PlatformAccounts : IDisposable
             if (xp < available)
             {
                 experience += xp;
-                xp = 0;
                 break;
             }
             xp -= available;

@@ -108,6 +108,10 @@ public static partial class BbAnnieDifferentialChecks
         /// <summary>Missile destroys (ISpellEffectSink.SendDestroyMissile): the client missile ids the server took out.</summary>
         public List<uint> DestroyedMissiles { get; } = [];
         public List<string> Steps { get; } = [];
+        /// <summary>Batch 736: dashes as every client is told them (ISpellEffectSink.SendDash, the 0x67): the unit, its end, the followed unit and the back distance.</summary>
+        public List<(uint Unit, Position2 Destination, uint Follow, double BackDistance)> Dashes { get; } = [];
+        /// <summary>Batch 736: waypoints the spell path publishes (ISpellEffectSink.SendWaypoints, the 0xC1), a landing's stop among them.</summary>
+        public List<(uint Unit, Position2[] Points)> Waypoints { get; } = [];
         /// <summary>Every recorded call of every category in call order (used to assert orderings the findings describe).</summary>
         public List<string> Timeline { get; } = [];
 
@@ -171,6 +175,12 @@ public static partial class BbAnnieDifferentialChecks
                     break;
                 case "SendDestroyMissile" when Arg("missileNetId") is uint destroyed:
                     DestroyedMissiles.Add(destroyed);
+                    break;
+                case "SendDash" when Arg("unit") is Entity dasher && Arg("destination") is Position2 end:
+                    Dashes.Add((dasher.NetId, end, Arg("followNetId") as uint? ?? 0u, Arg("followBackDistance") as double? ?? 0.0));
+                    break;
+                case "SendWaypoints" when Arg("unit") is Entity walker && Arg("points") is IReadOnlyList<Position2> points:
+                    Waypoints.Add((walker.NetId, points.ToArray()));
                     break;
                 case "SendChainMissileSync" when Arg("targets") is IReadOnlyList<uint> hops:
                     ChainSyncs.Add(((uint)Arg("missileNetId")!, hops.ToArray()));

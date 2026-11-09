@@ -1,5 +1,4 @@
 using Amberline.Core;
-using Amberline.Network.Protocol;
 
 namespace Amberline.Simulation.Spells.Champions;
 

@@ -267,6 +267,7 @@ internal sealed class BbScriptChannels
         _host.Router.RunChanneling(channel, condition == BbChannelingStopCondition.ChannelingStopCondition_Success
             ? "ChannelingSuccessStop" : "ChannelingCancelStop");
         _host.Router.RunChanneling(channel, "ChannelingStop");
+        _host.RetireOwnedEffects(channel.InstanceVars);
         // The caster leaves the channel pose: the client is told the status word and stops where it stands. A displacement that moves the caster
         // sends its own terminal waypoint.
         var spells = _host.Spells;

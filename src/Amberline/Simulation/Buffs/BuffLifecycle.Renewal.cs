@@ -1,6 +1,4 @@
 using Amberline.Core;
-using Amberline.Data;
-using Amberline.Simulation.Ai;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Stats;
 using Amberline.Simulation.Minions;

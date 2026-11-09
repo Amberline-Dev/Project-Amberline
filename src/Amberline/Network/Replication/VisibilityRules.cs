@@ -218,7 +218,7 @@ public static class VisibilityRules
 
     // The client draws each hero's and minion-class unit's own bubble from its CharacterData PerceptionBubbleRadius (the hero and minion creators;
     // the server sends no bubble for it, ReplicationDelivery.SyncTerrain). The values below match it for heroes, lane minions, pets,
-    // ShacoBox, (batch 306) every script unit and (batch 310) the Rally beacon. Reconstruction (owner decision, 26 October 2026): a ward sees
+    // ShacoBox, (batch 306) every script unit, (batch 310) the Rally beacon and (batch 731) camp monsters. Reconstruction (owner decision, 26 October 2026): a ward sees
     // 1100 (its script's bubble; the client also draws the SightWard character's default 1350).
     private static double BaseTerrainVisionRange(Entity entity)
     {
@@ -231,7 +231,7 @@ public static class VisibilityRules
         // unit, and the minion creator makes its CharacterData bubble with no ward test (SummonerBeacon.inibin has no
         // PerceptionBubbleRadius: 1350). No beacon script adds or tunes a bubble (SummonerRally, BeaconAura*), and it is no item ward, so the
         // owner's ward 1100 does not apply. Before: no sight.
-        if (entity.IsSummonerBeacon) return CharacterBubble(entity);
+        if (entity.IsSummonerBeacon) return CharacterBubble(entity.ChampionName);
         if (entity.IsWard || entity.Kind == EntityKind.Ward) return WardVisionRange;
         if (entity.UnitType == UnitType.Turret ||
             entity.Kind is EntityKind.Turret or EntityKind.Inhibitor or EntityKind.Nexus)
@@ -257,7 +257,13 @@ public static class VisibilityRules
             // no bubble of their own. Before this batch such a unit saw nothing. Batch 310: OnCreate reads only the CharacterData perception radius and
             // the two modifiers, never the spawn's VisibilitySize (the stored size field), so a unit with a size sees this bubble as well; its size is
             // VisibilitySizeRange (batch 473: Talon's blood drop and Lux's beam cubes are ServerOnly TestCubes, so they see only their size).
-            EntityKind.Monster => CharacterBubble(entity),
+            EntityKind.Monster => CharacterBubble(entity.ChampionName),
+            // Batch 731: a camp monster is a minion-class unit of the neutral team, and the client makes its
+            // CharacterData bubble with the unit's own team (this+0x1C) and no team test, so the neutral side sees through every camp
+            // member (1350, the [Vision] default, for each). The camp character is the unit's Name, as in NeutralTargetVisible. Before,
+            // the neutral side saw nothing but the Worm's lair bubble, so Hero.luaobj's CanSeeMe refused every other camp monster and an
+            // idle hero stood beside a camp, or under its attacks, without fighting back.
+            EntityKind.Neutral => CharacterBubble(entity.Name),
             _ => 0.0,
         };
     }
@@ -270,9 +276,9 @@ public static class VisibilityRules
     // the code is shared client/server (the shared minion source), so retail's server made none either. A spawn's
     // VisibilitySize bubble (VisibilitySizeRange, which OnCreate never reads) and the bubbles its scripts add are separate and stay.
     // the hero creator has no such test, and the other arms of BaseTerrainVisionRange hold no ServerOnly character.
-    private static double CharacterBubble(Entity entity)
+    private static double CharacterBubble(string character)
     {
-        var data = Amberline.Data.GameData.Default.Champion(entity.ChampionName);
+        var data = Amberline.Data.GameData.Default.Champion(character);
         return data.ServerOnly ? 0.0 : data.PerceptionBubbleRadius;
     }
 
@@ -415,9 +421,10 @@ public static class VisibilityRules
     }
 
     // The bubble an enemy attacker shows its attacked team for a short time (RevealAttacker): owned by the attacker, not by the team.
+    // Batch 731: the neutral side's too. CombatService.RevealAttack fills the attacked unit's team slot, a camp's included, and the
+    // neutral side's sight is what Hero.luaobj's CanSeeMe asks of a camp monster (it skipped Neutral before).
     private static void AddAttackReveals(WorldState world, Team team, List<VisionProvider> providers)
     {
-        if (team is not (Team.Order or Team.Chaos)) return;
         foreach (var entity in world.Entities.Values)
             if (entity.Alive && entity.AttackRevealRemaining[(int)team] > 0.0)
                 providers.Add(new(entity.AttackRevealPosition[(int)team], 400.0, entity.SelectionRadius));

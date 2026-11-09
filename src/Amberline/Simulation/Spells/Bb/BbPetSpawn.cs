@@ -1,5 +1,4 @@
 using Amberline.Core;
-using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 using Amberline.Simulation.Pets;

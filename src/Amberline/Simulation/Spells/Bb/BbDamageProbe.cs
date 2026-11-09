@@ -1,11 +1,7 @@
-using Amberline.Core;
-using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Replication;
 using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
-using Amberline.Simulation.Buffs;
-using Amberline.Simulation.Combat;
 
 namespace Amberline.Simulation.Spells.Bb;
 

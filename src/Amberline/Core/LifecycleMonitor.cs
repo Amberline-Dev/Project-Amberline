@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using Amberline.Core.Buffs;
-using Amberline.Simulation.Spells.Champions;
 
 namespace Amberline.Core;
 
