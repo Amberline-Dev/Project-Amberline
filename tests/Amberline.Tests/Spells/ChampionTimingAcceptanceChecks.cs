@@ -334,7 +334,7 @@ public static partial class ChampionLiveRegressionChecks
         TestAssert.True(combat.QueueBasicAttack(hero, enemy));
         hero.AttackTarget = null; // Isolate the replacement from subsequent ordinary swings.
         combat.CombatTick(1.01, regenerate: false);
-        combat.CombatTick(.01, regenerate: false); // Travel/impact follows the windup-crossing tick.
+        combat.CombatTick(.01, regenerate: false); // Batch 741: Yorick's melee hit landed at its cast frame, inside the tick above.
         TestAssert.False(hero.Buffs.Any(buff => buff.Name == "YorickSpectral"));
         TestAssert.Equal(1, match.Runtime.World.Entities.Values.Count(unit =>
             unit.Kind == EntityKind.YorickGhoul && unit.Buffs.Any(buff => buff.Name == "YorickSpectralLogic")),

@@ -215,10 +215,12 @@ public static class AttackRangeRegressionChecks
         // owner decision 27 Sept 2026: edge-to-edge gameplay radii
         melee.Position = hero.Position + new Position2(CombatService.AttackReach(hero, melee) + 20, 0);
         runtime.Combat.CombatTick(0.1);
-        TestAssert.Equal(meleeHealth, melee.Health,
-            "the committed melee windup must remain pending through target motion");
-        TestAssert.True(runtime.Combat.PendingHits.Any(hit => hit.TargetNetId == melee.NetId),
-            "target motion must not cancel a committed melee windup");
+        // Batch 741: this tick ends the 0.2 s windup, the swing's cast frame, where a melee hit lands (the client's cast builder runs a
+        // CastType 0 effect at once); it stayed pending for one more tick before. The target's motion inside the leash did not cancel it.
+        TestAssert.True(melee.Health < meleeHealth,
+            "the committed melee windup survives the target motion and lands at its cast frame");
+        TestAssert.False(runtime.Combat.PendingHits.Any(hit => hit.TargetNetId == melee.NetId),
+            "the landed hit leaves the queue");
         runtime.Delivery.Flush();
         // Any flags: only the unit's id is compared.
         TestAssert.False(stopPackets.Packets.Any(packet =>

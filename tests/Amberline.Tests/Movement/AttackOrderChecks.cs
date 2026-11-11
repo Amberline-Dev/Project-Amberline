@@ -118,11 +118,10 @@ public static class AttackOrderChecks
         TestAssert.Equal(before, target.Health,
             "the moving target must not take damage before the windup completes");
         runtime.Combat.CombatTick(0.1);
-        TestAssert.Equal(before, target.Health,
-            "the windup crossing tick must retain the pending attack state");
-        runtime.Combat.CombatTick(0.01);
+        // Batch 741: the tick that crosses the windup is the swing's cast frame, where a melee hit lands (the client's cast builder runs a
+        // CastType 0 effect at once); it stayed pending for one more tick before.
         TestAssert.True(target.Health < before,
-            "the committed ATTACK_TO windup must resolve after target motion");
+            "the committed ATTACK_TO windup must resolve at its cast frame after target motion");
     }
 
     [Check("movement.attack-to-stop-distance")]

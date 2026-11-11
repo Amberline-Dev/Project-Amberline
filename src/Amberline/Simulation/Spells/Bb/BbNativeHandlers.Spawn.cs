@@ -334,7 +334,9 @@ internal sealed partial class BbNativeHandlers
         // 0 and MissileSpeed is unchanged), AiState "idle" instead of the entity default "march", and UnitAttackTiming's
         // AttackSpeedMod and BasicAttackAnimationProbabilities. The record wins (owner, 20 October 2026).
         var ghoul = skin is "YorickDecayedGhoul" or "YorickRavenousGhoul" or "YorickSpectralGhoul";
-        if (ghoul) position = Spells.Movement.Navigation.ClosestSummonPlacement(position, data.PathfindingRadius);
+        // Reconstruction (owner, 10-11 November 2026, batch 738: retail never left a ward or a summon in a wall): SightWard.SelfExecute passes the
+        // cast point, the native placement is not shipped, so a ward takes the summon placement rule above, like the ghouls.
+        if (ghoul || flags.IsWard) position = Spells.Movement.Navigation.ClosestSummonPlacement(position, data.PathfindingRadius);
         var credited = redirect is { UnitType: UnitType.Hero } hero ? hero.NetId : 0u;
         // Batch 451: a wave minion is a minion (AffectMinions and the minion kill of the capture trees read the unit type). Batch 452
         // (Reconstruction): a point turret is a turret object (GetTurret answers turrets, OdinScriptBehaviorTrees.xml:1832), so it takes the

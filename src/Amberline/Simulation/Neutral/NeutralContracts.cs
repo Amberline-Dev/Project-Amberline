@@ -219,8 +219,14 @@ public static class NeutralStatsCalculator
         // Reconstruction: a monster with no shipped <name>BasicAttack flies no basic-attack missile, the same rule as the engine's
         // AttackMissileSpeed. Urf ships none (no UrfBasicAttack): its CharOnActivate sets SetCanAttack false, so it never swings, and
         // its slot-1 spell is UrfSpell (Data*Spell1), which the script casts at Warwick.
+        // Batch 741: and the client flies a missile only for CastType 1, 2 and 3 (DoCast_ClientAndServer: case 0 runs the effect at once),
+        // the rule a hero's, a turret's and a spawned unit's attack already read. AncientGolem, LizardElder, TwistedLizardElder and Lizard
+        // ship CastType 0 attacks with MissileSpeed 500: read as a flight, their swing landed ~0.4 s after its cast frame, after the death
+        // of a monster killed in between, without its CharOnHitUnit (b739: AncientGolem 50.00 instead of 71.50).
         var basicAttack = name + "BasicAttack";
-        var missileSpeed = gameData.HasSpell(basicAttack) ? gameData.Spell(basicAttack).MissileSpeed : 0.0;
+        var missileSpeed = gameData.HasSpell(basicAttack) &&
+            Amberline.Simulation.Spells.Bb.BbChampionModule.CastType(gameData.Spell(basicAttack)) is 1 or 2 or 3
+            ? gameData.Spell(basicAttack).MissileSpeed : 0.0;
         // CharacterData's legacy Data*AttackSpeed field is not the live
         // attack-speed multiplier.  The native CharacterData loader reads
         // the delay offsets and initializes mAttackSpeedMod to 1.0; later

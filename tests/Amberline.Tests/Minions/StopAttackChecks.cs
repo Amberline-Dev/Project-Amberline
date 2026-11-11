@@ -99,11 +99,15 @@ public static class StopAttackChecks
             minion.MinionAutoAttackEnabled = true;
             rig.Flush();
 
+            var start = target.Health;
             TestAssert.True(rig.Runtime.Combat.QueueBasicAttack(minion, target), "the attack starts");
             rig.Runtime.Combat.CombatTick(minion.AttackWindup + 0.01, regenerate: false);
             TestAssert.True(rig.Runtime.Combat.LastAutoAttackFinished(minion), "the windup is over: the hit is launched");
             var launched = rig.Runtime.Combat.PendingHits.Count(hit => hit.SourceNetId == minion.NetId && hit.TargetNetId == target.NetId);
-            TestAssert.Equal(1, launched, "the hit is still to land");
+            // Batch 741: a melee hit lands at its cast frame, the windup's end this tick crossed (the client's cast builder runs a CastType 0
+            // effect at once); only the missile is still to land. The stop below must leave both.
+            TestAssert.Equal(missileSpeed > 0.0 ? 1 : 0, launched, "only the missile is still to land");
+            TestAssert.Equal(missileSpeed <= 0.0, target.Health < start, "the melee hit landed at its cast frame");
             rig.Flush();
 
             rig.Retarget(minion, helper);
@@ -121,7 +125,8 @@ public static class StopAttackChecks
 
             var health = target.Health;
             for (var tick = 0; tick < 10; tick++) rig.Runtime.Combat.CombatTick(0.1, regenerate: false);
-            TestAssert.True(target.Health < health, $"speed {missileSpeed}: the launched hit lands after the stop");
+            TestAssert.Equal(missileSpeed > 0.0, target.Health < health, $"speed {missileSpeed}: the launched missile lands after the stop");
+            TestAssert.True(target.Health < start, $"speed {missileSpeed}: the hit the server applied stands");
         }
     }
 

@@ -22,16 +22,22 @@ public static partial class ChampionLiveRegressionChecks
             enemy.Position = hero.Position + new Position2(100, 0);
             hero.AttackTarget = enemy.NetId;
             TestAssert.True(match.Runtime.Combat.QueueBasicAttack(hero, enemy));
+            var before = enemy.Health;
             if (launched) match.Runtime.Combat.CombatTick(hero.AttackWindup + .01);
-            var hit = match.Runtime.Combat.PendingHits.Single(attack => attack.SourceNetId == hero.NetId);
-            TestAssert.Equal(launched, hit.WindupRemaining <= 0);
+            // Batch 741: Lee Sin's swing has no flight, so it lands at its cast frame: once launched it has hit, and no hit is left for the
+            // move to keep. Annie's missile is still in flight.
+            var flies = hero.MissileSpeed > 0.0;
+            TestAssert.Equal(launched && !flies, enemy.Health < before, "a launched melee swing has hit at its cast frame");
+            var hit = match.Runtime.Combat.PendingHits.SingleOrDefault(attack => attack.SourceNetId == hero.NetId);
+            TestAssert.Equal(launched && !flies ? 0 : 1, match.Runtime.Combat.PendingHits.Count(attack => attack.SourceNetId == hero.NetId));
+            if (!launched || flies) TestAssert.Equal(launched, hit.WindupRemaining <= 0);
             match.Clear();
             match.Move(0, new Position2(7900, 7000));
             TestAssert.True(hero.AttackTarget is null && hero.Waypoints.Count > 0);
             var remaining = match.Runtime.Combat.PendingHits.Where(attack => attack.SourceNetId == hero.NetId).ToArray();
-            TestAssert.Equal(launched ? 1 : 0, remaining.Length,
+            TestAssert.Equal(launched && flies ? 1 : 0, remaining.Length,
                 "ordinary movement cancels unfinished windup and preserves a launched attack");
-            if (launched) TestAssert.Equal(hit.MissileNetId, remaining[0].MissileNetId);
+            if (launched && flies) TestAssert.Equal(hit.MissileNetId, remaining[0].MissileNetId);
             foreach (var capture in match.Captures)
             {
                 var stopped = capture.Packets.Where(packet => Opcode(packet) == 0x39 &&
@@ -41,7 +47,7 @@ public static partial class ChampionLiveRegressionChecks
             }
             var health = enemy.Health;
             match.Runtime.Combat.CombatTick(1);
-            TestAssert.Equal(launched, enemy.Health < health, "only a launched attack can still hit after the move");
+            TestAssert.Equal(launched && flies, enemy.Health < health, "only a launched attack can still hit after the move");
         }
     }
 

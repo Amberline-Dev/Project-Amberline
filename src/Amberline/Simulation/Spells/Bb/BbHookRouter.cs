@@ -1240,7 +1240,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// module's rule — a turret). A router only ever holds one of the two kinds of owner.
     /// </summary>
     private bool Owns(Entity unit) =>
-        _unitCharacters.ContainsKey(unit) ||
+        _unitCharacters.ContainsKey(unit) || !unit.Alive && _corpseCharacters.ContainsKey(unit) ||
         (unit.UnitType == UnitType.Hero && string.Equals(unit.ChampionName, _scripts.Champion, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Whether <see cref="Owns"/> admits the unit (the gameplay hooks' dispatch gate, see <see cref="IBbHookSink.OwnsUnit"/>).</summary>
@@ -1251,7 +1251,8 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// own character script (a champion's). Null for a unit this router has nothing to say about.
     /// </summary>
     private BbScript? CharacterOf(Entity unit) =>
-        _unitCharacters.TryGetValue(unit, out var bound) ? bound : _scripts.Character;
+        _unitCharacters.TryGetValue(unit, out var bound) ? bound :
+        !unit.Alive && _corpseCharacters.TryGetValue(unit, out var corpse) ? corpse : _scripts.Character;
 
     /// <summary>
     /// Binds one non-champion unit to a shipped character script: the claim that makes its later character hooks run from
@@ -1260,7 +1261,11 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// <see cref="BbUnitCharacterModule.BindUnit"/> takes the first <c>UpdateSelfBuffStats</c>/<c>Actions</c> sample first and
     /// calls <see cref="RunCharOnActivate"/> last, the order the shipped dragon's own hooks are written in.
     /// </summary>
-    public void BindUnit(Entity unit, BbScript script) => _unitCharacters[unit] = script;
+    public void BindUnit(Entity unit, BbScript script)
+    {
+        _corpseCharacters.Remove(unit);
+        _unitCharacters[unit] = script;
+    }
 
     /// <summary>
     /// <c>CharOnActivate</c> of a non-champion unit's character script, with the unit as Owner, Attacker, Target and Caster
@@ -1284,14 +1289,42 @@ internal sealed partial class BbHookRouter : IBbHookSink
             canMitigateDuration: false);
     }
 
-    /// <summary>Unbinds a unit that is gone (died, despawned): its character script and its per-unit tables go with it.</summary>
+    /// <summary>
+    /// Unbinds a unit that is gone (died, despawned): its character script and its per-unit tables go with it, a corpse's once it is
+    /// reaped (batch 742, below).
+    /// </summary>
     public void UnbindUnit(Entity unit)
     {
-        if (!_unitCharacters.Remove(unit)) return;
+        if (!_unitCharacters.Remove(unit, out var script)) return;
+        foreach (var reaped in _corpseCharacters.Keys.Where(corpse => corpse.Alive || !ReferenceEquals(_host.Spells.World.Get(corpse.NetId), corpse))
+                     .ToArray())
+        {
+            _corpseCharacters.Remove(reaped);
+            ForgetTables(reaped);
+        }
+        // Reconstruction (batch 742; owner, 11 November 2026, on a ranged monster's shot in flight when it dies: "Full hit, like the rest"):
+        // a dead unit's character script stays reachable, with its tables, for the hits it launched before dying, until its corpse leaves
+        // the world (CombatService.CorpseReapSeconds), as a dead hero's script is never unbound. Unbound at once, a dead blue Dragon's shot
+        // landed without its CharOnHitUnit x1.43 (125.00 for 178.75 on armour 54). Only attacker-side hooks reach a corpse: it cannot swing or
+        // cast again (CombatService.Kill drops its unfinished windups) and is no target, and its periodic hooks are the module's poll, which
+        // drops it now. The retail server's routine is not shipped.
+        if (!unit.Alive && ReferenceEquals(_host.Spells.World.Get(unit.NetId), unit))
+        {
+            _corpseCharacters[unit] = script;
+            return;
+        }
+        ForgetTables(unit);
+    }
+
+    private void ForgetTables(Entity unit)
+    {
         _charVars.Remove(unit);
         _charInstanceVars.Remove(unit);
         _charStatSignatures.Remove(unit);
     }
+
+    // Batch 742: the character scripts of dead units whose corpse is still in the world (UnbindUnit).
+    private readonly Dictionary<Entity, BbScript> _corpseCharacters = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>The character script bound to a non-champion unit (a check's pin), or null.</summary>
     internal BbScript? BoundCharacter(Entity unit) => _unitCharacters.TryGetValue(unit, out var bound) ? bound : null;

@@ -267,10 +267,9 @@ public static partial class ChampionLiveRegressionChecks
             "the replacement basic starts immediately");
         runtime.Combat.CombatTick(.31, regenerate: false);
         TestAssert.Near(health, enemy.Health, 1e-9, "the old hit deadline passes without damage");
+        // Batch 741: the tick that crosses the windup is the swing's cast frame, and Blitzcrank's melee swing lands in it (the client's
+        // cast builder runs a CastType 0 effect at once). The 27 September sweep's next-tick impact was the order the Python port kept.
         runtime.Combat.CombatTick(.1, regenerate: false);
-        // playtest B4 / retail sweep, 27 Sept 2026: the zero-crossing tick
-        // finishes windup; the next tick resolves even a melee impact.
-        TestAssert.Near(health, enemy.Health, 1e-9, "crossing windup does not resolve damage early");
         runtime.Combat.CombatTick(.01, regenerate: false);
         runtime.Delivery.Flush();
         TestAssert.Near(hero.AttackDamage * 2, health - enemy.Health, 1e-6,

@@ -145,17 +145,13 @@ public static class MovementPolishChecks
         }
         var hp = hero.Health;
         runtime.Combat.CombatTick(.2, regenerate: false);
-        var crossing = runtime.Combat.PendingHits.Single(hit =>
-            hit.SourceNetId == minion.NetId && hit.TargetNetId == hero.NetId);
-        TestAssert.True(crossing.WindupRemaining <= 0.0,
-            "the crossing tick must retain a released, nonpositive windup");
-        TestAssert.Equal(hp, hero.Health,
-            "the crossing tick must not resolve the released melee hit");
-        runtime.Combat.CombatTick(.1, regenerate: false); // The native crossing tick completes windup before damage.
-        TestAssert.True(hero.Health < hp, "the retained windup must deliver its damage");
+        // Batch 741: this tick crosses the 0.8 s windup, the swing's cast frame, where the melee hit lands (the client's cast builder runs a
+        // CastType 0 effect at once); it was kept for one more tick before.
+        TestAssert.True(hero.Health < hp, "the committed windup delivers its damage at its cast frame");
         TestAssert.False(runtime.Combat.PendingHits.Any(hit =>
                 hit.SourceNetId == minion.NetId && hit.TargetNetId == hero.NetId),
-            "the released melee hit must leave the pending queue after impact");
+            "the melee hit leaves the pending queue at its impact");
+        runtime.Combat.CombatTick(.1, regenerate: false);
 
         // Combat runs after minion AI in production. Advance the AI by one
         // target-scan interval so the first post-windup decision can issue the

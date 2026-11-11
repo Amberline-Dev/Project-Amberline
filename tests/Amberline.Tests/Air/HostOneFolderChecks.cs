@@ -223,8 +223,8 @@ public static class HostOneFolderChecks
                 .AskFolder(() => null), "no answer, no install");
 
             // START-HERE's request after --home.
-            var request = HostMode.ParseInstall(["--install-to", @"D:\Amberline", "--game", @"D:\LoL\game", "--air", @"D:\LoL", "--delete-originals"]);
-            TestAssert.True(request is (@"D:\Amberline", { Game: @"D:\LoL\game", Air: @"D:\LoL", DeleteOriginals: true }, false), $"{request}");
+            var request = HostMode.ParseInstall(["--install-to", @"D:\Amberline", "--game", @"E:\Games\game", "--air", @"E:\Games", "--delete-originals"]);
+            TestAssert.True(request is (@"D:\Amberline", { Game: @"E:\Games\game", Air: @"E:\Games", DeleteOriginals: true }, false), $"{request}");
             TestAssert.True(HostMode.ParseInstall([]) is (null, null, false), "no request");
             // Batch 666: only Update now passes the page's confirmation.
             TestAssert.True(HostMode.ParseInstall([HostInstall.ConfirmedOption]) is (null, null, true), "Update now's start");

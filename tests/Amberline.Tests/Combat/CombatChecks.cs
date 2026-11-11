@@ -93,10 +93,13 @@ public static class CombatChecks
             var combat = new CombatService(world, new TestHooks(), new TestTransport(), new FixedRandomSource(.5));
             TestAssert.True(combat.QueueBasicAttack(hero, target));
             combat.CombatTick(.31, regenerate: false);
-            var released = combat.PendingHits.Single();
+            // Batch 741: the melee hit landed at its cast frame (this tick); only the missile is still in the queue.
+            TestAssert.Equal(ranged ? 1000.0 : 900.0, target.Health, "a melee hit lands at its cast frame");
+            var released = combat.PendingHits.SingleOrDefault();
+            TestAssert.Equal(ranged ? 1 : 0, combat.PendingHits.Count);
             var cooldown = hero.AttackCooldown;
             TestAssert.Equal(0, combat.InterruptBasicAttack(hero), "released attacks cannot be canceled");
-            TestAssert.Equal(released, combat.PendingHits.Single(), "the launched missile retains its identity");
+            TestAssert.Equal(released, combat.PendingHits.SingleOrDefault(), "the launched missile retains its identity");
             TestAssert.Equal(cooldown, hero.AttackCooldown);
             TestAssert.False(combat.QueueBasicAttack(hero, target));
             combat.CombatTick(.51, regenerate: false);
@@ -625,8 +628,8 @@ public static class CombatChecks
             TestAssert.Equal(target, combat.AcquireTurretTarget(shrine), "visible enemy at 1200 is acquired");
             TestAssert.True(combat.QueueBasicAttack(shrine, target, new AttackRolls(1, 1, 1)));
             shrine.AttackCooldown = 100;
-            // The shrine's client-decoded windup is 0.16 s: the tick that crosses it keeps the shot in
-            // windup and the next tick lands it (this check used to land it in the first tick at windup 0).
+            // The shrine's client-decoded windup is 0.16 s: the tick that crosses it lands the hit, which has no flight (batch 741: a
+            // CastType 0 attack's effect runs at its cast frame; it landed on the next tick before, and in the first tick at windup 0).
             combat.CombatTick(4, regenerate: false);
             combat.CombatTick(0.05, regenerate: false);
             TestAssert.Equal(4000.0, target.Health, "shrine retains 1000 true damage");
@@ -877,7 +880,8 @@ public static class CombatChecks
             shrine.AttackCooldown = 100;
             if (shrine.AttackWindup > 0)
             {
-                combat.CombatTick(shrine.AttackWindup, regenerate: false);
+                // Batch 741: the shrine's CastType 0 hit lands at its cast frame, the windup's end, so the windup is stepped to just before it.
+                combat.CombatTick(shrine.AttackWindup - 0.01, regenerate: false);
                 TestAssert.Equal(5000.0, target.Health, "no damage during windup");
             }
             combat.CombatTick(0.05, regenerate: false);
@@ -2138,7 +2142,9 @@ public static class CombatChecks
             TestAssert.Equal(dodge ? (byte)0x46 : (byte)0x45, attack.Plaintext.Span[14]);
             if (canceled) TestAssert.Equal(1, combat.CancelPendingWindups(hero.NetId));
             combat.CombatTick(0.11, regenerate: false);
-            TestAssert.False(queue.Packets.Any(packet => packet.Plaintext.Span[0] == 0x68), "no feedback before impact");
+            // Batch 741: a melee swing's impact, and so its miss or dodge feedback, is its cast frame (the 0.1 s windup ends in this tick);
+            // a missile's comes after its flight.
+            TestAssert.Equal(!ranged && !canceled, queue.Packets.Any(packet => packet.Plaintext.Span[0] == 0x68), "no feedback before impact");
             target.Dodge = 0;
             hero.Buffs.Remove(miss);
             combat.CombatTick(0.21, regenerate: false);
@@ -2185,7 +2191,9 @@ public static class CombatChecks
             var attack = queue.Packets.Single(packet => packet.Plaintext.Span[0] == 0x0D);
             TestAssert.Equal(critical ? (byte)0x44 : (byte)0x41, attack.Plaintext.Span[14], "critical overrides weighted normal animation");
             combat.CombatTick(0.11, regenerate: false);
-            TestAssert.False(queue.Packets.Any(packet => packet.Plaintext.Span[0] == 0x68), "no premature impact");
+            // Batch 741: a melee swing's impact is its cast frame (the 0.1 s windup ends in this tick: the client's cast builder runs a
+            // CastType 0 effect at once); a missile's comes after its flight. It used to wait for the next tick.
+            TestAssert.Equal(!ranged, queue.Packets.Any(packet => packet.Plaintext.Span[0] == 0x68), "no premature impact");
             hero.CritChance = critical ? 0 : 1;
             hero.CritMultiplier = 7;
             if (dieAfterLaunch) combat.Kill(hero);
@@ -3190,7 +3198,9 @@ public static class CombatChecks
             new AttackRolls(0.99, 0.99, 0.99)));
         service.CombatTick(0.5);
         TestAssert.Equal(0, service.InterruptBasicAttack(hero), "launched shot survives interruption");
-        TestAssert.Equal(1, service.PendingHits.Count);
+        // Batch 741: the melee hit (MissileSpeed 0) landed at its cast frame, the end of this 0.5 s windup; it waited for the next tick before.
+        TestAssert.Equal(0, service.PendingHits.Count);
+        TestAssert.Near(80.0, target.Health, 1e-9, "the melee hit landed at its cast frame");
         TestAssert.Near(0.5, unsupported.AttackCooldown, 1e-9,
             "cooldown decays before non-basic unit eligibility");
 

@@ -191,7 +191,10 @@ public static partial class ChampionLiveRegressionChecks
             if (launched) runtime.Combat.CombatTick(pet.AttackWindup + 0.01, regenerate: false);
             runtime.Delivery.Flush();
             TestAssert.Equal(1, N2Swings(match, 0, pet), label + ": the swing reached the client");
-            TestAssert.Equal(launched, runtime.Combat.PendingHits.Single(hit => hit.SourceNetId == pet.NetId).WindupRemaining <= 0.0,
+            // Batch 741: a launched swing with no flight has landed at its cast frame (the client's cast builder runs a CastType 0 effect at
+            // once); an unfinished swing, or a missile, is still queued.
+            var flies = pet.MissileSpeed > 0.0;
+            TestAssert.Equal(launched && !flies ? 0 : 1, runtime.Combat.PendingHits.Count(hit => hit.SourceNetId == pet.NetId),
                 label + ": the hit is in the expected phase");
             match.Clear();
 
@@ -201,7 +204,7 @@ public static partial class ChampionLiveRegressionChecks
             TestAssert.Equal(launched ? CombatPackets.StandingSwingFlags : CombatPackets.CancelWindupFlags, stops[0],
                 label + (launched ? ": the hit stands: its cast frame is forced and its shot is not destroyed" : ": the dropped swing is not played"));
             TestAssert.False(pet.ClientAttackArmed, label + ": the client's attack state ended");
-            TestAssert.Equal(launched ? 1 : 0, runtime.Combat.PendingHits.Count(hit => hit.SourceNetId == pet.NetId),
+            TestAssert.Equal(launched && flies ? 1 : 0, runtime.Combat.PendingHits.Count(hit => hit.SourceNetId == pet.NetId),
                 label + ": the server kept or dropped the hit to match");
 
             // A second order finds the client already stopped.

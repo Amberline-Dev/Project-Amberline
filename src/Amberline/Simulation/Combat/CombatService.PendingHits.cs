@@ -122,6 +122,15 @@ public sealed partial class CombatService
         return canceled;
     }
 
+    // Retail rule (SpellSystem.DestroyTargetedProjectiles): a missile in the air whose target died is not destroyed; the
+    // client's homing missile follows the target object, alive or not, and ends at the corpse. The hit
+    // therefore flies on and lands without effect (ResolvePendingHit). A target that is gone, or one that lives again as
+    // another life (it respawned), still cancels the hit and takes the missile out.
+    private static bool HitTargetLost(PendingHit hit, [System.Diagnostics.CodeAnalysis.NotNullWhen(false)] Entity? target, bool inFlight) =>
+        target is null || (!target.Alive && !inFlight) ||
+        (target.Alive && (target.ChampionDeaths != hit.TargetChampionDeaths ||
+                          !ReferenceEquals(target.YorickRevival, hit.TargetYorickRevival)));
+
     private int ProcessPendingHits(double dt)
     {
         var resolved = 0;
@@ -136,14 +145,8 @@ public sealed partial class CombatService
             var index = _pendingHits.IndexOf(hit);
             if (index < 0) continue;
             var target = _world.Get(hit.TargetNetId);
-            // Retail rule (SpellSystem.DestroyTargetedProjectiles): a missile in the air whose target died is not destroyed; the
-            // client's homing missile follows the target object, alive or not, and ends at the corpse. The hit
-            // therefore flies on and lands without effect (ResolvePendingHit). A target that is gone, or one that lives again as
-            // another life (it respawned), still cancels the hit and takes the missile out.
             var inFlight = hit.WindupRemaining <= 0.0 && hit.MissileNetId != 0 && hit.MissileSpeed > 0.0;
-            if (target is null || (!target.Alive && !inFlight) ||
-                (target.Alive && (target.ChampionDeaths != hit.TargetChampionDeaths ||
-                                  !ReferenceEquals(target.YorickRevival, hit.TargetYorickRevival))))
+            if (HitTargetLost(hit, target, inFlight))
             {
                 _pendingHits.RemoveAt(index);
                 NotifyHitCanceled(hit);
@@ -169,7 +172,7 @@ public sealed partial class CombatService
                 _hooks.OnPendingBasicAttackCanceled(hit);
                 continue;
             }
-            // The source keeps the shot in windup for the whole tick that
+            // The source keeps a missile in windup for the whole tick that
             // crosses zero; travel starts on the following tick.
             if (hit.WindupRemaining > 0.0)
             {
@@ -177,15 +180,28 @@ public sealed partial class CombatService
                 // client/source keeps a negative wind-up until the next tick
                 // begins projectile travel; clamping here loses that state
                 // and makes replayed pending-hit snapshots diverge.
-                _pendingHits[index] = hit with { WindupRemaining = hit.WindupRemaining - dt };
-                if (hit.WindupRemaining <= dt && hit.SourceKind == DamageSourceKind.Basic &&
-                    hit.MissileNetId != 0 && source is not null)
+                var released = hit with { WindupRemaining = hit.WindupRemaining - dt };
+                _pendingHits[index] = released;
+                var castFrame = hit.WindupRemaining <= dt && hit.SourceKind == DamageSourceKind.Basic && hit.MissileNetId != 0;
+                if (castFrame && source is not null)
                 {
                     RevealAtCastFrame(source, target);
                     // Before the launch hooks: Spray and Pray's BuffOnLaunchMissile spends the attack and may end the override.
                     StartPierceLine(source, target, hit);
                     _hooks.OnBasicAttackLaunch(source, target, hit.MissileNetId);
                 }
+                if (!castFrame || hit.MissileSpeed > 0.0) continue;
+                // Reconstruction (batch 741): a swing with no flight lands at its cast frame, in the step its windup ends. The retail server's
+                // hit routine is not shipped; the client's cast builder runs a CastType 0 attack's effect at once (DoCast_ClientAndServer,
+                // The client, case 0). It waited for the next step (the Python port's order), so an attacker killed in that step dealt
+                // its hit after its death, without its on-hit: a monster's CharOnHitUnit x1.43 (its script is unbound at death), a
+                // hero's non-persistent buffs. A scripted delayed hit (QueueScriptedHit) has no cast frame and keeps the next step.
+                // The cast-frame hooks above may have taken the hit away or killed its target.
+                index = _pendingHits.IndexOf(released);
+                if (index < 0) continue;
+                _pendingHits.RemoveAt(index);
+                if (HitTargetLost(released, target, inFlight: false)) NotifyHitCanceled(released);
+                else if (ResolvePendingHit(released, target)) resolved++;
                 continue;
             }
             if (hit.MissileSpeed <= 0.0)

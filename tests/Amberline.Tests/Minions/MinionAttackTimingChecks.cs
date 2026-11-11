@@ -58,8 +58,10 @@ public static class MinionAttackTimingChecks
             runtime.Combat.CombatTick(expected - 0.000001, regenerate: false);
             TestAssert.Near(10000.0, target.Health, 1e-8, label + " no early hit");
             runtime.Combat.CombatTick(0.000002, regenerate: false);
-            TestAssert.Near(10000.0, target.Health, 1e-8, label + " crossing tick keeps windup");
             var flight = source.MissileSpeed > 0.0 ? 60.0 / source.MissileSpeed : 0.0;
+            // Batch 741: the tick that crosses the windup is the swing's cast frame. A melee hit (no flight) lands in it, the client's cast
+            // builder running a CastType 0 effect at once; a missile only leaves. The melee hit waited for the next tick before.
+            TestAssert.Near(flight > 0.0 ? 10000.0 : 10000.0 - source.AttackDamage, target.Health, 1e-7, label + " crossing tick");
             if (flight > 0.0)
             {
                 runtime.Combat.CombatTick(flight - 0.000001, regenerate: false);
