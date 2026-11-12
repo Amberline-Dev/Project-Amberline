@@ -88,6 +88,9 @@ public static class MaestroChecks
         TestAssert.Equal(42L, request.PlayerId);
         TestAssert.Throws<FormatException>(() => MaestroCreateRequest.Parse("cmd.exe 5119 1234567890123456 42 & whoami"));
         TestAssert.Throws<FormatException>(() => MaestroCreateRequest.Parse("http://127.0.0.1 5119 1234567890123456 42"));
+        // Batch 749: the stock client cannot use a name as its game server; the launch passes the name's IPv4 address.
+        TestAssert.Equal("203.0.113.7", StockClientLauncher.GameAddress("203.0.113.7"));
+        TestAssert.Equal("127.0.0.1", StockClientLauncher.GameAddress("localhost"));
 
         var root = Path.Combine(Path.GetTempPath(), "amberline-air-check-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);

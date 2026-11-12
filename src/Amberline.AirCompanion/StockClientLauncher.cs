@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 
 namespace Amberline.AirCompanion;
 
@@ -45,9 +47,19 @@ public sealed class StockClientLauncher
 
     public Process Launch(MaestroCreateRequest request)
     {
-        var process = Process.Start(CreateStartInfo(Executable, request, MaestroPort));
+        var process = Process.Start(CreateStartInfo(Executable, request with { ServerHost = GameAddress(request.ServerHost) }, MaestroPort));
         return process ?? throw new IOException("The stock game client could not be started.");
     }
+
+    /// <summary>
+    /// NOT RETAIL: retail's platform always sent the game server's number address. A host may give players a name (a domain on a
+    /// rented server), which the stock client cannot use: it fails with "Enet could not connect! Status - 7" (owner, 12 November
+    /// 2026, batch 749). A name is resolved to its IPv4 address at each launch, so a changed DNS record counts for the next game.
+    /// </summary>
+    public static string GameAddress(string host) =>
+        IPAddress.TryParse(host, out _) ? host
+            : Dns.GetHostAddresses(host, AddressFamily.InterNetwork).FirstOrDefault()?.ToString()
+              ?? throw new IOException($"The game server name {host} has no IPv4 address.");
 
     public static ProcessStartInfo CreateStartInfo(string executable, MaestroCreateRequest request, int maestroPort = 8393)
     {
