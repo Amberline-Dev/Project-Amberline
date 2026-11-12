@@ -33,17 +33,21 @@ public sealed partial class BuffLifecycle
 
     /// <summary>
     /// Adds a permanent attack-speed amount to a non-hero unit's baseline and rebuilds its timing from it (batch 159
-    /// step 2: a script's <c>BBIncPermanentStat IncPermanentPercentAttackSpeedMod</c> on a non-hero; since batch 759
-    /// <c>BbSpellHost.PermanentOnPet</c> skips the lane turret's <c>PersonalTurretAssistBonus</c> one). It is the same additive family a buff's own
+    /// step 2: a script's <c>BBIncPermanentStat IncPermanentPercentAttackSpeedMod</c> on a non-hero; since batch 760
+    /// <c>BbSpellHost.PermanentOnPet</c> passes the lane turret's <c>PersonalTurretAssistBonus</c> one as shown only). It is the same additive family a buff's own
     /// <c>IncPercentAttackSpeedMod</c> joins in <see cref="RecomputeNpcAttackTiming"/> — a percent amount on top of the
     /// unit's base attacks-per-second — kept apart here because a permanent outlives the buff that added it and is not
-    /// rolled back when a buff expires.
+    /// rolled back when a buff expires. With <paramref name="shownOnly"/> (batch 760: the lane turret's assist bonus) the
+    /// amount joins only <see cref="AttackTimingBaseline.ShownAttackSpeed"/>: the replicated multiplier and the wind-up,
+    /// not the firing period.
     /// </summary>
-    public static void IncreaseNpcBaseAttackSpeed(Entity unit, double attackSpeed)
+    public static void IncreaseNpcBaseAttackSpeed(Entity unit, double attackSpeed, bool shownOnly = false)
     {
         EnsureNpcAttackTimingBaseline(unit);
         if (unit.AttackTimingBaseline is not { } baseline) return;
-        unit.AttackTimingBaseline = baseline with { BaseAttackSpeed = baseline.BaseAttackSpeed + attackSpeed };
+        unit.AttackTimingBaseline = shownOnly
+            ? baseline with { ShownAttackSpeed = baseline.ShownAttackSpeed + attackSpeed }
+            : baseline with { BaseAttackSpeed = baseline.BaseAttackSpeed + attackSpeed };
         RecomputeNpcAttackTiming(unit);
     }
 
@@ -149,12 +153,19 @@ public sealed partial class BuffLifecycle
         var baseAttackSpeed = double.IsFinite(baseline.BaseAttackSpeed) && baseline.BaseAttackSpeed > 0.0
             ? baseline.BaseAttackSpeed : 1.0;
         var effectiveAttackSpeed = Math.Max(AttackSpeedFloor, (baseAttackSpeed + additive) * multiplicative);
-        unit.AttackSpeedMod = effectiveAttackSpeed;
+        // Reconstruction (batch 760, owner request of 12 November 2026: "Make sure the turrets display the correct 1.083 value in the HUD but
+        // they keep shooting at the current pace"): the shown amount (a lane turret's assist bonus, 0 for every other unit) joins the
+        // replicated multiplier as any permanent amount would, but not the firing period. The 2011 footage shows lane turrets firing at the
+        // multiplier 1; what slowed the retail server is not known
+        var shownAttackSpeed = Math.Max(AttackSpeedFloor,
+            (baseAttackSpeed + baseline.ShownAttackSpeed + additive) * multiplicative);
+        unit.AttackSpeedMod = shownAttackSpeed;
         if (baseline.BasePeriod <= 0.0 || !double.IsFinite(baseline.BasePeriod)) return;
 
-        var period = Math.Clamp(baseline.BasePeriod / effectiveAttackSpeed, 0.4, 5.0);
-        unit.AttackPeriod = period;
-        unit.AttackWindup = period * Math.Max(0.0,
-            double.IsFinite(baseline.CastFraction) ? baseline.CastFraction : 0.0);
+        var castFraction = Math.Max(0.0, double.IsFinite(baseline.CastFraction) ? baseline.CastFraction : 0.0);
+        unit.AttackPeriod = Math.Clamp(baseline.BasePeriod / effectiveAttackSpeed, 0.4, 5.0);
+        // The stock 0x0D handler draws the cast frame after its own cast delay, the delay helper's period at the replicated
+        // mAttackSpeedMod times the cast fraction, so the hit waits that long: the period at the shown multiplier.
+        unit.AttackWindup = Math.Clamp(baseline.BasePeriod / shownAttackSpeed, 0.4, 5.0) * castFraction;
     }
 }

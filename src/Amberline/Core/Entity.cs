@@ -148,11 +148,15 @@ public static class TeamMapping
 /// after a non-hero attack-speed buff is removed.
 /// BasePeriod is the raw delay at multiplier 1.0; BaseAttackSpeed retains
 /// permanent or copied modifiers before this entity's active buff pool.
+/// ShownAttackSpeed is a permanent amount the unit replicates (and so the
+/// client's target bar and attack wind-up read) that its firing period leaves
+/// out: only a lane turret's assist bonus (batch 760).
 /// </summary>
 public readonly record struct AttackTimingBaseline(
     double BaseAttackSpeed,
     double BasePeriod,
-    double CastFraction);
+    double CastFraction,
+    double ShownAttackSpeed = 0.0);
 
 /// <summary>
 /// Mutable authoritative unit state. Champion-specific pending state remains in
@@ -428,6 +432,10 @@ public sealed partial class Entity
     /// </summary>
     public bool BuildingHealthRegenEnabled { get; set; } = true;
     public double ManaRegen { get; set; }
+    /// <summary>
+    /// The attack-speed multiplier the unit replicates (<c>mAttackSpeedMod</c>). For a non-hero it includes
+    /// <see cref="AttackTimingBaseline.ShownAttackSpeed"/>, which <see cref="AttackPeriod"/> leaves out (batch 760).
+    /// </summary>
     public double AttackSpeedMod { get; set; } = 1.0;
     public double AbilityPower { get; set; }
     public double CritChance { get; set; }

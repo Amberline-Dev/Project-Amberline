@@ -20,7 +20,7 @@ public static class AttackCadenceChecks
 {
     private const double Step = BbM3.Step;
 
-    private static double RecordPeriod(string character, double multiplier = 1.0)
+    internal static double RecordPeriod(string character, double multiplier = 1.0)
     {
         var raw = GameData.Default.Champion(character).Raw;
         var offset = raw.TryGetValue(InibinReader.KeyHash("Data*AttackDelayOffsetPercent"), out var value) && value.IsNumeric
@@ -28,12 +28,37 @@ public static class AttackCadenceChecks
         return Math.Clamp(1.6 * (1.0 + offset) / multiplier, 0.4, 5.0);
     }
 
-    private static double RecordCastFraction(string character)
+    internal static double RecordCastFraction(string character)
     {
         var raw = GameData.Default.Champion(character).Raw;
         var offset = raw.TryGetValue(InibinReader.KeyHash("Data*AttackDelayCastOffsetPercent"), out var value) && value.IsNumeric
             ? value.AsClientNumber() : 0.0;
         return Math.Max(0.0, 0.3 + offset);
+    }
+
+    // Batch 760: what the stock client makes of a replicated mAttackSpeedMod (the float at +0xB20, the live stat block's +0xEC). Its delay
+    // helper is clamp(1.6 x (1 + AttackDelayOffsetPercent) / mAttackSpeedMod, 0.4, 5); the target bar
+    // shows 1 / that delay; the 0x0D handler's cast delay is that delay x
+    // max(0, 0.3 + AttackDelayCastOffsetPercent).
+    internal static double ClientTargetBarAttackSpeed(string character, float attackSpeedMod) => 1.0 / RecordPeriod(character, attackSpeedMod);
+
+    internal static double ClientCastDelay(string character, float attackSpeedMod) =>
+        RecordPeriod(character, attackSpeedMod) * RecordCastFraction(character);
+
+    /// <summary>The mAttackSpeedMod (LOCAL1 bit 3, plaintext 31) of the block the production writer sends for <paramref name="turret"/>.</summary>
+    internal static float TurretBlockAttackSpeed(MatchRuntime runtime, Entity turret)
+    {
+        var queue = new BlockQueue();
+        new ProtocolCombatTransport(queue, runtime.HeroStats, _ => true, new ReplicationSyncCounter()).SendTurretStats(turret);
+        return System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(queue.Packets.Single().Plaintext.Span[31..]);
+    }
+
+    private sealed class BlockQueue : ICombatPacketQueue
+    {
+        public List<Amberline.Network.Protocol.PlaintextPacket> Packets { get; } = [];
+        public void Enqueue(Amberline.Network.Protocol.PlaintextPacket packet, bool global = false) => Packets.Add(packet);
+        public void EnqueueLifecycle(uint victimNetId, uint killerNetId, Func<uint, Amberline.Network.Protocol.PlaintextPacket> buildPacket) =>
+            Packets.Add(buildPacket(killerNetId));
     }
 
     /// <summary>The mean interval between the swings <paramref name="attacker"/> starts while <paramref name="swing"/> is asked every step.</summary>
@@ -62,6 +87,23 @@ public static class AttackCadenceChecks
         var steps = Math.Ceiling(period / Step - 1e-6) * Step;
         TestAssert.Near(steps, interval, 1e-6,
             $"{label}: one swing every {interval:0.0000} s, the record's period {period:0.0000} s ({1.0 / period:0.000} attacks per second) is {steps:0.0000} s in whole steps");
+    }
+
+    /// <summary>
+    /// Batch 760: the turret's block carries <paramref name="shown"/> as mAttackSpeedMod, so the client's target bar reads the record's
+    /// rate over it; the swings keep the record's period over <paramref name="firing"/>; the hit waits for the cast delay the client
+    /// derives from the block's value.
+    /// </summary>
+    private static void AssertShownAttackSpeed(MatchRuntime runtime, Entity turret, string character, double shown, double firing, string when)
+    {
+        var block = TurretBlockAttackSpeed(runtime, turret);
+        TestAssert.Near(shown, block, 1e-6, $"{turret.Name}'s replicated mAttackSpeedMod{when}");
+        TestAssert.Near(shown, turret.AttackSpeedMod, 1e-9, $"{turret.Name}'s shown attack-speed multiplier{when}");
+        TestAssert.Near(1.0 / RecordPeriod(character, shown), ClientTargetBarAttackSpeed(character, block), 1e-6,
+            $"{turret.Name}'s target-bar attack speed{when}");
+        TestAssert.Near(RecordPeriod(character, firing), turret.AttackPeriod, 1e-9, $"{turret.Name}'s firing period{when}");
+        TestAssert.Near(ClientCastDelay(character, block), turret.AttackWindup, 1e-6,
+            $"{turret.Name}'s wind-up is the client's cast delay from mAttackSpeedMod {block}{when}");
     }
 
     /// <summary>
@@ -102,6 +144,10 @@ public static class AttackCadenceChecks
     /// +0.3 IncPermanentPercentAttackSpeedMod no longer applies; before, the
     /// period was 1.2 s over 1.3. A buff's own attack speed still applies: SummonerFortify's shipped buff (BuffOnUpdateStats
     /// IncPercentAttackSpeedMod 1.0) doubles it while it lasts, 0.6 s, 18 steps. A lane melee minion swings at its record's 0.8 s.
+    /// Batch 760 (owner, 12 November 2026: "Make sure the turrets display the correct 1.083 value in the HUD but they keep shooting at the
+    /// current pace"): the +0.3 is the turret's displayed attack speed only. Its block carries mAttackSpeedMod 1.3 (2.3 under Fortify), the
+    /// client's target bar shows 1 / (1.2 / 1.3) = 1.083, and the hit waits for the wind-up the client draws from that value, while the
+    /// swings keep 1.2 s (0.6 s under Fortify).
     /// </summary>
     [Check("combat.summoners-rift-turret-and-minion-swing-at-their-record-period")]
     public static void SummonersRiftTurretAndMinionSwingAtTheirRecordPeriod()
@@ -122,17 +168,18 @@ public static class AttackCadenceChecks
         foreach (var other in new[] { match.Ally, match.Foe, match.FarFoe })
             other.Position = other.Team == Team.Order ? new Position2(400, 400) : new Position2(13900, 14000);
         AssertCadence(turret.Name, RecordPeriod(character), MeanInterval(match, turret, 12.0));
-        TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-9, $"{turret.Name}'s attack-speed multiplier without the assist bonus's +0.3");
         TestAssert.True(BbM3.Buff(turret, "PersonalTurretAssistBonus") is not null, $"{turret.Name} still holds PersonalTurretAssistBonus");
+        AssertShownAttackSpeed(match.Runtime, turret, character, 1.3, 1.0, "");
+        TestAssert.Near(1.083, Math.Round(ClientTargetBarAttackSpeed(character, TurretBlockAttackSpeed(match.Runtime, turret)), 3), 1e-9,
+            $"{turret.Name}: the client's target bar shows 1.083 attacks a second");
 
-        // Batch 759: Fortify's own +1.0 still joins the turret's attack speed (1 + 1 = 2), and leaves with the buff.
+        // Batch 759: Fortify's own +1.0 still joins the turret's attack speed and leaves with the buff; batch 760: on top of the shown 1.3 too.
         TestAssert.True(BbM3.ScriptBuff(match.Runtime, turret, "SummonerFortify", 7.0) is not null, "SummonerFortify's buff is added to the turret");
         AssertCadence(turret.Name + " under SummonerFortify", RecordPeriod(character, 2.0), MeanInterval(match, turret, 6.0));
-        TestAssert.Near(2.0, turret.AttackSpeedMod, 1e-9, $"{turret.Name}'s attack-speed multiplier under SummonerFortify");
+        AssertShownAttackSpeed(match.Runtime, turret, character, 2.3, 2.0, " under SummonerFortify");
         match.Advance(2.0);
         TestAssert.True(BbM3.Buff(turret, "SummonerFortify") is null, "SummonerFortify's buff has run out");
-        TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-9, $"{turret.Name}'s attack-speed multiplier after SummonerFortify");
-        TestAssert.Near(RecordPeriod(character), turret.AttackPeriod, 1e-9, $"{turret.Name}'s period after SummonerFortify");
+        AssertShownAttackSpeed(match.Runtime, turret, character, 1.3, 1.0, " after SummonerFortify");
 
         var minion = match.Runtime.Waves!.SpawnFixture(Team.Order, MinionType.Melee, 0, "C", 0.0, 0.0);
         minion.Position = new Position2(7000, 7000);
@@ -151,6 +198,9 @@ public static class AttackCadenceChecks
     /// turret itself, IncPermanentPercentAttackSpeedMod +0.3) gave 1.3 until then; retail footage shows the 1.2 s base period instead
     ///. The shrines, the Crystal Scar's shrines and the tutorial's two turrets
     /// (whose CharOnActivate adds only TurretDamageManager) were always 1. The expectation reads the shipped inibin, not the production tables.
+    /// Batch 760 (owner, 12 November 2026: the HUD shows 1.083, the turrets keep the current pace): an assisted turret's block carries the
+    /// +0.3 (mAttackSpeedMod 1.3, a target bar of 1.083 for the lane characters) and its hit waits for the client's wind-up from that value;
+    /// its swings keep the period at the multiplier 1.
     /// Each turret has a 1e7-health enemy minion 450 units toward the map's centre; the window ends before any wave arrives.
     /// The Crystal Scar's capture point guardians are DominionGuardianChecks' (they need a captured point).
     /// </summary>
@@ -204,10 +254,16 @@ public static class AttackCadenceChecks
                     var period = RecordPeriod(character);
                     var swings = starts[turret];
                     var interval = swings.Count >= 3 ? (swings[^1] - swings[0]) / (swings.Count - 1) : double.NaN;
+                    var block = TurretBlockAttackSpeed(runtime, turret);
                     Console.WriteLine($"map {mapId} {turret.Name} {character} {tier} assist={assisted} shipped {period:0.0000} s " +
-                                      $"({1.0 / period:0.000}/s) ours {interval:0.0000} s over {swings.Count} swings, AttackPeriod {turret.AttackPeriod:0.0000}");
+                                      $"({1.0 / period:0.000}/s) ours {interval:0.0000} s over {swings.Count} swings, AttackPeriod {turret.AttackPeriod:0.0000}, " +
+                                      $"mAttackSpeedMod {block}, target bar {ClientTargetBarAttackSpeed(character, block):0.000}/s, wind-up {turret.AttackWindup:0.0000} s");
                     TestAssert.True(swings.Count >= 3, $"map {mapId} {turret.Name} ({character}) swings at least three times in {Window} s ({swings.Count})");
                     AssertCadence($"map {mapId} {turret.Name} ({character}, {tier})", period, interval);
+                    AssertShownAttackSpeed(runtime, turret, character, assisted ? 1.3 : 1.0, 1.0, $" (map {mapId}, {character})");
+                    if (assisted)
+                        TestAssert.Near(1.083, Math.Round(ClientTargetBarAttackSpeed(character, block), 3), 1e-9,
+                            $"map {mapId} {turret.Name} ({character}): the client's target bar shows 1.083 attacks a second");
                 }
             }
         }
@@ -320,6 +376,10 @@ public static class AttackCadenceChecks
             $"map {mapId}: the first 0x0D is the next scan's TurnOnAutoAttack, not the acquiring scan's");
         // The client's wind-up: no extra time, so the shot leaves at the cast frame the server's hit is timed from.
         TestAssert.Equal(0x80, (int)shot.Bytes[9], $"map {mapId}: the turret's 0x0D announces no extra time (0x80), so its client draws the wind-up");
+        // Batch 760: the client's cast delay comes from the block's mAttackSpeedMod, 1.3 (the assist bonus's shown +0.3): 1.2 / 1.3 x 0.139.
+        TestAssert.Near(1.3, scene.BlockAttackSpeed, 1e-6, $"map {mapId}: {scene.Turret.Name}'s replicated mAttackSpeedMod");
+        TestAssert.Near(RecordPeriod(scene.Character, 1.3) * RecordCastFraction(scene.Character), scene.Turret.AttackWindup, 1e-6,
+            $"map {mapId}: {scene.Turret.Name}'s wind-up is the client's cast delay at 1.3");
         TestAssert.Near(serverLaunch, clientLaunch, 1e-6,
             $"map {mapId}: the client's cast frame (receipt + extra + {scene.ClientCastDelay:0.0000} s, the record's cast delay) is the server's launch");
     }
@@ -614,7 +674,8 @@ public static class AttackCadenceChecks
     /// IndividualTurretAssistBonus, the per-ally +0.05 that V1.0.0.114 removed, ships unreferenced. A shot the turret launches is a 0x0D no 0x39
     /// stops before its cast frame (a swing cancelled in its wind-up launches nothing); between two launched shots there is never less than the
     /// period, at either client, and each server swing is one 0x0D to each client. A row per situation: shots launched in it, their intervals
-    /// and targets.
+    /// and targets. Batch 760 (owner, 12 November 2026): the +0.3 is shown, not fired: the block carries 1.3 (target bar 1.083), the client
+    /// launches each shot after the wind-up it derives from 1.3, and the shots keep 1.2 s.
     /// </summary>
     [Check("combat.lane-turret-shots-keep-the-footage-period-in-every-situation", Serial = true, TimeoutSeconds = 600)]
     public static void LaneTurretShotsKeepTheFootagePeriodInEverySituation()
@@ -649,8 +710,9 @@ public static class AttackCadenceChecks
             setup();
             phases.Add((label, scene.Now));
             scene.Advance(seconds);
-            // Batch 759: the assist bonus's +0.3 does not apply, and no ally, target or switch moves the multiplier.
-            TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-9, $"map {mapId} {label}: {turret.Name}'s attack-speed multiplier");
+            // Batch 759: the assist bonus's +0.3 does not reach the firing period; batch 760: it is the shown multiplier's (1.3, a target bar
+            // of 1.083, the client's wind-up). No ally, target or switch moves either.
+            AssertShownAttackSpeed(scene.Runtime, turret, scene.Character, 1.3, 1.0, $" (map {mapId} {label})");
             TestAssert.Near(period, turret.AttackPeriod, 1e-9, $"map {mapId} {label}: {turret.Name}'s period");
             TestAssert.Equal(1, turret.Buffs.Count(buff => buff.Name == "PersonalTurretAssistBonus"),
                 $"map {mapId} {label}: {turret.Name} holds one PersonalTurretAssistBonus");
@@ -763,9 +825,10 @@ public static class AttackCadenceChecks
             Turret = Runtime.World.Entities.Values.Where(unit => unit.Team == Team.Chaos && TurretRules.IsLaneTurret(unit))
                 .OrderBy(unit => Distance(unit.Position)).First();
             Character = layout.TurretCharacter(layout.TurretTiers[Turret.Name], Team.Chaos);
-            // Every front lane character adds TurretAssistManager in its CharOnActivate (batch 670); since batch 759 its assist bonus adds no
-            // attack speed, so the client's delay helper reads the multiplier 1.
-            ClientCastDelay = RecordPeriod(Character) * RecordCastFraction(Character);
+            // Every front lane character adds TurretAssistManager in its CharOnActivate (batch 670). Batch 760: the client's delay helper reads
+            // the mAttackSpeedMod of the turret's block (1.3 with the assist bonus's shown +0.3), whatever the server's firing period.
+            BlockAttackSpeed = TurretBlockAttackSpeed(Runtime, Turret);
+            ClientCastDelay = AttackCadenceChecks.ClientCastDelay(Character, BlockAttackSpeed);
             var length = Math.Max(1.0, Distance(Turret.Position));
             _direction = ((centre.X - Turret.Position.X) / length, (centre.Z - Turret.Position.Z) / length);
             Diver = Runtime.Session.Participants[0].Hero!;
@@ -793,6 +856,8 @@ public static class AttackCadenceChecks
         public MatchRuntime Runtime { get; }
         public Entity Turret { get; }
         public string Character { get; }
+        /// <summary>The mAttackSpeedMod of the turret's block when the scene was built.</summary>
+        public float BlockAttackSpeed { get; }
         public double ClientCastDelay { get; }
         public Entity Diver { get; }
         public Entity Ally { get; }

@@ -514,10 +514,14 @@ internal sealed class BbSpellHost : IBbHost
                 // OnBuffActivate (and -0.2 in OnBuffDeactivate), which would make the turret's 1.2 s record period 0.923 s. Retail 2011
                 // footage shows lane and inhibitor turrets firing every 1.24 s (median 30 frames at 24.25 fps over 24 clean intervals),
                 // the 1.2 s period without it. Why the script's amount
-                // had no effect in retail is not known. Only this accessor of this buff is skipped: its armour and magic resist (+25),
-                // TurretAssistManager's +150 and backdoor updates, and every other attack-speed source (Fortify's buff) still apply.
-                if (HasFrame && string.Equals(Frame.ScriptName, "PersonalTurretAssistBonus", StringComparison.OrdinalIgnoreCase)) return;
-                BuffLifecycle.IncreaseNpcBaseAttackSpeed(pet, delta);
+                // had no effect in retail is not known. Batch 760 (owner request of 12 November 2026: "Make sure the turrets display the
+                // correct 1.083 value in the HUD but they keep shooting at the current pace"): the amount is the turret's shown attack speed
+                // only, so its block carries mAttackSpeedMod 1.3 (a target bar of 1.2 / 1.3 -> 1.083, and the client's 0.128 s wind-up the
+                // hit waits for) while it fires every 1.2 s. Only this
+                // accessor of this buff is affected: its armour and magic resist (+25), TurretAssistManager's +150 and backdoor updates, and
+                // every other attack-speed source (Fortify's buff) still apply as before.
+                BuffLifecycle.IncreaseNpcBaseAttackSpeed(pet, delta, shownOnly: HasFrame &&
+                    string.Equals(Frame.ScriptName, "PersonalTurretAssistBonus", StringComparison.OrdinalIgnoreCase));
                 break;
             case "FlatMagicDamageMod": pet.AbilityPower += delta; break;
             case "FlatMovementSpeedMod":

@@ -194,15 +194,18 @@ public static class TurretRules
         turret.AttackRange = selected.AttackRange;
         turret.AcquisitionRange = selected.AcquisitionRange;
         turret.MissileSpeed = selected.MissileSpeed;
-        // Every turret starts at the multiplier 1. Reconstruction (batch 759, "Match the footage"): PersonalTurretAssistBonus's
-        // IncPermanentPercentAttackSpeedMod 0.3 does not apply (BbSpellHost.PermanentOnPet), so the hand-written form adds none either
-        turret.AttackSpeedMod = 1.0;
+        // Every turret fires at the multiplier 1. Reconstruction (batch 759, "Match the footage"; batch 760, the owner's "display the correct
+        // 1.083 value in the HUD but they keep shooting at the current pace"): PersonalTurretAssistBonus's IncPermanentPercentAttackSpeedMod
+        // 0.3 is a lane turret's shown attack speed only (BbSpellHost.PermanentOnPet), so the hand-written form shows 1.3 too, fires at the
+        // record's period and lands its hit after the wind-up the client draws at 1.3 (docs/maintenance/2026-11-12-batch-759-turret-rate-footage.md,
+        // docs/maintenance/2026-11-12-batch-760-turret-display-rate.md). The shrine has no assist bonus.
+        var shown = scriptOwned || tier == TurretTier.Fountain ? 0.0 : 0.3;
+        turret.AttackSpeedMod = 1.0 + shown;
         var castFraction = selected.CastFraction ??
             (selected.AttackPeriod > 0.0 ? selected.Windup / selected.AttackPeriod : 0.0);
-        turret.AttackPeriod = Math.Clamp(selected.AttackPeriod / turret.AttackSpeedMod, MinAttackDelay, MaxAttackDelay);
+        turret.AttackPeriod = Math.Clamp(selected.AttackPeriod, MinAttackDelay, MaxAttackDelay);
         turret.AttackWindup = selected.Windup / turret.AttackSpeedMod;
-        turret.AttackTimingBaseline = new AttackTimingBaseline(
-            turret.AttackSpeedMod, selected.AttackPeriod, castFraction);
+        turret.AttackTimingBaseline = new AttackTimingBaseline(1.0, selected.AttackPeriod, castFraction, shown);
         // All eight lane-turret scripts grant these; shrine spells are separate. A script-owned unit gets them from
         // its own CharScript: IncPercentArmorPenetrationMod 0.2 of the UpdateSelfBuffStats sample and the
         // BBSetDodgePiercing(true) of CharOnActivate.

@@ -967,8 +967,13 @@ public static partial class ChampionLiveRegressionChecks
                     TestAssert.True(stats.Length > 0, "temporary turret stat changes reach each visible peer");
                     var raw = stats[^1].Plaintext.Span;
                     TestAssert.Near(expected, BinaryPrimitives.ReadSingleLittleEndian(raw[19..]), 1e-5);
-                    // mAttackSpeedMod: 1 since batch 759 (the assist bonus adds no attack speed).
-                    TestAssert.Near(1.0, BinaryPrimitives.ReadSingleLittleEndian(raw[31..]), 1e-6);
+                    // mAttackSpeedMod: the assist bonus's +0.3 is shown (batch 760) though it does not reach the firing period (batch 759): 1.3,
+                    // which the client's target bar reads as 1.083 attacks a second.
+                    var shown = BinaryPrimitives.ReadSingleLittleEndian(raw[31..]);
+                    TestAssert.Near(1.3, shown, 1e-6, "the turret block's mAttackSpeedMod");
+                    var character = MapDefinitions.TurretCharacter(MapDefinitions.TurretTiers[turret.Name], turret.Team);
+                    TestAssert.Near(1.083, Math.Round(AttackCadenceChecks.ClientTargetBarAttackSpeed(character, shown), 3), 1e-9,
+                        "the client's target bar shows 1.083 attacks a second");
                 }
             }
         }

@@ -307,20 +307,25 @@ public static class BuffLifecycleChecks
         TestAssert.Near(4.8, neutral.AttackPeriod, 1e-9);
         TestAssert.Near(0.5, neutral.AttackWindup, 1e-9);
 
+        // An outer lane turret in its hand-written form (no character script). Batch 759: it fires at the multiplier 1, period 1.2 s (the assist
+        // bonus's +0.3 does not reach the firing period). Batch 760: the +0.3 is its shown multiplier, 1.3 on the wire, and the wind-up is the
+        // client's cast delay at it, 1.2 / 1.3 x (0.3 - 0.161). A buff's haste joins both: Fortify fires every 0.6 s and shows 2.3.
         var turret = context.Entity(42, EntityKind.Turret, UnitType.Turret, Team.Order);
-        // Batch 759: a lane turret's native multiplier is 1 (the assist bonus's +0.3 does not apply), period 1.2 s.
-        turret.AttackSpeedMod = 1.0;
-        turret.AttackPeriod = 1.2;
-        turret.AttackWindup = 0.3;
-        turret.AttackTimingBaseline = new AttackTimingBaseline(1.0, 1.2, 0.3 / 1.2);
+        Amberline.Simulation.Combat.TurretRules.Initialize(turret, 0, GameData.Default);
+        const double castFraction = 0.3 - 0.161;
+        TestAssert.Near(1.3, turret.AttackSpeedMod, 1e-9, "a lane turret shows the assist bonus's 1.3");
+        TestAssert.Near(1.2, turret.AttackPeriod, 1e-9, "a lane turret fires at its record's 1.2 s");
+        TestAssert.Near(1.2 / 1.3 * castFraction, turret.AttackWindup, 1e-9, "the client's wind-up at 1.3");
         var fortify = context.Lifecycle.AddBuff(turret, "SummonerFortify", BuffType.Aura, 10,
             caster.NetId, new BuffPayload { AttackSpeedMod = 1.0 })!;
-        TestAssert.Near(2.0, turret.AttackSpeedMod, 1e-9,
-            "turret additive haste starts from its native 1.0 base");
-        TestAssert.Near(0.6, turret.AttackPeriod, 1e-9);
+        TestAssert.Near(2.3, turret.AttackSpeedMod, 1e-9,
+            "turret additive haste joins the shown 1.3");
+        TestAssert.Near(0.6, turret.AttackPeriod, 1e-9, "turret additive haste starts the firing period from its native 1.0 base");
+        TestAssert.Near(1.2 / 2.3 * castFraction, turret.AttackWindup, 1e-9, "the client's wind-up at 2.3");
         context.Lifecycle.RemoveBuff(turret, fortify.Slot);
-        TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-9);
+        TestAssert.Near(1.3, turret.AttackSpeedMod, 1e-9);
         TestAssert.Near(1.2, turret.AttackPeriod, 1e-9);
+        TestAssert.Near(1.2 / 1.3 * castFraction, turret.AttackWindup, 1e-9);
 
         var cripple = context.Lifecycle.AddBuff(neutral, "BlindMonkETwoMissile",
             BuffType.CombatDehancer, 5, caster.NetId, new BuffPayload
