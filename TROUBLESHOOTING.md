@@ -6,6 +6,7 @@ Every problem Amberline shows says what happened and what to do. Most also have 
 - [Windows warnings](#windows-warnings)
 - [Error codes](#error-codes): [network](#network-a-net), [files](#files-a-files), [data](#data-a-data),
   [certificate](#certificate-a-cert), [running](#running-a-run)
+- [Hiding a message](#hiding-a-message)
 - [Router problems](#router-problems): UPnP, a second router, a shared provider address, a VPN
 - [Messages without a code](#messages-without-a-code)
 - [For players](#for-players)
@@ -199,6 +200,17 @@ new game. If it happens again, choose **Open the support log** and send it with 
 - **This PC runs an Amberline that belongs to another Windows user, so this one cannot update it.** Sign in to Windows as that
   user and close Amberline there, then try again.
 
+## Hiding a message
+
+Each message under **Needs your attention** has a **Hide** button. Choose it to set a message aside. A rented server has no home router, so
+A-NET-02 and A-NET-03 can show all the time there; Hide clears them from the dashboard. A hidden message stays hidden after Amberline
+restarts, until its problem changes: if the problem goes away and comes back, or a different problem appears, the message shows
+again. A message about a game that was already running when Amberline started does not come back for that game.
+
+While something is hidden, the dashboard says how many are hidden, for example **2 messages hidden.**, with **Show them** under the list; choose it
+to show every hidden message again. Hidden messages do not make the warning at the top of the dashboard appear; the **Network** line
+says **2 hidden** instead.
+
 ## Router problems
 
 Players outside your home reach your PC through your router. Amberline asks your router to let them in, with a router feature
@@ -369,6 +381,12 @@ The details never show the server's address.
 
 Use the username and password from your host's message, or the ones you chose on the sign-up page. After too many wrong passwords, sign-in is blocked for 15 minutes.
 If you lost your password, ask your host: **Users**, **New password** makes a new one.
+
+### Queues
+
+- **The client says a queue is disabled** (its own queue-disabled message) although other queues work: the host has turned off too
+  many champions for that queue's bots, so it cannot start a game. Choose another queue, or ask the host to turn more champions on.
+  Host: in Settings, **Champions**, tick more champions and choose **Save**; the queue works again at once.
 
 ## Support log
 

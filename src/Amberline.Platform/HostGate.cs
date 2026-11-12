@@ -89,15 +89,19 @@ public sealed class HostSessions
 /// <c>Sec-Fetch-Site</c> absent, <c>same-origin</c> or <c>none</c> (the forms keep their antiforgery token too);</item>
 /// <item>a browser holding a session from <c>/open</c> (<see cref="HostSessions"/>).</item>
 /// </list>
-/// No CORS header is ever sent, so another site cannot read a host page either. Batch 656: the one exception is the friends' port's
-/// sign-up while Settings' switch is on (<see cref="HostSelfRegistration.Serves"/>), which keeps its own antiforgery token and limits.
+/// No CORS header is ever sent, so another site cannot read a host page either. Batch 656: the exceptions are the friends' port's
+/// sign-up while Settings' switch is on (<see cref="HostSelfRegistration.Serves"/>) and, batch 751, My account there
+/// (<see cref="HostAccountPage.Serves"/>), each with its own antiforgery token and limits.
 /// </summary>
 public static class HostGate
 {
-    /// <summary>The host's pages. Later host pages go under <c>/host</c>; <c>/</c> is the AIR client's public entry, never a host page.</summary>
+    /// <summary>
+    /// The host's pages. Later host pages go under <c>/host</c>; <c>/</c> is the AIR client's public entry, never a host page. Batch 751:
+    /// <c>/account</c> on the local port is the host's own, as <c>/register</c> is.
+    /// </summary>
     public static bool IsHostPath(PathString path) =>
         path.StartsWithSegments("/open") || path.StartsWithSegments("/setup") || path.StartsWithSegments("/manage") ||
-        path.StartsWithSegments("/register") || path.StartsWithSegments("/host");
+        path.StartsWithSegments("/register") || path.StartsWithSegments(HostAccountPage.PagePath) || path.StartsWithSegments("/host");
 
     public static bool SameOrigin(HttpRequest request)
     {

@@ -81,6 +81,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     // Reconstruction (owner, 1 November 2026: start Co-op as soon as the humans form a team; retail matched quickly): a Co-op team of
     // fewer than five starts once its first player has waited this long, so friends who queue at the same moment share it.
     private static readonly TimeSpan CoopGatherTime = TimeSpan.FromSeconds(5);
+    // NOT RETAIL (batch 751): the Co-op refusal while the host has turned off too many bot champions (AttachQueue).
+    private const string CoopTooFewBots = "This server has too few bot champions turned on for this queue.";
     // The patch-126 AIR client subtracts its three-second server timer buffer
     // from both values before showing the countdown (GameTypeConfig.SERVER_TIMER_BUFFER).
     // Reconstruction (owner decision, 18 October 2026). Retail's pick and post-pick lengths are the server's
@@ -452,6 +454,9 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                 if (_queue.FirstOrDefault(entry => entry.AccountId == player.Id) is { } old) LeaveQueue(old);
             if (_queue.Count + everyone.Length > QueueCapacity)
                 return AirGameDtos.QueueThrottled(rule.Id, "Queue capacity reached.");
+            // NOT RETAIL (batch 751): the host turned off so many Co-op bot champions (PlatformControls) that this unit's game cannot be filled.
+            if (rule.Type == "BOT" && CoopBotPool().Length < 2 * rule.TeamSize - everyone.Length)
+                return AirGameDtos.QueueFailure(rule.Id, CoopTooFewBots);
             // Batch 587, LeaverBuster: the unit waits out the longest low-priority delay among its players (PlatformAccounts.LeaverStatus),
             // so one penalised member delays the whole party. The client shows it in the ribbon's "Approx" wait, the join reply's
             // QueueInfo.waitTime; the matcher takes the unit only once it is matchable, behind everyone matchable before it.
@@ -819,6 +824,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             // the account holds (an unlocked account owns everything the server plays, not what it lacks a module for).
             if (!AirGameDtos.ChampionNames.ContainsKey(champion))
                 throw AirGameDtos.AllChampionNames.ContainsKey(champion) ? AirFault.NotOwned() : new ArgumentException("Unsupported champion.");
+            // NOT RETAIL (batch 751): a champion the host turned off (PlatformControls) is not newly picked; retail had no host switch. A pick
+            // made before the host saved stands (lock-in, the deadline and the launch do not ask again); Battle Training keeps its three.
+            if (game.ConfigId != AirGameDtos.BattleTrainingConfigId && !accounts.Controls.IsEnabled(champion))
+                throw new ArgumentException(PlatformAccounts.ChampionOff);
             // Batch 669: Battle Training's grid lists Garen, Ryze and Ashe, owned or not (AdvancedTutorialController.tutorialChampions,
             // ChampionSelectionController.setHardcodedChampionsToChoose clears restrictChampionOwnership), and nothing else.
             if (game.ConfigId == AirGameDtos.BattleTrainingConfigId ? !BattleTrainingChampions.Contains(AirGameDtos.ChampionNames[champion])
@@ -867,7 +876,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                 throw AirFault.SelectionClosed();
             var member = MemberFor(game, account);
             if (member.Champion != champion) throw new ArgumentException("Select this champion first.");
-            if (skin != 0 && !AirGameDtos.SkinIds(champion).Contains(skin)) throw new ArgumentException("Unsupported champion skin.");
+            // NOT RETAIL (batch 751): the host's skins switch is off (PlatformControls.PaidContentOff); retail always let an owned skin be chosen.
+            var skinsOff = accounts.Controls.PaidContentOff;
+            if (skin != 0 && skinsOff) throw new ArgumentException("Skins are turned off on this server.");
+            if (skin != 0 && !AirGameDtos.SkinIds(champion, skinsOff).Contains(skin)) throw new ArgumentException("Unsupported champion skin.");
             if (skin != 0 && !PlatformEconomy.OwnsSkin(accounts.Get(account), skin))
                 throw new ArgumentException("This champion skin is not owned.");
             member.Skin = skin == 0 ? 0 : skin - champion * 1000;
@@ -1022,6 +1034,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         {
             var game = RequireBotEditor(owner);
             if (!PlatformBots.IsBotEnabled(champion)) throw new ArgumentException("This champion is not available as a bot.");
+            // NOT RETAIL (batch 751): no new bot of a champion the host turned off (PlatformControls); a bot added before stays.
+            if (!accounts.Controls.IsEnabled(champion)) throw new ArgumentException(PlatformAccounts.ChampionOff);
             if (skillLevel is < 0 or > PlatformBots.MaxSkillLevel) throw new ArgumentException("Unsupported bot difficulty.");
             if (game.Members.Count + game.Bots.Count >= game.Capacity) throw AirFault.GameIsFull();
             if (TeamCount(game, team) >= TeamLimit(game)) throw AirFault.TeamIsFull();
@@ -1225,10 +1239,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                                 receipt?.Rewards?.GetValueOrDefault(member.Account.Id), accounts.EconomyRules,
                                 account => AirProfileDtos.Record(account, accounts.ResultsFor(account.Id), game.Queue?.Type), _clock.GetUtcNow(),
                                 receipt?.Ratings?.GetValueOrDefault(member.Account.Id)));
-                            Push(member.Account.Id, AirDtos.AccountBalanceNotification(member.Account));
+                            Push(member.Account.Id, AirDtos.AccountBalanceNotification(member.Account, accounts.Controls.PaidContentOff));
                             // The stock post-game refresh reloads summoner data,
                             // not boost inventory. Replace remaining win counts.
-                            Push(member.Account.Id, AirDtos.ActiveBoostsNotification(member.Account));
+                            Push(member.Account.Id, AirDtos.ActiveBoostsNotification(member.Account, accounts.Controls.PaidContentOff));
                         }
                         // NOT RETAIL: the host page's activity feed names a finished game by its map and the side that won (Order is Blue,
                         // Chaos is Red). It comes last in the block: a fault earlier in the block aborts the game, which names it ended early.
@@ -1380,8 +1394,12 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                 // A unit in a LeaverBuster wait is skipped until it is matchable, then queues behind every unit matchable before it
                 // (batch 587); MayMatch is batch 586's hook for any further per-account gate.
                 var now = _clock.GetUtcNow();
+                // NOT RETAIL (batch 751): a Co-op unit queued before the host turned bot champions off, which the pool can no longer fill on its
+                // own, is skipped (it waits, and does not hold the first team against units that can start); AttachQueue refuses new ones.
+                var bots = rule.Type == "BOT" ? CoopBotPool().Length : int.MaxValue;
                 var units = group.GroupBy(entry => entry.Party)
                     .Where(unit => unit.All(entry => entry.ReplySent && entry.MatchableAt <= now && MayMatch(entry.AccountId, entry.Joined)))
+                    .Where(unit => bots >= 2 * rule.TeamSize - unit.Count())
                     .OrderBy(unit => unit.Max(entry => entry.MatchableAt)).ThenBy(unit => unit.Key)
                     .Select(unit => unit.OrderBy(entry => entry.Sequence).ToArray()).ToArray();
                 if (rule.Ranked)
@@ -1398,11 +1416,23 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             }
     }
 
+    /// <summary>
+    /// The Co-op bots are retail 126's: the 18 champions whose game_bot_ name the client ships (ChampionCatalog.RetailBot), as far as the
+    /// server runs them. Reconstruction: which of them retail chose; here a random one per seat, no champion twice.
+    /// NOT RETAIL (batch 751): never one the host turned off (PlatformControls); retail had no host switch.
+    /// </summary>
+    private int[] CoopBotPool() => ChampionCatalog.All
+        .Where(c => c.RetailBot && PlatformBots.IsBotEnabled(c.Id) && accounts.Controls.IsEnabled(c.Id)).Select(c => c.Id).ToArray();
+
     private void StartQueueGame(QueueRule rule, List<QueueEntry>[] teams)
     {
+        var picked = teams.SelectMany(side => side).ToArray();
+        var coop = rule.Type == "BOT";
+        var pool = coop ? CoopBotPool() : [];
+        // A safety net: AttachQueue and MatchQueues already keep out a unit the pool cannot fill, so no game id is spent here for nothing.
+        if (coop && pool.Length < 2 * rule.TeamSize - picked.Length) return;
         var now = _clock.GetUtcNow();
         var id = accounts.AllocateGameId();
-        var picked = teams.SelectMany(side => side).ToArray();
         // Batch 571: each queue game has its own name. The stock client names its champion-select rooms after it (name + "_ta"/"_tb",
         // name + "_c1"/"_c2", see MayEnterRoom), so two games of one shared name shared their rooms. The id makes it unique, and the client
         // shows the name only in its "Game {0} either failed to start" notice (PG-0019, NewGameViews.as:730).
@@ -1413,18 +1443,13 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             ConfigId = rule.ConfigId,
             Created = now,
         };
-        var coop = rule.Type == "BOT";
         for (var side = 0; side < teams.Length; side++)
             foreach (var entry in teams[side])
                 game.Members.Add(OfferedSeat(new(accounts.Get(entry.AccountId), side == 0 ? Team.Order : Team.Chaos) { Joined = now }, rule.MapId));
         if (coop)
         {
-            // The Co-op bots are retail 126's: the 18 champions whose game_bot_ name the client ships (ChampionCatalog.RetailBot), as far
-            // as the server runs them. Reconstruction: which of them retail chose; here a random one per seat, no champion twice.
-            var pool = ChampionCatalog.All.Where(c => c.RetailBot && PlatformBots.IsBotEnabled(c.Id)).Select(c => c.Id).ToArray();
             Random.Shared.Shuffle(pool);
             var seats = Enumerable.Repeat(Team.Order, rule.TeamSize - picked.Length).Concat(Enumerable.Repeat(Team.Chaos, rule.TeamSize)).ToArray();
-            if (pool.Length < seats.Length) throw new InvalidOperationException("Too few bot champions for a Co-op vs. AI game.");
             var skill = picked[0].BotSkill;
             for (var seat = 0; seat < seats.Length; seat++)
                 game.Bots.Add(new(pool[seat], seats[seat], skill, OfferedBotSeat(PlatformBots.Seat(pool[seat], seats[seat], skill), rule.MapId)));
@@ -1469,7 +1494,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             for (var copy = 2; !taken.Add(name); copy++) name = $"{PlatformBots.MatchName(bot.Champion)} {copy}";
             return bot.Loadout with { Name = name, CanCheat = false };
         }).ToArray();
-        var players = humans.Concat(bots).ToArray();
+        // NOT RETAIL (batch 751): while the host's skins switch is off (PlatformControls.PaidContentOff) every seat, a human's skin chosen
+        // before the switch went off and a bot's alike, plays the default look; retail played the chosen skin. The saved loadout keeps its skin.
+        var skinsOff = accounts.Controls.PaidContentOff;
+        var players = humans.Concat(bots).Select(player => skinsOff ? player with { SkinId = 0 } : player).ToArray();
         var host = manager.CreateReserved(Guest(accounts.Get(game.Owner)), new(game.RequestId, players, game.MapId, game.Mode),
             game.Members.Select(m => Guest(m.Account)).ToArray(),
             id => accounts.PrepareMatch(new(game.Id, id, game.QueueId, game.Members.Select(m => m.Account.Id).ToArray(), players)));

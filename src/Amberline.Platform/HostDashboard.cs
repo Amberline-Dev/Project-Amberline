@@ -251,8 +251,14 @@ public sealed record DashboardGame(int Players, int Bots, string State, int Port
 /// <summary>One line of the network panel: <see cref="State"/> is ok, bad, unknown, waiting or checking.</summary>
 public sealed record DashboardCheck(string Id, string State, string Text);
 
-/// <summary>A "Needs your attention" card; <see cref="Action"/> names the page's button for it (firewall or network), or null.</summary>
-public sealed record DashboardCard(string Code, string Message, string WhatToDo, string? Action);
+/// <summary>
+/// A "Needs your attention" card; <see cref="Action"/> names the page's button for it (firewall or network), or null. <see cref="Subject"/> is the
+/// stable part of its identity with <see cref="Code"/> (batch 751: the firewall state, the router's check line, the certificate's thumbprint
+/// and state, a digest of the app folder and the problem's kind (never the folder's path: the page shows subjects), the drive and its state,
+/// the code alone); "" for a card that keeps its own Hide (A-NET-09, A-NET-10, A-RUN-01), which
+/// the page does not hide generically.
+/// </summary>
+public sealed record DashboardCard(string Code, string Message, string WhatToDo, string? Action, string Subject = "");
 
 public sealed record DashboardPerson(string Username, string Summoner, string Doing, string Since);
 
@@ -280,7 +286,7 @@ public sealed record DashboardBoard(DashboardGameCard[] Cards, string? Lobbies);
 public sealed record DashboardStatus(string State, DateTimeOffset Since, string Headline, string Address, string Network, string Friend,
     DashboardCheck[] Checks, DashboardPerson[] Online, int GamesRunning, int GamesMax, string[] Games, DashboardCard[] Attention,
     string[]? Guide, int OnlineCount, bool SignUpsOpen, string? SignUpLink, string? PublicHost, DashboardGameCard[] Cards, string? Lobbies,
-    DashboardEvent[] Activity);
+    DashboardEvent[] Activity, string? Hidden = null);
 
 /// <summary>
 /// NOT RETAIL: the home host's dashboard (Amberline Host design, section 2.3; retail had no host page). Under <c>/host</c>, behind
@@ -335,7 +341,8 @@ public sealed class HostDashboard : IAsyncDisposable
         var program = platformProgram ?? Environment.ProcessPath!;
         Network = new HostNetworkPanel(loop.Network,
             () => HostFirewall.Rules(program, settings.ServerExecutable, settings.RemotePort, settings.FirstGamePort, _maxGames()), RouterPorts, () => HomeOnly);
-        Attention = new HostAttention(loop, games, Network.TestAsync);
+        Hidden = new HostHidden(loop.Paths.Data);
+        Attention = new HostAttention(loop, games, Network.TestAsync, Hidden);
     }
 
     /// <summary>The game ports in the page's words: "UDP 5219" for one game, else "UDP 5219 to 5222".</summary>
@@ -360,6 +367,9 @@ public sealed class HostDashboard : IAsyncDisposable
     public void TestAgain() => _testing = Task.WhenAll(_testing, TestInBackgroundAsync());
 
     public HostNetworkPanel Network { get; }
+
+    /// <summary>NOT RETAIL (batch 751): the cards the host hid from Needs your attention, saved in host\state.json (shared with the support cards).</summary>
+    public HostHidden Hidden { get; }
 
     /// <summary>The start checks' cards (H9: the app's files, the certificate, a VPN, the address change).</summary>
     public HostAttention Attention { get; }
@@ -412,6 +422,25 @@ public sealed class HostDashboard : IAsyncDisposable
             await Network.TestAsync(context.RequestAborted);
             return Results.Redirect(PagePath);
         });
+        // NOT RETAIL (batch 751): Hide on a Needs-your-attention card. Its code and subject stay in host\state.json until its problem changes;
+        // Show them clears every hidden card. Retail had no such list.
+        app.MapPost(PagePath + "/hide", async (HttpContext context, IAntiforgery antiforgery) =>
+        {
+            if (!await antiforgery.IsRequestValidAsync(context)) return Expired;
+            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            var code = form["code"].ToString();
+            var subject = form["subject"].ToString();
+            // Subjects are short (a state, a check line, a digest, a thumbprint, a drive); 1024 bounds what one form can save.
+            if (!HostHidden.Hideable(code) || subject.Length is 0 or > 1024) return Results.BadRequest();
+            Hidden.Add(code, subject);
+            return Results.Redirect(PagePath);
+        });
+        app.MapPost(PagePath + "/show-hidden", async (HttpContext context, IAntiforgery antiforgery) =>
+        {
+            if (!await antiforgery.IsRequestValidAsync(context)) return Expired;
+            Hidden.Clear();
+            return Results.Redirect(PagePath);
+        });
     }
 
     /// <summary>The host chose Only people on my home network (H6's address step, <see cref="HostAddress.Lan"/>).</summary>
@@ -427,23 +456,28 @@ public sealed class HostDashboard : IAsyncDisposable
         var homeOnly = HomeOnly;
         var checks = new List<DashboardCheck>();
         var cards = new List<DashboardCard>();
-        void Add(string id, string state, string text, string? code = null, string? whatToDo = null, string? action = null)
+        // Batch 751: the lines whose card the host hid; they do not count toward the headline's warning or the network line.
+        var hiddenChecks = new HashSet<string>();
+        void Add(string id, string state, string text, string? code = null, string? whatToDo = null, string? action = null, string subject = "")
         {
             checks.Add(new(id, state, text));
-            if (code is not null) cards.Add(new(code, text, whatToDo!, action));
+            if (code is null) return;
+            cards.Add(new(code, text, whatToDo!, action, subject));
+            if (Hidden.Contains(code, subject)) hiddenChecks.Add(id);
         }
 
         Add("listening", "ok", "Amberline is listening on this PC");
         var firewallOk = false;
         if (Network.Off) Add("firewall", "unknown", "Amberline did not check Windows Firewall");
-        else if (net.FirewallCard is { } card) Add("firewall", "bad", card.Message, card.Code, card.WhatToDo, card == HostNetworkPanel.Declined ? "firewall" : null);
+        else if (net.FirewallCard is { } card) Add("firewall", "bad", card.Message, card.Code, card.WhatToDo, card == HostNetworkPanel.Declined ? "firewall" : null,
+            card == HostNetworkPanel.Declined ? "Declined" : "Refused");
         else if (net.Firewall is not { } firewall) Add("firewall", "checking", "Checking Windows Firewall");
         else if (firewall == FirewallState.Allowed) { firewallOk = true; Add("firewall", "ok", "Windows Firewall lets players in"); }
         else
         {
             var problem = HostFirewall.Problem(firewall)!;
             Add("firewall", firewall == FirewallState.Unreadable ? "unknown" : "bad", problem.Message, problem.Code, problem.WhatToDo,
-                firewall switch { FirewallState.Blocked => null, FirewallState.Unreadable => "network", _ => "firewall" });
+                firewall switch { FirewallState.Blocked => null, FirewallState.Unreadable => "network", _ => "firewall" }, firewall.ToString());
         }
 
         var routerOk = false;
@@ -454,7 +488,9 @@ public sealed class HostDashboard : IAsyncDisposable
         else if (!net.RouterDone || net.HomeOnly) Add("router", "checking", "Looking for your router");
         else if ((net.RouterProblem ?? net.Router?.RenewalProblem) is { } refused)
         {
-            Add("router", "bad", refused.Message, refused.Code, refused.WhatToDo, "network");
+            // Batch 751 final review: the subject is the check line, so the router's A-NET-03 (no answer) and the address line's A-NET-03 (no
+            // internet address) are two problems: hiding one never hides the other.
+            Add("router", "bad", refused.Message, refused.Code, refused.WhatToDo, "network", "router");
             guide = Guide(net);
         }
         else
@@ -477,7 +513,7 @@ public sealed class HostDashboard : IAsyncDisposable
             else
             {
                 var problem = WanAddress.Problem(kind)!;
-                Add("address", "bad", problem.Message, problem.Code, problem.WhatToDo, kind == WanAddressClass.None ? "network" : null);
+                Add("address", "bad", problem.Message, problem.Code, problem.WhatToDo, kind == WanAddressClass.None ? "network" : null, "address");
             }
         }
         else if (Network.Off) Add("address", "unknown", "Amberline did not ask your router for its internet address");
@@ -493,13 +529,18 @@ public sealed class HostDashboard : IAsyncDisposable
         else Add("friend", "waiting", "Waiting for the first player to start the Play file.");
 
         var checking = checks.Any(check => check.State == "checking");
-        var bad = checks.Count(check => check.State == "bad");
+        var open = checks.Where(check => !hiddenChecks.Contains(check.Id)).ToArray();
+        var bad = open.Count(check => check.State == "bad");
         var canJoin = firewallOk && (homeOnly || routerOk && addressOk || fromInternet is not null);
+        // Batch 751: a problem the host hid is not a warning; with nothing else open, the headline says no more than that the dashboard runs.
+        // The address line is "unknown" with no card when the router was not found; while the router's own card is hidden, that line is not a warning.
+        var warned = open.Any(check => check.State == "bad" || check.State == "unknown" && !(check.Id == "address" && hiddenChecks.Contains("router")));
         var headline = $"Running since {Clock(_since, now)}." + (canJoin ? " Players can join."
-            : checking ? " Checking whether players can reach you." : " Players may not be able to join: see Needs your attention.");
+            : checking ? " Checking whether players can reach you." : warned ? " Players may not be able to join: see Needs your attention." : "");
         var network = checking ? "Network: checking"
             : bad > 0 ? $"Network: {Count(bad, "thing")} {(bad == 1 ? "needs" : "need")} your attention"
-            : checks.Any(check => check.State == "unknown") ? "Network: some checks could not run"
+            : hiddenChecks.Count > 0 ? $"Network: {hiddenChecks.Count} hidden"
+            : open.Any(check => check.State == "unknown") ? "Network: some checks could not run"
             : "Network: all checks passed";
         // The address step changes the saved address without a restart, so the steps' value is the one friends are given.
         var saved = _steps is null ? _settings.PublicHost : _steps.PublicHost;
@@ -511,6 +552,14 @@ public sealed class HostDashboard : IAsyncDisposable
         var friend = last is { } at ? $"Last player connected {Ago(now - at)}" : "No player has connected yet";
         cards.AddRange(Attention.Cards(now, net));
         if (Support is not null) cards.AddRange(Support.Cards(homeOnly));
+        // Batch 751: a check that ran in this pass forgets the hidden entries of its cards that it did not raise, so the same problem shows again later.
+        void Settle(string code) => Hidden.Keep(code, subject => cards.Any(card => card.Code == code && card.Subject == subject));
+        if (!Network.Off && net.Firewall is not null) Settle("A-NET-02");
+        if (!homeOnly && !Network.Off && net.RouterDone && !net.HomeOnly)
+            foreach (var code in new[] { "A-NET-03", "A-NET-04", "A-NET-05", "A-NET-06", "A-NET-07" }) Settle(code);
+        // The VPN card is raised whenever the router test is done (HostAttention.Cards), the home network only too, so it settles then.
+        if (net.RouterDone) Settle("A-NET-08");
+        var visible = cards.Where(card => !Hidden.Contains(card.Code, card.Subject)).ToArray();
         var games = _games();
         var people = _online();
         // DIAGNOSTICS: the board holds the made-up games while the switch is on (Board), so the cards, the count and the tile agree.
@@ -521,14 +570,16 @@ public sealed class HostDashboard : IAsyncDisposable
         // one Users, Settings, Add a user and the Play file give (the router's public address shows only in the Address line above).
         var publicHost = string.IsNullOrWhiteSpace(saved) ? null : saved;
         var signUpLink = _signUp?.Url(publicHost);
+        var hiddenCount = Hidden.Count;
         return new DashboardStatus("running", _since, headline, address, network, friend, [.. checks],
             [.. people.Select(row => new DashboardPerson(row.Username, row.Summoner, row.Doing, row.Since))],
             games.Count + demo, _maxGames(),
             [.. games.Select((game, index) => $"Game {index + 1} · {Count(game.Players, "player")}" +
                 (game.Bots > 0 ? $" and {Count(game.Bots, "bot")}" : "") + " · " + StateWords(game.State))],
-            [.. cards], guide, people.Length, _signUp is { On: true }, signUpLink, publicHost,
+            visible, guide, people.Length, _signUp is { On: true }, signUpLink, publicHost,
             [.. board.Cards.Select(card => card with { ElapsedSeconds = Elapsed(card.Since, now) })], board.Lobbies,
-            [.. _loop.Activity.Recent().Select(entry => new DashboardEvent(entry.At, entry.Text, Clock(entry.At, now)))]);
+            [.. _loop.Activity.Recent().Select(entry => new DashboardEvent(entry.At, entry.Text, Clock(entry.At, now)))],
+            hiddenCount > 0 ? $"{Count(hiddenCount, "message")} hidden." : null);
     }
 
     public async ValueTask DisposeAsync()
@@ -704,7 +755,9 @@ public sealed class HostDashboard : IAsyncDisposable
         <button type=submit class=secondary>Allow through Windows Firewall</button>
         <p class=tip>Windows asks once, for Windows Command Processor: choose Yes.</p></form>
         <form method=post action={{PagePath}}/network data-action=network hidden{{HostPages.Wait("Testing your network. This takes up to a minute.")}}>{{token}}<button type=submit class=secondary>Test again</button></form>
-        {{HostAttention.Forms(token)}}{{HostSupport.Forms(token)}}</section>
+        {{HostAttention.Forms(token)}}{{HostSupport.Forms(token)}}
+        <template id=hide-template><form method=post action={{PagePath}}/hide>{{token}}<input type=hidden name=code><input type=hidden name=subject><button type=submit class=secondary>Hide<span class=vh> this message</span></button></form></template>
+        <div id=hidden-line class=hidden-line hidden><p id=hidden-count class=tip></p><form method=post action={{PagePath}}/show-hidden>{{token}}<button type=submit class=secondary>Show them</button></form></div></section>
         <div class=tiles><div class=tile id=tile-online><b id=tile-online-count>…</b><span>Online</span></div><div class=tile id=tile-games><b id=tile-games-count>…</b><span>Games running</span></div><div class=tile id=tile-signups><b id=tile-signups-state>…</b><span>Sign-ups</span></div></div>
         <div class=buttons>{{HostPlay.Button(token)}}<button type=button data-copy=signup-link id=copy-signup hidden>Copy sign-up link</button> <button type=button data-copy=address-value id=copy-address hidden>Copy address</button> <a class="button secondary" href={{HostInvite.AddPath}}>Add a user</a><span id=signup-link class=vh></span><span id=address-value class=vh></span><span id=copy-status role=status class=tip></span></div>
         <noscript><p class=problem>This page needs JavaScript to show its status, games and activity.</p></noscript>

@@ -250,6 +250,9 @@ or delete. It is kept while Amberline runs and starts empty after a restart. It 
 
 **Server details** is an open section below them, which you can fold; it holds **Status**, **Online now**, **Network** and the router guide.
 
+Every card under **Needs your attention** also has **Hide**, which sets it aside until its problem changes. See
+[Hiding a message](TROUBLESHOOTING.md#hiding-a-message).
+
 **Status** shows what Amberline is doing, for example **Running since 18:02. Players can join.**, your address, and when a player
 last connected. Until the first status comes in, the page says **Checking…**. **Stop Amberline** and **Restart Amberline** ask
 first, and say how many games are running: stopping or restarting ends them for everyone; **Cancel** keeps Amberline running.
@@ -324,7 +327,8 @@ on the sign-up page is marked **Signed up**, and a user whose access you turned 
 Your own login is not in the list: it is the one you play with, and [Advanced](#advanced) sets its password.
 
 Above the list are **Add a user**, **Get the Play file** (once your address is known) and **Copy sign-up link** (while sign-ups are on).
-Type in **Search users** to filter the list as you type.
+Type in **Search users** to filter the list as you type. **Copy the My account link** copies the address where users change their own
+password or delete their login (see [My account](#my-account)).
 
 - **New password**: for a user who lost theirs. The old password stops working at once, and the user is logged out. The new one is
   shown once, in a message to send.
@@ -374,6 +378,14 @@ leaves it without saving; after **Save** Settings says **Saved.**
 - **Updates**: whether the daily check is on; **Change the update check** opens the [Updates](#updates) page.
 - **Play file**: **Download the Play file**, and **Make new Play files**, which makes a new certificate and restarts: every
   user's Play file stops working, so send them all the new one. It asks first; **Cancel** comes back to Settings.
+- **Skins and RP**: **Offer skins and RP** is ticked at first. Untick it and choose **Save** to turn skins and RP off: everyone plays
+  the default looks, the store shows no skins and no RP anywhere, and nothing can be bought or given with RP. Nothing anyone owns is
+  removed; tick the box again to bring everything back.
+- **Champions**: a box for every champion. Untick one and choose **Save** to turn it off: players cannot pick it, and bots do not take
+  it. A champion already picked in a champion select that is under way, or in a game that is running, stays. Users see a turned-off
+  champion greyed out after they next sign in. **Tutorials keep their own champions**: the tutorial's three fixed champions stay
+  available there even when they are turned off (the list marks them). If too few champions are on for a queue's bots, players are
+  told that queue cannot start (see [Queues](TROUBLESHOOTING.md#queues)).
 - **Sign-ups**: see below.
 - **Game files**: see below.
 - **Cheat commands**: every login on your server, yours included (marked **(you)**), with a box each. A ticked login can use the
@@ -397,6 +409,19 @@ like; Add a user shows it too.
   in an hour.**
 - New logins appear in [Users](#users), where **Disable** stops one. Untick the box and **Save** to close the page at
   once; nothing else of Amberline is ever on that port.
+
+### My account
+
+Users can change their own password and delete their own login at `https://<your address>:<the public port>/account`, the address
+the sign-up page uses. The page is there whether or not sign-ups are open.
+
+- **Change password**: the user types their username, their current password and a new password twice (at least 10 characters). They
+  are signed out of the game client and sign in again with the new password. A game already running goes on.
+- **Delete my account**: the user types their username and password and ticks **I understand this deletes my login and cannot be
+  undone**. Their login goes for good; their past games stay, under their name. It is refused while they are in a lobby or a game: they
+  try again once it has ended.
+- A wrong username or password gets the same message, **That name and password do not match.**, whichever one is wrong.
+- Your own login can change its password on that page, but it cannot be deleted there.
 
 ### Game files
 

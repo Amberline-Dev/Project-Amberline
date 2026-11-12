@@ -94,6 +94,7 @@ public static class AirPasswordResetChecks
         const string oldPassword = "Synthetic-old-Pw-41";
         const string newPassword = "Synthetic-new-Pw-82";
         const string newerPassword = "Synthetic-newer-Pw-93";
+        const string newestPassword = "Synthetic-newest-Pw-27";
         var root = Path.Combine(Path.GetTempPath(), "league-air-password-reset-" + Guid.NewGuid().ToString("N"));
         var log = new AirReportChecks.CapturedLog();
         try
@@ -136,12 +137,35 @@ public static class AirPasswordResetChecks
             TestAssert.False(sessions.Resume("rtmp-back", friend.Username, parked.Token), "the parked session is gone");
             TestAssert.Equal(HttpStatusCode.OK, await host.LogIn("reset_target", newerPassword));
 
+            // Batch 751 final review: a token file that cannot be written just now (a scanner holding it) never leaves the player logged in:
+            // the sessions end first, and the page says the token's end could not be saved. Make them log in again says so too.
+            var held = sessions.Login("rtmp-held", friend.Username, sessions.IssueTicket(friend), Version);
+            TestAssert.True(sessions.AuthenticateChannel("rtmp-held", friend.Username, held.Token));
+            access.Issue(friend.Id);
+            using (new FileStream(Path.Combine(root, "remote", "remote-access.json"), FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                using var unsaved = await host.Reset(friend.Id, newestPassword, newestPassword);
+                TestAssert.Equal(HttpStatusCode.Redirect, unsaved.StatusCode, "a token file that cannot be written is no failure");
+                TestAssert.Equal("/manage?refresh=off&password=unsaved", unsaved.Headers.Location?.OriginalString);
+                TestAssert.True(sessions.AccountForConnection("rtmp-held") is null, "the live session ended although the token file could not be written");
+                using var revoke = await host.Client.PostAsync("/manage/remote-revoke", new FormUrlEncodedContent(
+                    new Dictionary<string, string> { ["accountId"] = friend.Id.ToString(), [host.Token.Key] = host.Token.Value }));
+                TestAssert.Equal(HttpStatusCode.Redirect, revoke.StatusCode, "Revoke remote access with a file that cannot be written is no failure");
+                TestAssert.Equal("/manage?revoke=unsaved", revoke.Headers.Location?.OriginalString);
+            }
+            TestAssert.True((await host.Client.GetStringAsync("/manage?revoke=unsaved")).Contains("The token ended, but that could not be saved just now",
+                StringComparison.Ordinal), "the page says the revoke could not be saved");
+            TestAssert.True((await host.Client.GetStringAsync("/manage?refresh=off&password=unsaved")).Contains(
+                "The password was changed and the player was logged out, but the end of their remote-access token could not be saved just now.",
+                StringComparison.Ordinal), "the page says what could not be saved");
+            TestAssert.Equal(HttpStatusCode.OK, await host.LogIn("reset_target", newestPassword), "the new password logs in");
+
             if (!checkLogs) return;
             var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Where(path => !path.EndsWith(".lock", StringComparison.Ordinal))
                 .Select(path => (path, File.ReadAllText(path))).ToArray();
             TestAssert.True(files.Any(file => file.path.EndsWith("accounts.json", StringComparison.Ordinal)), "the account store was written");
             TestAssert.True(log.Text.Contains("/manage/password", StringComparison.Ordinal), "the web host log saw the requests");
-            foreach (var secret in new[] { newPassword, newerPassword })
+            foreach (var secret in new[] { newPassword, newerPassword, newestPassword })
             {
                 TestAssert.False(log.Text.Contains(secret, StringComparison.Ordinal), "the new password never reaches the web host log");
                 foreach (var (path, text) in files)

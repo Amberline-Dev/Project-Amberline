@@ -65,6 +65,7 @@ public static class HostInvite
         PlatformGames? games = null, AirXmppHost? chat = null)
     {
         string Name() => serverName() ?? DefaultName;
+        var removal = new UserRemoval(loop, accounts, games, sessions, remoteAccess, chat);
         // Batch 657: a failed read must not drop the host's id, or Users would list the host's own login and let a button change it.
         long? HostAccount() => HostMode.ReadStrict(loop.Paths.Settings).HostAccount;
         bool HomeOnly() => HostMode.ReadOrDefault(loop.Paths.Settings).AddressSource == HostAddress.Lan;
@@ -162,34 +163,17 @@ public static class HostInvite
         });
         app.MapPost(UsersPath + "/delete", (HttpContext context, IAntiforgery antiforgery) => ActAsync(context, antiforgery, (user, token) =>
         {
-            switch (games?.DeleteAccount(user.Id) ?? accounts.Delete(user.Id))
+            // Batch 751: the steps are UserRemoval's, which My account's Delete my account runs too; the page says which could not be saved.
+            var removed = removal.Delete(user, $"{user.Username} deleted");
+            switch (removed.Outcome)
             {
                 case DeleteOutcome.NotFound: return Gone;
                 case DeleteOutcome.InGame:
                     return HostMode.Page($"<h1>{WebUtility.HtmlEncode(user.Username)} is in a lobby or a game</h1><p>Try again once they have left the lobby or the game has ended.</p>" +
                         $"<p><a href={UsersPath}>Back to Users</a></p>", StatusCodes.Status409Conflict);
             }
-            // The login is gone; history keeps its names (DeletedAccount). Its sessions end first, in memory, so nothing below can leave it
-            // logged in; then its chat streams and each file that names it are tidied in steps of their own, so one that cannot be saved just
-            // now does not keep the others, and the page says which.
-            sessions.EndAccount(user.Id);
-            loop.Activity.Add($"{user.Username} deleted");
-            var unsaved = new List<string>();
-            void Tidy(string what, Action step)
-            {
-                try { step(); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SettingsUnreadableException)
-                {
-                    // The log names no user: it reaches the support log, which a host may paste in public.
-                    Console.Error.WriteLine($"Amberline deleted a user but could not save {what}: {ex.Message}");
-                    unsaved.Add(what);
-                }
-            }
-            Tidy("their remote sign-in", () => remoteAccess.Revoke(user.Id));
-            Tidy("their chat contacts", () => chat?.Forget(user.Id));
-            Tidy("the Cheat commands list", () => ClearCheats(user.Id));
             return HostMode.Page(UsersPage(token, $"{user.Username} is deleted.", done: true,
-                unsaved.Count == 0 ? null : $"Amberline could not save every change just now: {string.Join(", ", unsaved)}."));
+                removed.Unsaved.Count == 0 ? null : $"Amberline could not save every change just now: {string.Join(", ", removed.Unsaved)}."));
         }));
 
         // A row's action: the antiforgery check and the user its form names, then the action, or the page that says why there is none.
@@ -211,27 +195,10 @@ public static class HostInvite
             return accounts.Find(accountId) is { } user ? (user, null) : (null, Gone);
         }
 
-        // The sessions end first, in memory: a token file that cannot be written must never leave the user logged in. The token is then
-        // revoked on a step of its own, as Delete's tidy-up does: a write that fails is logged and said on the page (the warning), never a
-        // failed action, and the token is gone from memory all the same; after a restart the tunnel still refuses a disabled login's token
-        // (AirRemoteAccess.Allowed).
-        string? LogOut(long id)
-        {
-            sessions.EndAccount(id);
-            try { remoteAccess.Revoke(id); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                Console.Error.WriteLine($"Amberline could not save a user's remote sign-in: {ex.Message}");
-                return "Amberline could not save every change just now: their remote sign-in.";
-            }
-            return null;
-        }
+        // UserRemoval.LogOut: a revoke that could not be saved is said on the page (the warning), never a failed action.
+        string? LogOut(long id) => removal.LogOut(id) ? null : "Amberline could not save every change just now: their remote sign-in.";
 
-        // Owner, 4 November 2026: Disable also clears the user's Cheat commands tick. It runs after every way in has ended, so a settings file
-        // that cannot be read (the page then says so) never leaves a session open; Enable clears a tick such a failure left, so a returning
-        // user never has cheats the host did not tick again; Delete clears it as the login goes.
-        void ClearCheats(long id) => HostMode.Change(loop.Paths.Settings, saved => saved.CheatLogins().Contains(id)
-            ? saved with { CheatAccounts = [.. saved.CheatLogins().Where(other => other != id)], AllowCheats = false } : saved);
+        void ClearCheats(long id) => removal.ClearCheats(id);
 
         // unsaved: a warning under the notice (a delete whose tidy-up could not save every file).
         string UsersPage(string token, string? note = null, bool done = false, string? unsaved = null)
@@ -270,12 +237,17 @@ public static class HostInvite
             }
             var shown = (note is null ? "" : done ? $"<p class=notice role=status>{WebUtility.HtmlEncode(note)}</p>" : HostPages.Errors((note, null))) +
                 (unsaved is null ? "" : $"<p class=warn>{WebUtility.HtmlEncode(unsaved)}</p>");
-            // Copy sign-up link, while sign-ups are on and the address is known (the script shows it: it copies the hidden link's text).
+            // Copy sign-up link, while sign-ups are on and the address is known (the script shows it: it copies the hidden link's text). Batch 751:
+            // Copy the My account link the same way, once the address is known (My account is served whether sign-ups are on or off).
             var address = publicHost();
-            var copy = signUp?.Url(address) is { } link
-                ? "<button type=button class=secondary data-copy=signup-link data-needs-script hidden>Copy sign-up link</button>" +
-                  $"<span id=signup-link class=vh>{WebUtility.HtmlEncode(link)}</span><span id=copy-status role=status class=tip></span>"
-                : "";
+            var copy = (signUp?.Url(address) is { } link
+                    ? "<button type=button class=secondary data-copy=signup-link data-needs-script hidden>Copy sign-up link</button>" +
+                      $"<span id=signup-link class=vh>{WebUtility.HtmlEncode(link)}</span>"
+                    : "") +
+                (address is null ? ""
+                    : "<button type=button class=secondary data-copy=account-link data-needs-script hidden>Copy the My account link</button>" +
+                      $"<span id=account-link class=vh>{WebUtility.HtmlEncode($"https://{address}:{remotePort}{HostAccountPage.PagePath}")}</span>");
+            if (copy.Length != 0) copy += "<span id=copy-status role=status class=tip></span>";
             // Get the Play file, once the address is known and Amberline's template is there: else the link would download an error page.
             var play = address is not null && File.Exists(Template(loop))
                 ? $"<a class=\"button secondary\" href={PlayFilePath} download>Get the Play file</a>" : "";

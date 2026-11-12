@@ -71,6 +71,8 @@ public static partial class PlatformStore
         app.MapGet("/store/rp", (HttpContext context) =>
         {
             var access = RequireOrOpen(context, sessions);
+            // NOT RETAIL (batch 751): no Get RP page while the host's "Offer skins and RP" switch is off; a link to it lands in the store.
+            if (accounts.Controls.PaidContentOff) return Results.Redirect("/store/home");
             var account = accounts.Get(access.AccountId);
             return Results.Content(RenderRpInformation(account), "text/html; charset=utf-8");
         });
@@ -136,10 +138,11 @@ public static partial class PlatformStore
             var item = accounts.StoreCatalog.TryGet(itemId, out var offered) ? offered
                 : accounts.StoreCatalog.TryGetKnown(itemId, out var known) ? known : accounts.StoreCatalog.Get(itemId);
             var economy = PlatformEconomy.For(account);
+            var rpOff = accounts.Controls.PaidContentOff;
             if (!wasReplay && notify is not null)
             {
-                notify(account.Id, Fulfillment(item, account, economy, purchase.Quantity));
-                notify(account.Id, AirDtos.AccountBalanceNotification(account));
+                notify(account.Id, Fulfillment(item, account, economy, purchase.Quantity, rpOff));
+                notify(account.Id, AirDtos.AccountBalanceNotification(account, rpOff));
             }
 
             return Results.Content(RenderPurchaseComplete(access, accounts, item, purchase, view), "text/html; charset=utf-8");
@@ -204,7 +207,11 @@ public static partial class PlatformStore
         var account = accounts.Get(access.AccountId);
         var catalog = accounts.StoreCatalog;
         var economy = PlatformEconomy.For(account);
+        // NOT RETAIL (batch 751): while the host's "Offer skins and RP" switch is off the receipts paid with RP are left out; they stay stored
+        // and show again when it is on. Retail listed every receipt.
+        var rpOff = catalog.PaidContentOff();
         var purchases = (economy.Purchases ?? Array.Empty<PlatformPurchase>())
+            .Where(purchase => !(rpOff && purchase.Currency == "RP"))
             .OrderByDescending(purchase => purchase.PurchasedAt)
             .ThenByDescending(purchase => purchase.RequestId)
             .ToArray();
@@ -213,7 +220,7 @@ public static partial class PlatformStore
         var history = purchases.Length == 0 ? string.Empty :
             $"<div class=purchase-scroll><table class=purchase-history><thead><tr><th>Date (UTC)</th><th>Item</th><th>Type</th><th>Quantity</th><th>Currency</th><th>Amount</th></tr></thead><tbody>{rows}</tbody></table></div>";
         return Layout("Purchases", $$"""
-            <section class="store-frame store-purchases">{{RenderStoreHeader(null, true)}}
+            <section class="store-frame store-purchases">{{RenderStoreHeader(catalog, null, true)}}
               <div class="store-panel store-page"><div class=purchases><h1>Purchases</h1><p class=muted>Receipts saved to {{Encode(account.Summoner)}}. Dates are shown in UTC.</p>{{empty}}{{history}}</div></div>
             </section>
             """);
@@ -344,7 +351,7 @@ public static partial class PlatformStore
         var economy = PlatformEconomy.For(account);
         return Layout("Get RP", $$"""
             <section class="store-frame store-rp">
-              {{RenderStoreHeader(null, rp: true)}}
+              {{RenderStoreHeader(null, null, rp: true)}}
               <div class="store-panel store-page"><div class=rp-information>
                 <h1>Premium Points</h1>
                 <div class=rp-overview>
@@ -379,8 +386,14 @@ public static partial class PlatformStore
             "BOOST" => "Your boost is active now. It is listed on your summoner profile.",
             _ => "Your purchase is complete.",
         };
+        // NOT RETAIL (batch 751): no RP balance while the host's "Offer skins and RP" switch is off, and no price paid in RP (a replay of a
+        // purchase made before the switch went off).
+        var rpOff = catalog.PaidContentOff();
+        var rpBalance = rpOff ? string.Empty : $"{economy.Rp.ToString("N0", CultureInfo.InvariantCulture)} RP and ";
+        var paid = purchase is null || rpOff && purchase.Currency == "RP" ? string.Empty
+            : $"Paid {purchase.Price.ToString("N0", CultureInfo.InvariantCulture)} {WebUtility.HtmlEncode(purchase.Currency)}.<br>";
         var total = purchase is null ? string.Empty
-            : $"<div class=dlg-note style=\"top:160px;left:196px;width:290px;height:auto\">Paid {purchase.Price.ToString("N0", CultureInfo.InvariantCulture)} {WebUtility.HtmlEncode(purchase.Currency)}.<br>You now have {economy.Rp.ToString("N0", CultureInfo.InvariantCulture)} RP and {economy.Ip.ToString("N0", CultureInfo.InvariantCulture)} IP.</div>";
+            : $"<div class=dlg-note style=\"top:160px;left:196px;width:290px;height:auto\">{paid}You now have {rpBalance}{economy.Ip.ToString("N0", CultureInfo.InvariantCulture)} IP.</div>";
         // Done and the X return to the view the purchase was made from (sort, filters, search) and scroll to the card. Without a view (a form of
         // an older page) they return to the item's list in the default order, as before.
         var cardId = CardId(item.Id);
@@ -395,9 +408,10 @@ public static partial class PlatformStore
 
     /// <summary>
     /// A refusal or failure (an expired session, too little RP, a locked item ...) as a dialog over the store: the shipped sorry art
-    /// and red error banner. Reconstruction: placement; the messages are the platform's own.
+    /// and red error banner. Reconstruction: placement; the messages are the platform's own. <paramref name="catalog"/>: see
+    /// <see cref="RenderStoreHeader"/>.
     /// </summary>
-    public static string ErrorPage(string message) => Layout("Store", $"<section class=\"store-frame store-error\">{RenderStoreHeader("ERROR")}" +
+    public static string ErrorPage(string message, PlatformStoreCatalog? catalog = null) => Layout("Store", $"<section class=\"store-frame store-error\">{RenderStoreHeader(catalog, "ERROR")}" +
         "<div class=\"store-panel store-page\"><div class=purchases><h1>Store</h1></div></div>" +
         $"<div class=dlg-wrap><div class=dlg><span class=dlg-title>Purchase Item</span><a class=dlg-close href=\"/store/home\" title=\"Close\"></a>" +
         $"<span class=dlg-banner>Sorry</span><div class=dlg-note>{WebUtility.HtmlEncode(message)}<br><br><a href=\"/store/home\">Return to the store</a> &middot; " +
@@ -586,9 +600,9 @@ public static partial class PlatformStore
     };
 
     private static object Fulfillment(PlatformStoreItem item, PlatformAccount account, PlatformEconomyState economy,
-        int quantity = 1)
+        int quantity, bool rpOff)
     {
-        if (item.Kind == "BOOST") return AirDtos.ActiveBoostsNotification(account);
+        if (item.Kind == "BOOST") return AirDtos.ActiveBoostsNotification(account, rpOff);
         var data = item.Kind switch
         {
             "CHAMPION" => AirWire.Object(ChampionAlias, ("championId", item.ContentId), ("displayName", item.Name),
@@ -604,7 +618,7 @@ public static partial class PlatformStore
             _ => throw new ArgumentException($"Unsupported store product kind '{item.Kind}'."),
         };
         return AirWire.Object(FulfillmentAlias, ("inventoryType", InventoryType(item.Kind)),
-            ("ip", (double)economy.Ip), ("rp", (double)economy.Rp),
+            ("ip", (double)economy.Ip), ("rp", (double)AirDtos.ShownRp(economy, rpOff)),
             ("data", data));
     }
 

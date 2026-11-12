@@ -95,6 +95,11 @@ public static class HostPages
     /// </summary>
     public const string PublicStylePath = "/register/style.css";
     public static readonly string PublicStyleHref = Versioned(PublicStylePath, PublicCss);
+    /// <summary>
+    /// Batch 751: the same sheet at My account's own address (<see cref="HostAccountPage"/>), which is served whether sign-ups are on or off,
+    /// while <see cref="PublicStylePath"/> is the sign-up's and goes with it.
+    /// </summary>
+    public static readonly string AccountStyleHref = Versioned(HostAccountPage.StylePath, PublicCss);
 
     /// <summary>The stylesheet's address: its path with the first twelve hex digits of its content hash (the browser keeps it).</summary>
     private static string Versioned(string path, string css) =>
@@ -117,9 +122,11 @@ public static class HostPages
     /// without the nav, the script and the version, so nothing on it names or links a host page. It sets its own headers (<see cref="Policy"/>):
     /// the rate limiter's refusal is written before the Platform's header middleware runs.
     /// </summary>
-    internal static IResult PublicPage(string content, int status = StatusCodes.Status200OK) => new Rendered(content, status, null, 0, false, true);
+    /// <param name="style">Batch 751: the sheet's address, <see cref="PublicStyleHref"/> unless the page is My account's (<see cref="AccountStyleHref"/>).</param>
+    internal static IResult PublicPage(string content, int status = StatusCodes.Status200OK, string? style = null) =>
+        new Rendered(content, status, null, 0, false, true, style);
 
-    private sealed record Rendered(string Content, int Status, string? Refresh, int Step, bool Nav, bool Public) : IResult
+    private sealed record Rendered(string Content, int Status, string? Refresh, int Step, bool Nav, bool Public, string? Style = null) : IResult
     {
         public Task ExecuteAsync(HttpContext context)
         {
@@ -152,7 +159,7 @@ public static class HostPages
             // Every page loads page.js (batch 652) but the gate's refusals (403): a browser without the host's session cannot load it.
             return $$"""
                 <!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
-                {{(Refresh is null ? "" : $"<meta http-equiv=refresh content=\"5;url={Refresh}\">")}}<title>{{title}}</title><link rel=stylesheet href="{{(Public ? PublicStyleHref : StyleHref)}}"></head>
+                {{(Refresh is null ? "" : $"<meta http-equiv=refresh content=\"5;url={Refresh}\">")}}<title>{{title}}</title><link rel=stylesheet href="{{(Public ? Style ?? PublicStyleHref : StyleHref)}}"></head>
                 <body><a class=skip href=#main>Skip to the main content</a>
                 {{head}}
                 {{main}}{{step}}{{Code.Replace(Content, "<span class=code>$0</span>")}}</main>{{close}}
@@ -389,6 +396,7 @@ public static class HostPages
         details{margin:0 0 16px}
         summary{min-height:44px;padding:10px 0;color:var(--gold);font-size:.9375rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
         .table-search{max-width:24rem;margin:0 0 12px}
+        .champion-list{max-height:24rem;overflow:auto;margin:0 0 12px}
         .table-search label{margin-top:0}
         .user-actions{margin:0 0 16px}
         .empty{margin:0 0 16px;color:var(--muted)}
@@ -491,6 +499,25 @@ public static class HostPages
             item.querySelector('span').textContent = event.text;
             return item;
           }
+          // Batch 751: the attention cards are rebuilt only when their content changed, so a focused Hide keeps its focus. A card with a subject
+          // gets its own Hide form, a copy of the page's template with the card's code and subject.
+          let shownAttention = '';
+          function attention(list) {
+            const key = JSON.stringify(list);
+            if (key === shownAttention) return;
+            shownAttention = key;
+            fill('attention', list, card => {
+              const item = document.createElement('li');
+              item.append(made('strong', card.message), ' ', made('span', `(${card.code})`, 'code'), made('p', card.whatToDo));
+              if (card.subject) {
+                const form = fromTemplate('hide-template');
+                form.querySelector('input[name=code]').value = card.code;
+                form.querySelector('input[name=subject]').value = card.subject;
+                item.append(form);
+              }
+              return item;
+            });
+          }
           // The cards and the feed are rebuilt only when their content changed, so a focused End game keeps its focus; the times move at each poll.
           let shownGames = '';
           let shownFeed = '';
@@ -539,12 +566,10 @@ public static class HostPages
               item.append(mark, made('span', check.text));
               return item;
             });
-            show('attention-section', status.attention.length > 0);
-            fill('attention', status.attention, card => {
-              const item = document.createElement('li');
-              item.append(made('strong', card.message), ' ', made('span', `(${card.code})`, 'code'), made('p', card.whatToDo));
-              return item;
-            });
+            show('attention-section', status.attention.length > 0 || Boolean(status.hidden));
+            attention(status.attention);
+            text('hidden-count', status.hidden ?? '');
+            show('hidden-line', Boolean(status.hidden));
             for (const form of document.querySelectorAll('form[data-action]'))
               form.hidden = !status.attention.some(card => card.action === form.dataset.action);
             text('signup-link', status.signUpLink ?? '');
@@ -665,6 +690,17 @@ public static class HostPages
               if (!row.hidden) shown++;
             }
             show('users-none', shown === 0);
+          });
+          // NOT RETAIL (batch 751): Settings' Champions list has a search box, the Users search over its checkboxes (the labels inside #champions).
+          const championSearch = byId('champion-search');
+          if (championSearch) championSearch.addEventListener('input', () => {
+            const words = championSearch.value.trim().toLowerCase();
+            let shown = 0;
+            for (const label of byId('champions').children) {
+              label.hidden = words !== '' && !label.textContent.toLowerCase().includes(words);
+              if (!label.hidden) shown++;
+            }
+            show('champions-none', shown === 0);
           });
           if (byId('status')) { refresh(); setInterval(refresh, 5000); }
           if (byId('online-table')?.hasAttribute('data-live')) setInterval(online, 5000);

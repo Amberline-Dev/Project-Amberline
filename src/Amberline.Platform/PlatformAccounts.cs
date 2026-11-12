@@ -72,7 +72,17 @@ public sealed partial class PlatformAccounts : IDisposable
     private const string ReservedPageNameToken = "@@!PaG3!@@";
     public const int MaxProfileIconId = 28;
     public PlatformEconomyRules EconomyRules { get; }
-    public PlatformStoreCatalog StoreCatalog => _storeCatalog ??= new PlatformStoreCatalog(EconomyRules, _airRoot, _time);
+    /// <summary>NOT RETAIL: the host's Skins and RP and Champions switches (<see cref="PlatformControls"/>); a new store starts with all on.</summary>
+    private PlatformControls _controls = new();
+    public PlatformControls Controls { get => _controls; set => _controls = value ?? throw new ArgumentNullException(nameof(value)); }
+    /// <summary>NOT RETAIL (batch 751): the refusal of anything bought or given as RP while the host's "Offer skins and RP" switch is off.</summary>
+    public const string RpOff = "RP is turned off on this server.";
+    /// <summary>NOT RETAIL (batch 751): the refusal of a champion the host turned off in Settings (<see cref="PlatformControls.IsEnabled"/>).</summary>
+    public const string ChampionOff = "This champion is turned off on this server.";
+    public PlatformStoreCatalog StoreCatalog => _storeCatalog ??= new PlatformStoreCatalog(EconomyRules, _airRoot, _time)
+    {
+        PaidContentOff = () => Controls.PaidContentOff,
+    };
 
     public PlatformAccounts(string directory, string? airRoot = null, TimeProvider? timeProvider = null)
     {
@@ -184,6 +194,13 @@ public sealed partial class PlatformAccounts : IDisposable
     public void SetPassword(long accountId, string password) => SetPassword(accountId, password, removedAt: null);
 
     /// <summary>
+    /// NOT RETAIL: My account's own New password (batch 751 final review; retail's was Riot's account website). As <see cref="SetPassword(long, string)"/>,
+    /// but a login the host disabled (<see cref="RemoveAccess"/>) is refused under the store's lock, so a Disable that lands between the user's
+    /// password check and this change stays: false, and nothing changes.
+    /// </summary>
+    public bool ChangeOwnPassword(long accountId, string password) => SetPassword(accountId, password, removedAt: null, keepDisabled: true);
+
+    /// <summary>
     /// NOT RETAIL: host tool (the Users page's Disable, batch 646's Remove access, kept on record). A password nobody is told (32 random
     /// bytes, only its hash is kept) and the time, so the Users page marks the user Disabled; <see cref="SetPassword(long, string)"/> undoes it.
     /// The caller ends the account's tunnel token and sessions; the account and its games stay.
@@ -191,17 +208,18 @@ public sealed partial class PlatformAccounts : IDisposable
     public void RemoveAccess(long accountId) =>
         SetPassword(accountId, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), _time.GetUtcNow());
 
-    private void SetPassword(long accountId, string password, DateTimeOffset? removedAt)
+    private bool SetPassword(long accountId, string password, DateTimeOffset? removedAt, bool keepDisabled = false)
     {
         ValidatePassword(password);
         var salt = RandomNumberGenerator.GetBytes(16);
         var hash = Derive(password, salt);
         lock (_gate)
         {
-            RequireAccount(accountId);
+            if (RequireAccount(accountId).AccessRemovedAt is not null && keepDisabled) return false;
             Save(_state with { Accounts = _state.Accounts.Select(a => a.Id == accountId
                 ? a with { Salt = Convert.ToHexString(salt), PasswordHash = Convert.ToHexString(hash), AccessRemovedAt = removedAt } : a).ToArray() });
         }
+        return true;
     }
 
     /// <summary>
@@ -532,12 +550,20 @@ public sealed partial class PlatformAccounts : IDisposable
                 return prior;
             }
 
+            // NOT RETAIL (batch 751): while the host's skins switch is off (Controls.PaidContentOff) the catalog offers no skin; a skin's id
+            // is refused here in plain words instead of as an unknown product. Retail always sold skins.
+            if (Controls.PaidContentOff && StoreCatalog.TryGetKnown(itemId.Trim(), out var known) && known.Kind == "CHAMPION_SKIN")
+                throw new ArgumentException("Skins are turned off on this server.", nameof(itemId));
+            // NOT RETAIL (batch 751): nothing is bought with RP while the host's "Offer skins and RP" switch is off; retail always took RP.
+            if (Controls.PaidContentOff && currency == "RP") throw new ArgumentException(RpOff, nameof(currency));
             var item = StoreCatalog.Get(itemId.Trim());
             // NOT RETAIL: retail sold the three bundles whose contents this server does not implement; they are the only locked products since
             // 26 October 2026 (batch 341, every champion and skin plays), so they stay unbuyable here. The champion message guards any other lock.
             if (item.Locked)
                 throw new ArgumentException(item.Kind == "BUNDLE" ? "That bundle is not available on this server."
                     : "That champion cannot be played on this server yet.", nameof(itemId));
+            // NOT RETAIL (batch 751): a champion the host turned off (Controls) is not sold; retail had no host switch. The store still lists it.
+            if (item.Kind == "CHAMPION" && !Controls.IsEnabled(item.ChampionId)) throw new ArgumentException(ChampionOff, nameof(itemId));
             if (quantity != 1 && item.Kind != "RUNE")
                 throw new ArgumentException("Only runes can be purchased in multiple quantities.", nameof(quantity));
             var price = currency == "IP" ? item.IpPrice : item.RpPrice;
@@ -651,6 +677,8 @@ public sealed partial class PlatformAccounts : IDisposable
                     throw new ArgumentException("The request ID was already used for a different grant.", nameof(requestId));
                 return prior;
             }
+            // NOT RETAIL (batch 751): the host gives no RP while its "Offer skins and RP" switch is off (retail had no host grant at all).
+            if (rp > 0 && Controls.PaidContentOff) throw new ArgumentException(RpOff, nameof(rp));
             if (data.Ip > PlatformEconomy.MaxBalance - ip || data.Rp > PlatformEconomy.MaxBalance - rp)
                 throw new InvalidOperationException("The account balance limit would be exceeded.");
             var grant = new PlatformCurrencyGrant(requestId, ip, rp, DateTimeOffset.UtcNow);
@@ -1062,6 +1090,12 @@ public sealed partial class PlatformAccounts : IDisposable
         var championId = PlatformEconomy.ChampionId(loadout.Champion);
         if (championId <= 0 || !PlatformEconomy.CanPlay(account, championId, EconomyRules))
             throw new ArgumentException("The account does not own that champion.", nameof(loadout));
+        // NOT RETAIL (batch 751): a champion the host turned off (Controls) is not newly saved; one saved before stays. Retail had no host switch.
+        if (!Controls.IsEnabled(championId) && !string.Equals(loadout.Champion, account.Loadout.Champion, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException(ChampionOff, nameof(loadout));
+        // NOT RETAIL (batch 751): no skin is newly saved while the host's skins switch is off (Controls.PaidContentOff); one saved before stays.
+        if (loadout.SkinId != 0 && Controls.PaidContentOff)
+            throw new ArgumentException("Skins are turned off on this server.", nameof(loadout));
         if (!PlatformEconomy.OwnsSkin(account, checked(championId * 1000 + loadout.SkinId)) && loadout.SkinId != 0)
             throw new ArgumentException("The account does not own that skin.", nameof(loadout));
     }

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Amberline.Core;
 using Amberline.Platform;
@@ -27,6 +28,115 @@ public static class HostSupportChecks
 
     [Check("server.host-support-log-masks", TimeoutSeconds = 120)]
     public static void TheSupportLogHidesEveryPlantedNameAndAddress() => SupportLogAsync().GetAwaiter().GetResult();
+
+    [Check("server.host-support-hide-persists", TimeoutSeconds = 120)]
+    public static void AHiddenSeatAndStoppedGameStayHiddenAcrossARestart() => HidePersistsAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Batch 751: A-NET-10 and A-RUN-01 Hide is saved in the state file. A real restart (the Platform stopped, the next one listing the old
+    /// games as they were) forgets the saved entries of games from before the start: they can never raise a card again, so they are no
+    /// stale count. A hide made in the new run still holds while its card would otherwise show, and a seat that connects is forgotten.
+    /// </summary>
+    private static async Task HidePersistsAsync()
+    {
+        TunnelMark();
+        var home = Home.Create("league-host-hide-persists");
+        var settings = Settings(home);
+        var stateFile = HostFriendLight.StateFile(home.Loop.Paths.Data);
+        var games = new List<RemoteGame>();
+        var support = new HostSupport(home.Loop, settings, List(games), Logins.Seat, () => []) { Every = TimeSpan.FromHours(1), FreeSpace = _ => 5_000_000_000 };
+        var run = Task.Run(() => RunPageAsync(home, settings, support));
+        using var client = home.Client();
+        await WaitForStartAsync(home.Loop, run);
+        await home.SignInAsync(client);
+
+        // A friend's game waiting for players for three minutes, and a game that stopped: both cards.
+        var stuck = Game(Waiting, [Seat(1, 101)]);
+        Set(games, stuck);
+        support.Observe(DateTimeOffset.Now - TimeSpan.FromMinutes(3));
+        var failed = Game("Failed", error: "Game process exited unexpectedly. Check its host logs.");
+        Set(games, stuck, failed);
+        support.Observe(DateTimeOffset.Now);
+        TestAssert.True(Cards(await StatusAsync(client)).Any(card => card.Code == "A-NET-10") && Cards(await StatusAsync(client)).Any(card => card.Code == "A-RUN-01"),
+            "both cards before Hide");
+        var token = Token(await (await client.GetAsync(HostDashboard.PagePath)).Content.ReadAsStringAsync());
+        using (var hide = await client.PostAsync(HostSupport.HidePath, Form(token, ("card", "A-NET-10"))))
+            TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the seats card");
+        using (var hide = await client.PostAsync(HostSupport.HidePath, Form(token, ("card", "A-RUN-01"))))
+            TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the stopped card");
+        TestAssert.False(Cards(await StatusAsync(client)).Any(card => card.Code is "A-NET-10" or "A-RUN-01"), "both cards hidden");
+        TestAssert.Equal(new[] { $"A-NET-10:{stuck.Id:D}:1", $"A-RUN-01:{failed.Id:D}" }.Order().ToArray(), SavedHidden(stateFile), "the seat and the game are saved");
+
+        // The restart: the Platform stops; the next one lists the old games before it starts, so they never raise a card again.
+        home.Loop.Stop();
+        TestAssert.False(await run.WaitAsync(TimeSpan.FromSeconds(30)), "the page stopped");
+        var again = home.Again();
+        var later = new List<RemoteGame> { stuck, failed };
+        long free2 = 5_000_000_000;
+        var support2 = new HostSupport(again.Loop, settings, List(later), Logins.Seat, () => []) { Every = TimeSpan.FromHours(1), FreeSpace = _ => Interlocked.Read(ref free2) };
+        var run2 = Task.Run(() => RunPageAsync(again, settings, support2));
+        using var client2 = again.Client();
+        await WaitForStartAsync(again.Loop, run2);
+        await again.SignInAsync(client2);
+        support2.Observe(DateTimeOffset.Now - TimeSpan.FromMinutes(3));
+        support2.Observe(DateTimeOffset.Now);
+        TestAssert.Equal(Array.Empty<string>(), SavedHidden(stateFile), "the old games' saved entries are forgotten on restart");
+        TestAssert.Equal(JsonValueKind.Null, (await StatusAsync(client2)).GetProperty("hidden").ValueKind, "no stale hidden count after the restart");
+        TestAssert.False(Cards(await StatusAsync(client2)).Any(card => card.Code is "A-NET-10" or "A-RUN-01"), "the old games raise nothing");
+
+        // A new game of the same friend, and a new stop, show; Hide in this run holds while their cards would otherwise show.
+        var next = Game(Waiting, [Seat(1, 101)]);
+        var newStop = Game("Failed", error: "Game startup timed out.");
+        Set(later, stuck, failed, next, newStop);
+        support2.Observe(DateTimeOffset.Now - TimeSpan.FromMinutes(3));
+        support2.Observe(DateTimeOffset.Now);
+        TestAssert.Equal("friend1 logged in, but their game could not connect to Amberline.", Card(await StatusAsync(client2), "A-NET-10").Message, "a new game shows");
+        TestAssert.True(Card(await StatusAsync(client2), "A-RUN-01").Message.StartsWith("A game stopped unexpectedly at ", StringComparison.Ordinal), "a new stop shows");
+        var token2 = Token(await (await client2.GetAsync(HostDashboard.PagePath)).Content.ReadAsStringAsync());
+        using (var hide = await client2.PostAsync(HostSupport.HidePath, Form(token2, ("card", "A-NET-10"))))
+            TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the new seats card");
+        using (var hide = await client2.PostAsync(HostSupport.HidePath, Form(token2, ("card", "A-RUN-01"))))
+            TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the new stopped card");
+        support2.Observe(DateTimeOffset.Now);
+        var held = await StatusAsync(client2);
+        TestAssert.False(Cards(held).Any(card => card.Code is "A-NET-10" or "A-RUN-01"), "the hide holds while the cards would show");
+        TestAssert.Equal("2 messages hidden.", held.GetProperty("hidden").GetString(), "only this run's two hides are counted");
+        TestAssert.Equal(new[] { $"A-NET-10:{next.Id:D}:1", $"A-RUN-01:{newStop.Id:D}" }.Order().ToArray(), SavedHidden(stateFile), "the new seat and stop are saved");
+
+        // The friend's seat connects: its saved entry goes; the stop stays while it is listed as stopped.
+        Set(later, stuck, failed, next with { State = "Playing", Seats = [Seat(1, 101, connected: true)] }, newStop);
+        support2.Observe(DateTimeOffset.Now);
+        TestAssert.Equal(new[] { $"A-RUN-01:{newStop.Id:D}" }, SavedHidden(stateFile), "a seat that connected is forgotten; the stop stays");
+
+        // Batch 751 final review: hiding "almost full" never hides "full", a different problem (the subject names the drive and its state);
+        // the almost-full entry is forgotten once the drive is full.
+        Interlocked.Exchange(ref free2, 500_000_000);
+        support2.Observe(DateTimeOffset.Now);
+        var low = (await StatusAsync(client2)).GetProperty("attention").EnumerateArray().Single(card => card.GetProperty("code").GetString() == "A-DATA-02")
+            .GetProperty("subject").GetString()!;
+        using (var hide = await client2.PostAsync(HostDashboard.PagePath + "/hide", Form(token2, ("code", "A-DATA-02"), ("subject", low))))
+            TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the almost-full card");
+        support2.Observe(DateTimeOffset.Now);
+        TestAssert.False(Cards(await StatusAsync(client2)).Any(card => card.Code == "A-DATA-02"), "the almost-full card is hidden");
+        Interlocked.Exchange(ref free2, 50_000_000);
+        support2.Observe(DateTimeOffset.Now);
+        TestAssert.True(Cards(await StatusAsync(client2)).SingleOrDefault(card => card.Code == "A-DATA-02")?.Message.Contains("is full: 50 MB free.", StringComparison.Ordinal) == true,
+            "the full drive shows although almost full was hidden");
+        TestAssert.Equal(new[] { $"A-RUN-01:{newStop.Id:D}" }, SavedHidden(stateFile), "the almost-full entry is forgotten");
+
+        again.Loop.Stop();
+        TestAssert.False(await run2.WaitAsync(TimeSpan.FromSeconds(30)), "the page stopped after the restart");
+        Delete(home.Root);
+    }
+
+    /// <summary>The saved hidden identities as "code:subject", sorted; none when the key or the file is missing.</summary>
+    private static string[] SavedHidden(string stateFile)
+    {
+        var state = JsonNode.Parse(File.ReadAllText(stateFile))!.AsObject();
+        return state["hiddenCards"] is JsonArray entries
+            ? [.. entries.Select(entry => $"{entry!["code"]}:{entry["subject"]}").Order()]
+            : [];
+    }
 
     private static async Task RunCardsAsync()
     {

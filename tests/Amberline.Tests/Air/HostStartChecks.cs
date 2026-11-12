@@ -46,6 +46,8 @@ public static class HostStartChecks
                 (card?.Code, card?.Message, card?.Action), "the removed file is named");
             TestAssert.True(card!.WhatToDo.Contains("Protection history", StringComparison.Ordinal) &&
                 card.WhatToDo.Contains("your settings and users stay", StringComparison.Ordinal), card.WhatToDo);
+            // Batch 751 merge-sweep fix: the Hide subject is a digest of the app folder and the problem's kind, never the folder itself.
+            TestAssert.Equal(FilesSubject(app, "missing"), card.Subject, "the subject does not reveal the folder");
             File.Delete(Path.Combine(app, "platform", "Amberline.Platform.exe"));
             TestAssert.Equal("Windows Security may have removed Amberline.Platform.exe, a part of Amberline (and 1 more part).",
                 (await HostChecks.AppFilesAsync(app, default))?.Message, "the first missing file in BUILD.json's order, and how many more");
@@ -57,6 +59,7 @@ public static class HostStartChecks
             File.WriteAllBytes(server, changed);
             card = await HostChecks.AppFilesAsync(app, default);
             TestAssert.Equal(("A-FILES-06", "A part of Amberline was changed: Amberline.Server.exe."), (card?.Code, card?.Message), "same size, other bytes");
+            TestAssert.Equal(FilesSubject(app, "changed"), card!.Subject, "a changed part is another problem than a missing one");
             File.WriteAllBytes(server, [.. files["server/Amberline.Server.exe"], 0]);
             TestAssert.Equal("A part of Amberline was changed: Amberline.Server.exe.", (await HostChecks.AppFilesAsync(app, default))?.Message, "another size");
 
@@ -74,6 +77,10 @@ public static class HostStartChecks
         var appRoot = Path.GetFullPath(Path.Combine(home.Loop.Paths.App, ".."));
         File.WriteAllText(Path.Combine(appRoot, "BUILD.json"), Manifest(appRoot, ["server/Amberline.Server.exe", "bootstrap/companion.zip"],
             ("server/exehost.exe", 100, new string('A', 64))));
+        // An entry an earlier build saved with the folder's full path as subject: it never matches the card and the first pass forgets it.
+        var stateFile = HostFriendLight.StateFile(home.Loop.Paths.Data);
+        Directory.CreateDirectory(Path.GetDirectoryName(stateFile)!);
+        File.WriteAllText(stateFile, new JsonObject { ["hiddenCards"] = new JsonArray(new JsonObject { ["code"] = "A-FILES-06", ["subject"] = appRoot }) }.ToJsonString());
         home.ChooseFolders();
         var run = Task.Run(() => HostMode.RunAsync(home.Loop));
         try
@@ -87,6 +94,9 @@ public static class HostStartChecks
             TestAssert.Equal(JsonValueKind.Null, card.GetProperty("action").ValueKind, "Restart runs the comparison again; no button of its own");
             TestAssert.False(card.GetRawText().Contains(JsonEncodedText.Encode(home.Root).ToString(), StringComparison.OrdinalIgnoreCase),
                 "the card names the file, not the PC's folders");
+            TestAssert.Equal(FilesSubject(appRoot, "missing"), card.GetProperty("subject").GetString(), "the Hide subject is the folder's digest");
+            await StatusAsync(browser); // a pass after the comparison finished settles the hidden A-FILES-06 entries
+            TestAssert.Equal(null, JsonNode.Parse(File.ReadAllText(stateFile))!["hiddenCards"], "the old full-path entry hid nothing and is forgotten");
         }
         finally
         {
@@ -532,6 +542,10 @@ public static class HostStartChecks
             await Task.Delay(300);
         }
     }
+
+    /// <summary>A-FILES-06's Hide subject: the first 16 hex digits of the SHA-256 of the app folder's full path, and the problem's kind.</summary>
+    internal static string FilesSubject(string app, string kind) =>
+        Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(app))))[..16] + ":" + kind;
 
     private static JsonElement? Card(JsonElement status, string code) =>
         status.GetProperty("attention").EnumerateArray().Where(card => card.GetProperty("code").GetString() == code).Select(card => (JsonElement?)card).FirstOrDefault();

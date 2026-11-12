@@ -350,7 +350,8 @@ public sealed class SessionSpawnService
             // A shrine is an obj_AI_Turret like the lane towers (one CreateTurret, the 16-field LOCAL1 table), and the client's first
             // replication of any unit carries every field (CReplData32 firstTime). The block used to be left out, so the client kept the
             // constructor defaults mBaseAttackDamage 25 and mPercentPhysicalDamageMod 0 against the server's 999 and 1 (real-client
-            // telemetry, batch 67); it now gets the same TurretStats the lane towers get. Its protection state is the one the flags-only
+            // telemetry, batch 67); it now gets the same TurretStats the lane towers get. The 0 was right: since batch 752 the block sends
+            // mPercentPhysicalDamageMod 0 too (the client adds 1 to it; 1 doubled every target bar's AD). Its protection state is the one the flags-only
             // packet used to carry: always protected (ProtectionRules: the fountain tier), untargetable to both teams.
             // Reconstruction: retail's packet set for a shrine is not recovered; this sends no EnterLocalVisibility (0xB5) for a shrine, since it would light a health bar that an untargetable tower never shows.
             // (NOTES.md recorded a stat block making the laser tower render destroyed in an early build; the destroyed skin is drawn only

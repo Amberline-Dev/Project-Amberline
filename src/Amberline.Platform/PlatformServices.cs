@@ -125,7 +125,8 @@ public sealed class PlatformServices
                         Integer(Field(complaint, "gameId")), complaint.TryGetValue("comment", out var comment) ? comment as string : null);
                     return null;
                 case ("clientFacadeService", "getLoginDataPacketForUser"):
-                    var loginData = AirDtos.LoginData(account, games.Reconnect(account.Id), accounts.EconomyRules);
+                    var loginData = AirDtos.LoginData(account, games.Reconnect(account.Id), accounts.EconomyRules, accounts.Controls.PaidContentOff,
+                        accounts.Controls.DisabledChampions);
                     loginData["playerStatSummaries"] = AirProfileDtos.PlayerStatSummaries(account, accounts.ResultsFor(account.Id));
                     // Batch 587: a level above 0 makes the stock client show its leaver warning at this login (checkLeaverPenaltyPopup).
                     loginData["leaverPenaltyLevel"] = accounts.LeaverStatus(account.Id).Level;
@@ -137,7 +138,7 @@ public sealed class PlatformServices
                     return List(PlatformStoreCalendar.OpenMapIds
                         .Select(id => Object(AirProtocolNames.GameMapEnabledDTO, ("gameMapId", id), ("minPlayers", 1))).ToArray());
                 case ("inventoryService", "getAvailableChampions"):
-                    return AirDtos.Champions(account, accounts.EconomyRules);
+                    return AirDtos.Champions(account, accounts.EconomyRules, accounts.Controls.PaidContentOff, accounts.Controls.DisabledChampions);
                 case ("inventoryService", "getSumonerActiveBoosts"):
                     return AirDtos.ActiveBoosts(account);
                 case ("inventoryService", "isStoreEnabled"):

@@ -115,6 +115,155 @@ public static class HostSettingsChecks
         Delete(home.Root);
     }
 
+    /// <summary>
+    /// Batch 751 (owner, 12 November 2026): Settings' "Skins and RP" switch. Off is saved in platform.json and applied to the live
+    /// <see cref="PlatformControls"/> at once; a file without the field reads as on.
+    /// </summary>
+    [Check("server.host-settings-paid-content-switch", TimeoutSeconds = 180)]
+    public static void SkinsAndRpSwitchSavesAndAppliesAtOnce() => PaidContentAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Batch 751 (owner, 12 November 2026): Settings' "Champions" section lists every playable champion, ticked = available. A Save stores
+    /// the playable ids that are not ticked (an id that is not playable is ignored) and applies them to the live controls at once.
+    /// </summary>
+    [Check("server.host-settings-champion-list", TimeoutSeconds = 180)]
+    public static void ChampionListSavesDisabledChampionsAndAppliesAtOnce() => ChampionListAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Batch 751's checks share one Settings page: the page-only Settings with a store the check holds, and a browser signed in as the host.
+    /// <paramref name="body"/> runs once the page is up. The environment is restored and the champion list checked after it.
+    /// </summary>
+    private static async Task OnSettingsPageAsync(string prefix, Func<Home, HttpClient, PlatformAccounts, Task> body)
+    {
+        var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        // A full Platform reads the champion list; read it the suite's way first (see HostPagesChecks).
+        var champions = ChampionCatalog.All.Count;
+        var home = Home.Create(prefix);
+        using var accounts = new PlatformAccounts(home.Loop.Paths.Data);
+        var run = Task.Run(async () => await RunSettingsAsync(home, () => 0, accounts) ? 1 : 0);
+        try
+        {
+            using var browser = home.Client();
+            await WaitForHealthAsync(browser, "ready", run);
+            await home.SignInAsync(browser);
+            await body(home, browser, accounts);
+        }
+        finally
+        {
+            await home.StopAsync(run);
+            foreach (var pair in saved) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+        }
+        TestAssert.Equal(champions, ChampionCatalog.All.Count, "the champion list stays as it was");
+        Delete(home.Root);
+    }
+
+    private static Task PaidContentAsync() => OnSettingsPageAsync("league-host-paid-content", async (home, browser, accounts) =>
+    {
+        Has(await GetAsync(browser, HostSettingsPage.PagePath), "<h2 id=paid-title>Skins and RP</h2>", $"action={HostSettingsPage.PaidContentPath}",
+            "<input type=checkbox name=on value=on checked>Offer skins and RP",
+            "Off: everyone plays the default looks, and the store shows no skins and no RP. Nothing anyone owns is removed.");
+        TestAssert.False(accounts.Controls.PaidContentOff, "a settings file without the field offers skins and RP");
+
+        await SavedAsync(browser, HostSettingsPage.PaidContentPath, "paid", HostSettingsPage.PagePath);
+        TestAssert.True(accounts.Controls.PaidContentOff, "unticked: the live controls turn skins and RP off at once");
+        TestAssert.True(Flag(home, "paidContentOff"), "platform.json holds the switch off");
+        Has(await GetAsync(browser, HostSettingsPage.PagePath + "?saved=paid"), "<p class=notice role=status>Saved.</p>",
+            "<input type=checkbox name=on value=on>Offer skins and RP");
+
+        await SavedAsync(browser, HostSettingsPage.PaidContentPath, "paid", HostSettingsPage.PagePath, ("on", "on"));
+        TestAssert.False(accounts.Controls.PaidContentOff, "ticked again: skins and RP are offered");
+        TestAssert.False(Flag(home, "paidContentOff"), "platform.json holds the switch on");
+    });
+
+    private static Task ChampionListAsync() => OnSettingsPageAsync("league-host-champion-list", async (home, browser, accounts) =>
+    {
+        var playable = AirGameDtos.ChampionNames.Keys.ToArray();
+        var page = await GetAsync(browser, HostSettingsPage.PagePath);
+        Has(page, "<h2 id=champions-title>Champions</h2>", $"action={HostSettingsPage.ChampionsPath}", "Tutorials keep their own champions.");
+        TestAssert.Equal(playable.Length, page.Split("name=champion value=").Length - 1, "every playable champion has a box");
+        foreach (var id in playable) Has(page, $"name=champion value={id} checked>");
+        TestAssert.Equal(3, page.Split(" (Battle Training keeps it)</label>").Length - 1, "Battle Training's three are marked as kept there");
+        TestAssert.True(playable.All(accounts.Controls.IsEnabled), "nothing is disabled before the first Save");
+
+        // Every playable champion but the first is ticked; the POST also names an id that is not playable, which is ignored.
+        var disabled = playable[0];
+        var ticked = playable.Skip(1).Select(id => ("champion", id.ToString())).Append(("champion", "999999")).ToArray();
+        await SavedAsync(browser, HostSettingsPage.ChampionsPath, "champions", HostSettingsPage.PagePath, ticked);
+        TestAssert.Equal(disabled.ToString(), string.Join(",", DisabledList(home) ?? []), "platform.json lists the unticked champion only");
+        TestAssert.False(accounts.Controls.IsEnabled(disabled), "the live controls refuse the unticked champion at once");
+        TestAssert.True(playable.Skip(1).All(accounts.Controls.IsEnabled), "every ticked champion stays enabled");
+        Has(await GetAsync(browser, HostSettingsPage.PagePath + "?saved=champions"), "<p class=notice role=status>Saved.</p>",
+            $"name=champion value={disabled}>", $"name=champion value={playable[1]} checked");
+    });
+
+    /// <summary>
+    /// Batch 751: a platform.json without the two fields starts with skins and RP offered and every champion enabled; one that holds them
+    /// starts with them as saved. Loaded through <see cref="Program.LoadSettings"/> and <see cref="PlatformControls.From"/>, which is what
+    /// the real start does (RunAsync sets the store's controls from them).
+    /// </summary>
+    [Check("server.host-settings-controls-from-file", TimeoutSeconds = 120)]
+    public static void ControlsStartFromTheSavedFile() => ControlsFromFileAsync().GetAwaiter().GetResult();
+
+    private static async Task ControlsFromFileAsync()
+    {
+        // Read the champion list the suite's way first (see HostPagesChecks).
+        var champions = ChampionCatalog.All.Count;
+        var playable = AirGameDtos.ChampionNames.Keys.ToArray();
+        var home = Home.Create("league-host-controls-file");
+        try
+        {
+            HostInviteChecks.WriteSettings(home, new { serverExecutable = home.Loop.Paths.ServerExecutable });
+            var (settings, _) = Amberline.Platform.Program.LoadSettings(home.Loop.Paths.Settings);
+            var controls = PlatformControls.From(settings);
+            TestAssert.False(controls.PaidContentOff, "no field: skins and RP are offered");
+            TestAssert.True(playable.All(controls.IsEnabled), "no field: every champion is enabled");
+
+            // Saved the way the Settings page saves them: the switch off, and one champion disabled.
+            var disabled = playable[0];
+            HostInviteChecks.WriteSettings(home, new { serverExecutable = home.Loop.Paths.ServerExecutable, paidContentOff = true, disabledChampions = new[] { disabled } });
+            (settings, _) = Amberline.Platform.Program.LoadSettings(home.Loop.Paths.Settings);
+            controls = PlatformControls.From(settings);
+            TestAssert.True(controls.PaidContentOff, "the saved switch: skins and RP off");
+            TestAssert.False(controls.IsEnabled(disabled), "the saved list: the champion is disabled");
+            TestAssert.True(playable.Skip(1).All(controls.IsEnabled), "the saved list: the other champions stay enabled");
+        }
+        finally { Delete(home.Root); }
+        TestAssert.Equal(champions, ChampionCatalog.All.Count, "the champion list stays as it was");
+    }
+
+    /// <summary>
+    /// Batch 751 fix (owner's rule: Settings always renders): while the AIR client's champion data cannot be read, Settings still answers
+    /// 200 with a plain line in place of the list, and a Champions save is refused and leaves the stored list as it was.
+    /// </summary>
+    [Check("server.host-settings-champions-unreadable", TimeoutSeconds = 180)]
+    public static void ChampionsUnreadableKeepsSettingsAndTheSavedList() => ChampionsUnreadableAsync().GetAwaiter().GetResult();
+
+    private static Task ChampionsUnreadableAsync() => OnSettingsPageAsync("league-host-champions-unreadable", async (home, browser, accounts) =>
+    {
+        var playable = AirGameDtos.ChampionNames.Keys.ToArray();
+        var disabled = playable[0];
+        await SavedAsync(browser, HostSettingsPage.ChampionsPath, "champions", HostSettingsPage.PagePath,
+            playable.Skip(1).Select(id => ("champion", id.ToString())).ToArray());
+        TestAssert.Equal(disabled.ToString(), string.Join(",", DisabledList(home) ?? []), "the list is saved while the data reads");
+
+        var real = HostSettingsPage.ChampionRoster;
+        HostSettingsPage.ChampionRoster = () => throw new FileNotFoundException("The AIR client's files are not here.");
+        try
+        {
+            var page = await GetAsync(browser, HostSettingsPage.PagePath);
+            Has(page, "<h2 id=paid-title>Skins and RP</h2>", "<h2 id=champions-title>Champions</h2>",
+                "The champion list appears once Amberline can read the AIR client's files.");
+            TestAssert.False(page.Contains("name=champion value=", StringComparison.Ordinal), "no list while the data cannot be read");
+
+            using var refused = await PostAsync(browser, HostSettingsPage.ChampionsPath, HostSettingsPage.PagePath, ("champion", playable[1].ToString()));
+            TestAssert.Equal(HttpStatusCode.BadRequest, refused.StatusCode, await refused.Content.ReadAsStringAsync());
+            TestAssert.Equal(disabled.ToString(), string.Join(",", DisabledList(home) ?? []), "a refused save leaves the stored list unchanged");
+            TestAssert.False(accounts.Controls.IsEnabled(disabled), "the live controls keep the disabled champion");
+            TestAssert.True(accounts.Controls.IsEnabled(playable[1]), "and the others stay enabled");
+        }
+        finally { HostSettingsPage.ChampionRoster = real; }
+    });
+
     [Check("server.host-uninstall", TimeoutSeconds = 300)]
     public static void UninstallRemovesOnlyAmberlinesOwnPartsOnceItHasEnded() => UninstallAsync().GetAwaiter().GetResult();
 
@@ -516,7 +665,7 @@ public static class HostSettingsChecks
     }
 
     /// <summary>A page-only Settings on the home's page port (the gate, the shell, the steps without logins, Settings), until Stop or Restart.</summary>
-    internal static async Task<bool> RunSettingsAsync(Home home, Func<int> games)
+    internal static async Task<bool> RunSettingsAsync(Home home, Func<int> games, PlatformAccounts? accounts = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
         builder.Logging.ClearProviders();
@@ -536,7 +685,7 @@ public static class HostSettingsChecks
         HostPages.Use(app, home.Loop, () => steps.ServerName, nav: true);
         // Batch 656: the sign-up's switch, saved off; this page-only Settings serves no friends' port and makes no login (no account store).
         using var signUp = new HostSelfRegistration(home.Loop, null!, home.RemotePort, new string('A', 64), on: false);
-        HostSettingsPage.Map(app, home.Loop, steps, games, signUp);
+        HostSettingsPage.Map(app, home.Loop, steps, games, signUp, accounts);
         return await home.Loop.RunAsync(app, home.Port);
     }
 
@@ -564,6 +713,21 @@ public static class HostSettingsChecks
         using var json = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings));
         return json.RootElement.TryGetProperty("cheatAccounts", out var value) && value.ValueKind == JsonValueKind.Array
             ? value.EnumerateArray().Select(id => id.GetInt64()).ToArray() : null;
+    }
+
+    /// <summary>platform.json's <c>disabledChampions</c> (batch 751), or null while it has none.</summary>
+    private static int[]? DisabledList(Home home)
+    {
+        using var json = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings));
+        return json.RootElement.TryGetProperty("disabledChampions", out var value) && value.ValueKind == JsonValueKind.Array
+            ? value.EnumerateArray().Select(id => id.GetInt32()).ToArray() : null;
+    }
+
+    /// <summary>A switch platform.json holds on; the field is written only when it is on (batch 751), so a missing one is off.</summary>
+    private static bool Flag(Home home, string name)
+    {
+        using var json = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings));
+        return json.RootElement.TryGetProperty(name, out var value) && value.GetBoolean();
     }
 
     private static string? Setting(Home home, string name)

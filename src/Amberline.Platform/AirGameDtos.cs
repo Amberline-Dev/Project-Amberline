@@ -65,7 +65,9 @@ public static class AirGameDtos
         SpellNamesFor(mapId).TryGetValue(spellId, out var name) && AirDtos.SpellMinimumLevel(name) <= summonerLevel;
     // AirGeneratedContent.swf: ChampionGeneratedData (ChampionCatalog.SkinCount). The catalogs are
     // contiguous, with global skinId = championId * 1000 + native skinIndex.
-    public static IEnumerable<int> SkinIds(int champion) => !ChampionNames.TryGetValue(champion, out var playable)
+    // NOT RETAIL (batch 751): <paramref name="skinsOff"/> is the host's "Offer skins and RP" switch turned off (PlatformControls.PaidContentOff);
+    // retail always offered every skin. Off, no champion has a skin to offer, so every caller sees only the default look.
+    public static IEnumerable<int> SkinIds(int champion, bool skinsOff) => skinsOff ? [] : !ChampionNames.TryGetValue(champion, out var playable)
         // A champion the server cannot play has no installed skin data to filter against: its catalog skins, all locked.
         ? Enumerable.Range(1, ChampionCatalog.ById(champion)!.SkinCount).Select(index => champion * 1000 + index)
         : Amberline.Data.GameData.Default.Skins(playable)

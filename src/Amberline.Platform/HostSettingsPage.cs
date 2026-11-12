@@ -20,6 +20,9 @@ public static class HostSettingsPage
     public const string NamePath = PagePath + "/name", AddressPath = PagePath + "/address", FoldersPath = PagePath + "/folders",
         UninstallPath = PagePath + "/uninstall", RegisterPath = PagePath + "/register", CheatsPath = PagePath + "/cheats",
         SharePath = PagePath + "/share";
+    // NOT RETAIL (batch 751): retail had no host page for either switch; these two paths are the Settings sections' own POST routes.
+    /// <summary>Batch 751: Settings' "Skins and RP" switch and its Champions list (<see cref="PlatformControls"/>).</summary>
+    public const string PaidContentPath = PagePath + "/paid-content", ChampionsPath = PagePath + "/champions";
 
     /// <summary>
     /// DIAGNOSTICS (batch 680; owner, 4 November 2026: "selected person will have cheats in all matches - only toggleable by the host",
@@ -47,7 +50,7 @@ public static class HostSettingsPage
         HostFolders.MapSettings(app, loop, games);
         PlatformAccount[] Logins() => [.. (accounts?.ListAccounts() ?? []).OrderBy(account => account.Username, StringComparer.Ordinal)];
         IResult Page(HttpContext context, IAntiforgery antiforgery, string saved, string? problem = null, string? typed = null) =>
-            HostMode.Page(Render(loop, steps, signUp, share, Logins(), Program.RegistrationToken(context, antiforgery), saved, problem, typed),
+            HostMode.Page(Render(loop, steps, signUp, share, accounts?.Controls, Logins(), Program.RegistrationToken(context, antiforgery), saved, problem, typed),
                 problem is null ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
         if (share is not null)
             app.MapPost(SharePath, async (HttpContext context, IAntiforgery antiforgery) =>
@@ -77,6 +80,29 @@ public static class HostSettingsPage
             HostMode.Change(loop.Paths.Settings, saved => saved with { CheatAccounts = ticked, AllowCheats = false });
             return Results.Redirect(PagePath + "?saved=cheats");
         });
+        // NOT RETAIL (batch 751): the switch saves first and then sets the live value, so a failed save (an unreadable platform.json throws) changes nothing live.
+        app.MapPost(PaidContentPath, async (HttpContext context, IAntiforgery antiforgery) =>
+        {
+            var form = await HostSteps.FormAsync(context, antiforgery);
+            if (form is null) return Page(context, antiforgery, "", HostSteps.Expired);
+            var off = form["on"] != "on";
+            HostMode.Change(loop.Paths.Settings, saved => saved with { PaidContentOff = off });
+            if (accounts is not null) accounts.Controls.PaidContentOff = off;
+            return Results.Redirect(PagePath + "?saved=paid");
+        });
+        // NOT RETAIL (batch 751): one field per ticked box; the saved list is the playable ids that are not ticked, so an id that is not playable is ignored.
+        app.MapPost(ChampionsPath, async (HttpContext context, IAntiforgery antiforgery) =>
+        {
+            var form = await HostSteps.FormAsync(context, antiforgery);
+            if (form is null) return Page(context, antiforgery, "", HostSteps.Expired);
+            // Without the roster, a save would wipe the stored list (every playable id would look unticked): nothing is saved.
+            if (Roster() is not { } roster) return Page(context, antiforgery, "", ChampionsUnreadable);
+            var ticked = form["champion"].Select(value => int.TryParse(value, out var id) ? (int?)id : null).OfType<int>().ToHashSet();
+            int[] disabled = [.. roster.Keys.Where(id => !ticked.Contains(id))];
+            HostMode.Change(loop.Paths.Settings, saved => saved with { DisabledChampions = disabled });
+            if (accounts is not null) accounts.Controls.DisabledChampions = disabled.ToHashSet();
+            return Results.Redirect(PagePath + "?saved=champions");
+        });
         app.MapGet(UninstallPath, (HttpContext context, IAntiforgery antiforgery) =>
             UninstallPage(loop, Program.RegistrationToken(context, antiforgery), games(), null, false, false));
         app.MapPost(UninstallPath, async (HttpContext context, IAntiforgery antiforgery) =>
@@ -98,13 +124,38 @@ public static class HostSettingsPage
         });
     }
 
+    /// <summary>What the Champions section says while Amberline cannot read the AIR client's files (no AIR folder yet, or unreadable).</summary>
+    private const string ChampionsUnreadable = "The champion list appears once Amberline can read the AIR client's files.";
+
+    /// <summary>
+    /// DIAGNOSTICS (batch 751 fix; a test seam): the roster Settings lists, which a check replaces to show a Settings page whose files cannot be read.
+    /// The real roster is <see cref="AirGameDtos.ChampionNames"/>, read from the AIR client's data.
+    /// </summary>
+    public static Func<IReadOnlyDictionary<int, string>> ChampionRoster { get; set; } = () => AirGameDtos.ChampionNames;
+
+    private static int _rosterLogged;
+
+    /// <summary>
+    /// The roster, or null while the AIR client's data cannot be read (missing, locked or malformed: batch 751 final review, any non-fatal
+    /// error): Settings still renders, and a Champions save changes nothing. The first failure writes one console line, its type only.
+    /// </summary>
+    private static IReadOnlyDictionary<int, string>? Roster()
+    {
+        try { return ChampionRoster(); }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+            if (Interlocked.Exchange(ref _rosterLogged, 1) == 0) Console.Error.WriteLine($"Amberline could not read the AIR client's champion list: {ex.GetType().Name}");
+            return null;
+        }
+    }
+
     private static UninstallPlan? Plan(HostLoop loop) =>
         HostUninstall.Plan(loop.Paths, HostMode.ReadOrDefault(loop.Paths.Settings), loop.Uninstall.LocalAppData);
 
     private static string Encode(string? text) => WebUtility.HtmlEncode(text ?? "");
 
     /// <summary>The page; a <paramref name="typed"/> value makes <paramref name="problem"/> the Games field's (<see cref="HostGamesSetting"/>).</summary>
-    private static string Render(HostLoop loop, HostSteps steps, HostSelfRegistration signUp, HostFileShare? share, PlatformAccount[] logins,
+    private static string Render(HostLoop loop, HostSteps steps, HostSelfRegistration signUp, HostFileShare? share, PlatformControls? controls, PlatformAccount[] logins,
         string token, string saved, string? problem, string? typed = null)
     {
         var settings = HostMode.ReadOrDefault(loop.Paths.Settings);
@@ -119,7 +170,7 @@ public static class HostSettingsPage
             "name" => $"<p class=notice role=status>Saved. Send your users the new Play file to show the new name. {PlayFileLink}</p>",
             "address" => $"<p class=notice role=status>Saved. Send your users the new Play file: their old one looks at the old address. {PlayFileLink}</p>",
             "folders" => "<p class=notice role=status>Saved. Amberline restarted to use the new folders.</p>",
-            "register" or "share" => "<p class=notice role=status>Saved.</p>",
+            "register" or "share" or "paid" or "champions" => "<p class=notice role=status>Saved.</p>",
             "cheats" => "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
             HostGamesSetting.Saved => $"<p class=notice role=status>{HostGamesSetting.SavedNotice}</p>",
             _ => "",
@@ -134,6 +185,27 @@ public static class HostSettingsPage
             <label class=choice><input type=checkbox name=on value=on{(share.On ? " checked" : "")}>Share the game files with players</label>
             <div class=buttons><button type=submit>Save</button></div></form>
             {share.Status()}</section>
+            """;
+        // NOT RETAIL (batch 751): the Skins and RP switch, and the Champions list (only with the store, whose live controls it sets).
+        var paid = $"""
+            <section class=folder aria-labelledby=paid-title><h2 id=paid-title>Skins and RP</h2>
+            <form method=post action={PaidContentPath}>{token}
+            <label class=choice><input type=checkbox name=on value=on{(settings.PaidContentOff ? "" : " checked")}>Offer skins and RP</label>
+            <p class=tip>Off: everyone plays the default looks, and the store shows no skins and no RP. Nothing anyone owns is removed.</p>
+            <div class=buttons><button type=submit>Save</button></div></form></section>
+            """;
+        var roster = controls is null ? null : Roster();
+        var champions = controls is null ? "" : roster is null
+            ? $"""<section class=folder aria-labelledby=champions-title><h2 id=champions-title>Champions</h2><p class=tip>{ChampionsUnreadable}</p></section>"""
+            : $"""
+            <section class=folder aria-labelledby=champions-title><h2 id=champions-title>Champions</h2>
+            <p class=tip>Tick the champions players may pick. Tutorials keep their own champions.</p>
+            <form method=post action={ChampionsPath}>{token}
+            <p class=table-search data-needs-script hidden><label for=champion-search>Search champions</label><input type=search id=champion-search autocomplete=off></p>
+            <div id=champions class=champion-list>{string.Concat(roster.Select(champion =>
+                $"<label class=choice><input type=checkbox name=champion value={champion.Key}{(controls!.IsEnabled(champion.Key) ? " checked" : "")}>{Encode(champion.Value)}{(PlatformGames.KeptByBattleTraining(champion.Key) ? " (Battle Training keeps it)" : "")}</label>"))}</div>
+            <p id=champions-none class=empty hidden>No champions match your search.</p>
+            <div class=buttons><button type=submit>Save</button></div></form></section>
             """;
         return $$"""
             <h1>Settings</h1>
@@ -156,6 +228,8 @@ public static class HostSettingsPage
             <label class=choice><input type=checkbox name=on value=on{{(signUp.On ? " checked" : "")}}>Let people register themselves</label>
             <div class=buttons><button type=submit>Save</button></div></form>
             {{signUp.Link(steps.PublicHost)}}</section>
+            {{paid}}
+            {{champions}}
             {{files}}
             <section class=folder aria-labelledby=cheats-title><h2 id=cheats-title>Cheat commands</h2>
             <p>A ticked login can use them in every game it plays here. Only you can change this list.</p>

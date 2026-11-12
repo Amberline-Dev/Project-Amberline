@@ -2,7 +2,10 @@ using System.Globalization;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Amberline.Core;
 using Amberline.Data;
@@ -182,6 +185,240 @@ public static class HostDashboardChecks
             TestAssert.True(call.StartsWith("127.0.0.1 ", StringComparison.Ordinal), "every router request went to the fake router: " + call);
         TestAssert.Equal(catalogLoaded, ChampionCatalogLoaded(), "the full Platform's start leaves the champion list unloaded");
         Delete(home.Root);
+    }
+
+    [Check("server.host-dashboard-hide-card", TimeoutSeconds = 180)]
+    public static void AnAttentionCardHidesAndComesBackOnlyWhenItsProblemChanges() => HideCardAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Batch 751: every Needs-your-attention card has Hide. The router answers with no internet address (A-NET-03) and Windows cannot read
+    /// the firewall rules (A-NET-02, Unreadable). A hidden card stays hidden through a new dashboard on the same folder, is forgotten by a
+    /// pass that does not raise it, and comes back for a different problem; the network line counts it; Show them clears the set.
+    /// </summary>
+    private static async Task HideCardAsync()
+    {
+        await using var router = await HostUpnpChecks.FakeRouter.StartAsync();
+        var firewall = new HideFirewall();
+        var home = Home.Create("league-host-hide-card", network: new HostNetwork(
+            cancel => UpnpGateway.DiscoverAsync(router.SsdpEndPoint, TimeSpan.FromSeconds(3), cancel), firewall.ReadAsync,
+            (_, _) => Task.FromResult<int?>(null), () => (null, null)));
+        var stateFile = HostFriendLight.StateFile(home.Loop.Paths.Data);
+        Directory.CreateDirectory(Path.GetDirectoryName(stateFile)!);
+        File.WriteAllText(stateFile, """{"keptKey": "kept"}""");
+        router.ExternalAddress = "";
+        var settings = new PlatformSettings(home.Game, home.Loop.Paths.ServerExecutable, HttpPort: home.Port, RemotePort: home.RemotePort, AirRoot: home.Air);
+        var run = Task.Run(() => RunDashboardAsync(home, settings));
+        try
+        {
+            using var client = home.Client();
+            await WaitForStartAsync(home.Loop, 1, run);
+            await home.SignInAsync(client);
+
+            // The first pass: the firewall cannot be read, and the router has no internet address (A-NET-03 on the address line).
+            var status = await WaitForStatusAsync(client, now => Check(now, "firewall").State != "checking" && Check(now, "address").State != "checking");
+            var page = await PageAsync(client, HostDashboard.PagePath);
+            var token = Token(page);
+
+            // Batch 751 final review: the router that answers without an internet address (A-NET-03 on the address line) and the router that
+            // does not answer (A-NET-03 on the router line) are two problems. Hiding the first never hides the second, nor its warning.
+            using (var hide = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-NET-03"), ("subject", CardSubject(status, "A-NET-03")!))))
+                TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the no-address card");
+            router.Answer = false;
+            await using (var silent = new HostDashboard(home.Loop, settings, () => [], () => []))
+            {
+                await silent.Network.TestAsync(CancellationToken.None);
+                var shown = silent.Status(DateTimeOffset.Now);
+                TestAssert.Equal("Your router did not answer. It may have UPnP switched off.", shown.Attention.SingleOrDefault(card => card.Code == "A-NET-03")?.Message,
+                    "the router that does not answer shows although the no-address card was hidden");
+                TestAssert.Equal("Network: 1 thing needs your attention", shown.Network, "and it counts as a problem");
+            }
+            router.Answer = true;
+            using (var show = await client.PostAsync(HostDashboard.PagePath + "/show-hidden", Form(token)))
+                TestAssert.Equal(HttpStatusCode.Redirect, show.StatusCode, "Show them");
+
+            TestAssert.Equal("Unreadable", CardSubject(status, "A-NET-02"), "the firewall card names its state");
+            TestAssert.Equal("address", CardSubject(status, "A-NET-03"), "the router card names its line");
+            TestAssert.True(page.Contains("<template id=hide-template>", StringComparison.Ordinal) && page.Contains($"action={HostDashboard.PagePath}/hide", StringComparison.Ordinal) &&
+                page.Contains($"action={HostDashboard.PagePath}/show-hidden", StringComparison.Ordinal), "every card has Hide, and Show them is on the page");
+
+            // The route refuses a form without its token, a card that keeps its own Hide (A-NET-09), and a card that is not named.
+            using (var bare = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(new("x", "y"), ("code", "A-NET-03"), ("subject", "A-NET-03"))))
+                TestAssert.Equal(HttpStatusCode.BadRequest, bare.StatusCode, "a form without its token");
+            using (var own = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-NET-09"), ("subject", "x"))))
+                TestAssert.Equal(HttpStatusCode.BadRequest, own.StatusCode, "A-NET-09 keeps its own Hide");
+
+            // Hide the router card: it goes, the firewall card stays, the network line says 1 hidden, and the headline keeps its warning.
+            using (var hide = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-NET-03"), ("subject", "address"))))
+                TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the router card");
+            status = await StatusAsync(client);
+            TestAssert.False(HasCard(status, "A-NET-03"), "the hidden card is gone");
+            TestAssert.True(HasCard(status, "A-NET-02"), "the firewall card stays");
+            TestAssert.Equal("Network: 1 hidden", status.GetProperty("network").GetString(), "the network line counts the hidden card");
+            TestAssert.True(status.GetProperty("headline").GetString()!.EndsWith(" Players may not be able to join: see Needs your attention.", StringComparison.Ordinal),
+                "the firewall card still warns: " + status.GetProperty("headline").GetString());
+            TestAssert.Equal("1 message hidden.", status.GetProperty("hidden").GetString(), "the count below the list");
+            TestAssert.Equal(new[] { "A-NET-03:address" }, HiddenEntries(stateFile), "the hidden identity is saved by code and subject");
+            TestAssert.Equal("kept", JsonNode.Parse(File.ReadAllText(stateFile))!["keptKey"]!.GetValue<string>(), "the file's other keys stay");
+
+            // A new dashboard on the same folder: the router card stays hidden, the firewall card shows.
+            await using (var reloaded = new HostDashboard(home.Loop, settings, () => [], () => []))
+            {
+                await reloaded.Network.TestAsync(CancellationToken.None);
+                var again = reloaded.Status(DateTimeOffset.Now);
+                TestAssert.False(again.Attention.Any(card => card.Code == "A-NET-03"), "the hidden card survives a restart");
+                TestAssert.True(again.Attention.Any(card => card.Code == "A-NET-02"), "the firewall card shows after a restart");
+            }
+
+            // A pass where the router answers with its address: the card is not raised, so its hidden entry goes.
+            router.ExternalAddress = "198.51.100.20";
+            using (var answer = await client.PostAsync(HostDashboard.PagePath + "/network", Form(token)))
+                TestAssert.Equal(HttpStatusCode.Redirect, answer.StatusCode, "Test again");
+            status = await StatusAsync(client);
+            TestAssert.False(HasCard(status, "A-NET-03"), "no router card while the address is public");
+            TestAssert.Equal(Array.Empty<string>(), HiddenEntries(stateFile), "a pass that does not raise the card forgets its hidden entry");
+
+            // The same problem again, in a later pass: it shows.
+            router.ExternalAddress = "";
+            using (var answer = await client.PostAsync(HostDashboard.PagePath + "/network", Form(token)))
+                TestAssert.Equal(HttpStatusCode.Redirect, answer.StatusCode, "Test again");
+            status = await StatusAsync(client);
+            TestAssert.Equal("address", CardSubject(status, "A-NET-03"), "the same problem coming back shows again");
+            TestAssert.Equal("Network: 1 thing needs your attention", status.GetProperty("network").GetString(), "the problem count is back");
+
+            // Hide both cards: no warning, the network line says 2 hidden; Show them brings both back.
+            using (var hide = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-NET-03"), ("subject", "address"))))
+                TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the router card again");
+            using (var hide = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-NET-02"), ("subject", "Unreadable"))))
+                TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the firewall card");
+            status = await StatusAsync(client);
+            TestAssert.True(Regex.IsMatch(status.GetProperty("headline").GetString()!, @"^Running since \d\d:\d\d\.$"), "no warning when every problem is hidden: " + status.GetProperty("headline").GetString());
+            TestAssert.Equal("Network: 2 hidden", status.GetProperty("network").GetString(), "the network line says 2 hidden");
+            TestAssert.Equal("2 messages hidden.", status.GetProperty("hidden").GetString(), "two messages hidden");
+            using (var show = await client.PostAsync(HostDashboard.PagePath + "/show-hidden", Form(token)))
+                TestAssert.Equal(HttpStatusCode.Redirect, show.StatusCode, "Show them");
+            status = await StatusAsync(client);
+            TestAssert.True(HasCard(status, "A-NET-02") && HasCard(status, "A-NET-03"), "Show them brings both cards back");
+            TestAssert.Equal(JsonValueKind.Null, status.GetProperty("hidden").ValueKind, "nothing hidden");
+            TestAssert.Equal(Array.Empty<string>(), HiddenEntries(stateFile), "Show them clears the saved set");
+
+            // The firewall card is hidden as Unreadable; a pass that reads Blocked shows the Blocked card, and the Unreadable entry goes.
+            using (var hide = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-NET-02"), ("subject", "Unreadable"))))
+                TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the unreadable firewall");
+            firewall.Shown = [new ShownRule("Amberline block", new Dictionary<string, string>
+            {
+                ["Enabled"] = "Yes", ["Direction"] = "In", ["Action"] = "Block", ["Program"] = Environment.ProcessPath!,
+            })];
+            using (var answer = await client.PostAsync(HostDashboard.PagePath + "/network", Form(token)))
+                TestAssert.Equal(HttpStatusCode.Redirect, answer.StatusCode, "Test again");
+            status = await StatusAsync(client);
+            TestAssert.Equal("Blocked", CardSubject(status, "A-NET-02"), "the blocked firewall shows although Unreadable was hidden");
+            TestAssert.Equal(Array.Empty<string>(), HiddenEntries(stateFile), "the Unreadable entry is forgotten");
+
+            // A-FILES-06's subject is a digest of the app folder and the problem's kind (batch 751 merge-sweep fix: never the folder, which the
+            // status JSON would show); a subject past 1024 characters is refused.
+            var filesSubject = HostStartChecks.FilesSubject(Path.Combine(home.Loop.Paths.App, ".."), "missing");
+            using (var files = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-FILES-06"), ("subject", filesSubject))))
+                TestAssert.Equal(HttpStatusCode.Redirect, files.StatusCode, "the app folder's card can be hidden");
+            using (var tooLong = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-FILES-06"), ("subject", new string('p', 1025)))))
+                TestAssert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode, "a subject past the limit is refused");
+            TestAssert.Equal(new[] { "A-FILES-06:" + filesSubject }, HiddenEntries(stateFile), "the subject is saved");
+            // The folder has no problem now, so the next pass forgets its entry (A-FILES-06 ran and raised nothing).
+            status = await StatusAsync(client);
+            TestAssert.Equal(JsonValueKind.Null, status.GetProperty("hidden").ValueKind, "a folder with no problem is forgotten by the next pass");
+            using (var show = await client.PostAsync(HostDashboard.PagePath + "/show-hidden", Form(token)))
+                TestAssert.Equal(HttpStatusCode.Redirect, show.StatusCode, "Show them clears it");
+
+            // The owner's rented server: the router does not answer at all (no router to find), so the address line is unknown without a card.
+            // Hiding the firewall card and the router card leaves no warning and says 2 hidden.
+            firewall.Shown = null;
+            using (var hide = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-NET-02"), ("subject", "Unreadable"))))
+                TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the firewall card (router not found)");
+            using (var hide = await client.PostAsync(HostDashboard.PagePath + "/hide", Form(token, ("code", "A-NET-03"), ("subject", "router"))))
+                TestAssert.Equal(HttpStatusCode.Redirect, hide.StatusCode, "Hide the router card (router not found)");
+            // A dashboard that finds no router (it has none yet: discovery is silent), so its address line is unknown with no card.
+            router.Answer = false;
+            await using (var silent = new HostDashboard(home.Loop, settings, () => [], () => []))
+            {
+                await silent.Network.TestAsync(CancellationToken.None);
+                var quiet = silent.Status(DateTimeOffset.Now);
+                TestAssert.Equal(0, quiet.Attention.Length, "both cards are hidden; the address line has no card");
+                TestAssert.Equal("Network: 2 hidden", quiet.Network, "the network line says 2 hidden");
+                TestAssert.True(Regex.IsMatch(quiet.Headline, @"^Running since \d\d:\d\d\.$"), "no warning while every card is hidden (router not found): " + quiet.Headline);
+            }
+            router.Answer = true;
+            using (var show = await client.PostAsync(HostDashboard.PagePath + "/show-hidden", Form(token)))
+                TestAssert.Equal(HttpStatusCode.Redirect, show.StatusCode, "Show them again");
+
+            // Batch 751 final review: hiding "Play files stop working on <date>" never hides "stopped working", a different problem (the
+            // subject names the certificate and its state); the warning's entry is forgotten once the certificate has run out.
+            using (var key = ECDsa.Create())
+            using (var certificate = new CertificateRequest("CN=hide-check", key, HashAlgorithmName.SHA256).CreateSelfSigned(DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now.AddDays(30)))
+            {
+                var ends = new DateTimeOffset(certificate.NotAfter);
+                var unstarted = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] }).Build();
+                await using (unstarted)
+                await using (var later = new HostDashboard(home.Loop, settings, () => [], () => []))
+                {
+                    later.Map(unstarted, certificate: certificate);
+                    var soon = later.Status(ends - TimeSpan.FromDays(10)).Attention.Single(card => card.Code == "A-CERT-01");
+                    later.Hidden.Add(soon.Code, soon.Subject);
+                    TestAssert.False(later.Status(ends - TimeSpan.FromDays(9)).Attention.Any(card => card.Code == "A-CERT-01"), "the warning is hidden");
+                    TestAssert.Equal("Your users' Play files stopped working: Amberline's certificate ran out.",
+                        later.Status(ends + TimeSpan.FromDays(1)).Attention.SingleOrDefault(card => card.Code == "A-CERT-01")?.Message,
+                        "the certificate that ran out shows although the warning was hidden");
+                    TestAssert.Equal(Array.Empty<string>(), HiddenEntries(stateFile), "the warning's entry is forgotten");
+                }
+            }
+
+            home.Loop.Stop();
+            TestAssert.False(await run.WaitAsync(TimeSpan.FromSeconds(30)), "the page stopped");
+        }
+        finally
+        {
+            if (!run.IsCompleted) home.Loop.Stop();
+            await run.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        Delete(home.Root);
+    }
+
+    /// <summary>The firewall read-back for the hide check: unreadable (null) until a list is set.</summary>
+    private sealed class HideFirewall
+    {
+        public IReadOnlyList<ShownRule>? Shown { get; set; }
+
+        public Task<IReadOnlyList<ShownRule>?> ReadAsync(CancellationToken cancel) => Task.FromResult(Shown);
+    }
+
+    private static async Task<bool> RunDashboardAsync(Home home, PlatformSettings settings)
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
+        builder.Logging.ClearProviders();
+        builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, home.Port));
+        builder.Services.AddAntiforgery(options => options.Cookie.Name = "Amberline.Forms");
+        builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(home.Loop.Paths.Keys));
+        await using var app = builder.Build();
+        HostGate.Use(app, home.Port, home.Loop.Sessions, HostDashboard.PagePath);
+        HostPages.Use(app, home.Loop, () => "Test Server", nav: true);
+        await using var dashboard = new HostDashboard(home.Loop, settings, () => [], () => []);
+        dashboard.Map(app);
+        return await home.Loop.RunAsync(app, home.Port);
+    }
+
+    /// <summary>The card's subject for a code, or null when no card has it.</summary>
+    private static string? CardSubject(JsonElement status, string code) =>
+        status.GetProperty("attention").EnumerateArray().Where(card => card.GetProperty("code").GetString() == code)
+            .Select(card => card.GetProperty("subject").GetString()).FirstOrDefault();
+
+    private static bool HasCard(JsonElement status, string code) =>
+        status.GetProperty("attention").EnumerateArray().Any(card => card.GetProperty("code").GetString() == code);
+
+    /// <summary>The saved hidden identities, each as "code:subject"; none when the key or the file is missing.</summary>
+    private static string[] HiddenEntries(string stateFile)
+    {
+        var state = JsonNode.Parse(File.ReadAllText(stateFile))!.AsObject();
+        return state["hiddenCards"] is JsonArray entries
+            ? [.. entries.Select(entry => $"{entry!["code"]!.GetValue<string>()}:{entry["subject"]!.GetValue<string>()}")]
+            : [];
     }
 
     [Check("server.host-lan-mode-skips-router", TimeoutSeconds = 180)]

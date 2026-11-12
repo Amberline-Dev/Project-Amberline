@@ -79,12 +79,16 @@ public sealed class AirRemoteAccess
         return account is { } id && Allowed(id) ? id : null;
     }
 
-    /// <summary>Ends the account's token. Tunnels already open stay up until their companion disconnects.</summary>
+    /// <summary>
+    /// Ends the account's token. Tunnels already open stay up until their companion disconnects. Batch 751: after a save that failed (the token
+    /// left memory but not the file), the next revoke writes the file again even with nothing left to remove, so a second New password, the
+    /// pages' advice, really ends the token for the next start too.
+    /// </summary>
     public void Revoke(long accountId)
     {
         lock (_gate)
         {
-            if (_entries.RemoveAll(e => e.AccountId == accountId) > 0) Save();
+            if (_entries.RemoveAll(e => e.AccountId == accountId) > 0 || _unsaved) Save();
         }
     }
 
@@ -120,5 +124,13 @@ public sealed class AirRemoteAccess
     private static IPAddress KeyOf(IPAddress? address) =>
         address is null ? IPAddress.None : address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
 
-    private void Save() => HostFiles.Write(_path, _entries);
+    // Under _gate: true from a write's start until it succeeds, so a write that threw is retried by the next Revoke.
+    private bool _unsaved;
+
+    private void Save()
+    {
+        _unsaved = true;
+        HostFiles.Write(_path, _entries);
+        _unsaved = false;
+    }
 }

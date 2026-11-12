@@ -49,6 +49,14 @@ public sealed partial class PlatformGames
     internal static readonly string[] BattleTrainingChampions = ["Garen", "Ryze", "Ashe"];
 
     /// <summary>
+    /// NOT RETAIL (batch 751): one of <see cref="BattleTrainingChampions"/>, which Battle Training keeps when the host turns it off. The client
+    /// checks a champion's <c>active</c> before its fixed grid (ChampionSelectionController.as:1085, 1093), so these stay active for it;
+    /// the server refuses them everywhere else (<see cref="Pick"/>).
+    /// </summary>
+    internal static bool KeptByBattleTraining(int champion) =>
+        AirGameDtos.ChampionNames.TryGetValue(champion, out var name) && BattleTrainingChampions.Contains(name);
+
+    /// <summary>
     /// Batch 669: <c>gameService.createTutorialGame(1)</c>, Battle Training, from the play menu's battle_training entry
     /// (ChooseGameFlowViewLayoutDefinition.as:158), the basic tutorial's "yes" (EndOfTutorialGameView.as:354) and the new summoner's tutorial
     /// offer. The client then runs its guided champion select (ChampionSelectionController.as:1286, AdvancedTutorialController): the player

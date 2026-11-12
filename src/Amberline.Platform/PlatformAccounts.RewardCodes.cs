@@ -25,6 +25,8 @@ public sealed record PlatformRewardCodeRedemption(
 public sealed partial class PlatformAccounts
 {
     private const long MaxRewardAmount = 1_000_000;
+    /// <summary>NOT RETAIL (batch 751): the refusal of a code of RP alone while the host's "Offer skins and RP" switch is off.</summary>
+    public const string RpOnlyCode = "This code gives only RP, and RP is turned off on this server.";
 
     public PlatformIssuedRewardCode CreateRewardCode(long ip, long rp, Guid requestId)
     {
@@ -98,19 +100,24 @@ public sealed partial class PlatformAccounts
             }
             if (reward.RedeemedAt is not null)
                 throw new InvalidDataException("Reward-code redemption marker is incomplete.");
+            // NOT RETAIL (batch 751): while the host's "Offer skins and RP" switch is off a code grants its IP alone, and a code of RP alone is
+            // refused and stays unused, so it can be redeemed once the switch is on again. The grant records what was granted. Retail had no
+            // host codes at all.
+            var rp = Controls.PaidContentOff ? 0 : reward.Rp;
+            if (reward.Ip == 0 && rp == 0) throw new ArgumentException(RpOnlyCode, nameof(code));
 
             var data = account.Economy is null ? PlatformEconomy.LegacyData() : PlatformEconomy.Copy(account.Economy);
-            if (data.Ip > PlatformEconomy.MaxBalance - reward.Ip || data.Rp > PlatformEconomy.MaxBalance - reward.Rp)
+            if (data.Ip > PlatformEconomy.MaxBalance - reward.Ip || data.Rp > PlatformEconomy.MaxBalance - rp)
                 throw new InvalidOperationException("The account balance limit would be exceeded.");
             if (data.Grants?.Any(grant => grant.RequestId == reward.Id) == true)
                 throw new InvalidDataException("The reward-code grant request ID is already present on the account.");
 
             var now = _time.GetUtcNow();
-            var grant = new PlatformCurrencyGrant(reward.Id, reward.Ip, reward.Rp, now);
+            var grant = new PlatformCurrencyGrant(reward.Id, reward.Ip, rp, now);
             var updatedData = data with
             {
                 Ip = checked(data.Ip + reward.Ip),
-                Rp = checked(data.Rp + reward.Rp),
+                Rp = checked(data.Rp + rp),
                 Grants = [.. data.Grants ?? [], grant],
             };
             var updatedAccount = account with { Economy = updatedData };
@@ -166,7 +173,8 @@ public sealed partial class PlatformAccounts
                 if (recipients.Length != 1 || recipients[0].Id != accountId)
                     throw new InvalidDataException("Reward-code recipient and grant do not match.");
                 var grant = recipients[0].Economy!.Grants!.Single(candidate => candidate.RequestId == code.Id);
-                if (grant.Ip != code.Ip || grant.Rp != code.Rp || grant.GrantedAt != code.RedeemedAt)
+                // A grant of RP 0 is a code redeemed while RP was off (batch 751): it granted the IP alone.
+                if (grant.Ip != code.Ip || grant.Rp != code.Rp && grant.Rp != 0 || grant.GrantedAt != code.RedeemedAt)
                     throw new InvalidDataException("Reward-code grant does not match its redemption.");
             }
             else if (recipients.Length != 0)

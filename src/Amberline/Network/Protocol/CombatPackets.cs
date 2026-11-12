@@ -537,7 +537,10 @@ public static class CombatPackets
         writer.Write(stats.SpellBlock);
         writer.Write(stats.AttackSpeedMod);
         writer.Write(0.0f); // 14 mFlatPhysicalDamageMod
-        writer.Write(1.0f); // 15 mPercentPhysicalDamageMod
+        // 15 mPercentPhysicalDamageMod: retail's neutral value is 0, the client constructor's default. Every client read adds 1 to it, the
+        // target bar shows floor((percent + 1) * (mBaseAttackDamage + flat) + 0.5); 1.0 here drew every selected minion
+        // and turret at double its attack damage (batch 752). The server's damage comes from its own stats, not this slot.
+        writer.Write(0.0f);
         writer.Write(0.0f); // 16 mFlatMagicDamageMod
         writer.Write(stats.HpRegen); // 17 mHPRegenRate
         writer.Write(stats.ParRegen); // 18 mPARRegenRate: the record's BaseStaticMPRegen (batch 329; camp monsters 0.5)
@@ -670,9 +673,9 @@ public static class CombatPackets
         writer.Write(stats.Armor);
         writer.Write(stats.SpellBlock);
         writer.Write(stats.AttackSpeedMod);
-        writer.Write(0.0f);
-        writer.Write(1.0f);
-        writer.Write(0.0f);
+        writer.Write(0.0f); // 4 mFlatPhysicalDamageMod
+        writer.Write(0.0f); // 5 mPercentPhysicalDamageMod: neutral 0, see MinionStats (batch 752)
+        writer.Write(0.0f); // 6 mFlatMagicDamageMod
         writer.Write(stats.HpRegen);
         writer.Write(stats.Hp);
         writer.Write(stats.MaxHp ?? stats.Hp);

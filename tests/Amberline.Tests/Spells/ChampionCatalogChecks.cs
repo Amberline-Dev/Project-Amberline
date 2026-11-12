@@ -172,7 +172,7 @@ public static class ChampionCatalogChecks
                 // Batch 597: the 2011 price list is operator content; the neutral list prices every champion alike.
                 if (PlatformContent.Has("store/prices.json")) TestAssert.Equal(champion.DefaultIp, item.IpPrice, $"{champion.Name}: store price");
                 TestAssert.Equal(champion.Name, AirGameDtos.ChampionNames[champion.Id], $"{champion.Name}: AIR id");
-                var skins = AirGameDtos.SkinIds(champion.Id).ToArray();
+                var skins = AirGameDtos.SkinIds(champion.Id, skinsOff: false).ToArray();
                 TestAssert.True(skins.Length >= 1 && skins.All(skin => skin > champion.Id * 1000 && skin <= champion.Id * 1000 + champion.SkinCount),
                     $"{champion.Name}: AIR skins");
                 TestAssert.True(store.ChampionContent(champion.Id) is { Abilities.Count: 5 }, $"{champion.Name}: store content");

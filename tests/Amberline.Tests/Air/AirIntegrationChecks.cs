@@ -59,8 +59,8 @@ public static class AirIntegrationChecks
             "the pickable champions are the playable names, whoever the roster holds (no count is pinned here)");
         TestAssert.Equal(9, AirGameDtos.SpellId("SummonerRally"));
         TestAssert.Equal(5, AirGameDtos.SpellId("SummonerFortify"));
-        TestAssert.True(AirGameDtos.SkinIds(1).Contains(1006));
-        TestAssert.True(!AirGameDtos.SkinIds(1).Contains(6));
+        TestAssert.True(AirGameDtos.SkinIds(1, skinsOff: false).Contains(1006));
+        TestAssert.True(!AirGameDtos.SkinIds(1, skinsOff: false).Contains(6));
 
         var settings = new HostSettings(GameData.Default.Paths.Root, ServerExecutable(), BindAddress: "127.0.0.1");
         var manager = new GameManager(settings, Path.Combine(directory, "games"));

@@ -63,10 +63,10 @@ public static partial class PlatformStore
         var products = all.Select(item => RenderProductRow(item, account, economy, catalog, state: state)).ToArray();
         var empty = products.Length == 0 ? "<p class=empty>No products match these filters.</p>" : string.Empty;
         var filters = RenderFilters(filter, searchTerm, notOwned, sortKey, runeTypeKey, runeTierKey, currencyKey,
-            championTagKey, focusSearch, onSale, championOwned);
+            championTagKey, focusSearch, onSale, championOwned, catalog.PaidContentOff());
         return Page($$"""
             <section class="store-frame store-catalog store-{{(filter ?? "all").ToLowerInvariant()}}">
-              {{RenderStoreHeader(filter)}}
+              {{RenderStoreHeader(catalog, filter)}}
               <div class=store-panel>
                 {{filters}}
                 <section class=catalog-panel><div class=catalog-scroll id=catalog-scroll><div class="products {{(filter == "CHAMPION_SKIN" ? "skin-products" : filter == "RUNE" ? "rune-products" : "champion-products")}}">{{string.Join("", products)}}</div>{{empty}}</div></section>
@@ -75,8 +75,14 @@ public static partial class PlatformStore
             """);
     }
 
-    private static string RenderStoreHeader(string? filter, bool purchases = false, bool codes = false, bool rp = false)
+    /// <param name="catalog">
+    /// NOT RETAIL (batch 751): while the host's "Offer skins and RP" switch is off (<see cref="PlatformStoreCatalog.PaidContentOff"/>) the header
+    /// has no Purchase RP link and no tab whose kind the catalog does not list (Skins, and the kinds sold for RP alone); retail showed them all.
+    /// Null (a page that has no catalog at hand) shows them all.
+    /// </param>
+    private static string RenderStoreHeader(PlatformStoreCatalog? catalog, string? filter, bool purchases = false, bool codes = false, bool rp = false)
     {
+        var listed = catalog?.PaidContentOff() == true ? catalog.Items.Select(item => item.Kind).ToHashSet() : null;
         var tabs = new[]
         {
             (Key: (string?)null, Label: "Home"),
@@ -87,16 +93,17 @@ public static partial class PlatformStore
             (Key: (string?)"BUNDLE", Label: "Bundles"),
             (Key: (string?)"SPELL_BOOK_PAGE", Label: "Other"),
         };
-        var supported = string.Join("", tabs.Select(tab =>
+        var supported = string.Join("", tabs.Where(tab => listed is null || tab.Key is null || listed.Contains(tab.Key)).Select(tab =>
             $"<a class=\"store-tab{(!purchases && !codes && !rp && (string.Equals(tab.Key, filter, StringComparison.Ordinal) || tab.Key is null && filter is null) ? " active" : string.Empty)}\" href=\"{StoreQuery(tab.Key, string.Empty, false, "name")}\">{tab.Label}</a>"));
         var purchasesClass = purchases ? " active" : string.Empty;
         var codesClass = codes ? " active" : string.Empty;
-        return $"<aside class=store-nav><a class=\"store-rp-link{(rp ? " active" : string.Empty)}\" href=\"/store/rp\">Purchase RP</a><nav class=store-tabs>{supported}<a class=\"store-tab{codesClass}\" href=\"/store/codes\">Codes</a><a class=\"store-tab{purchasesClass}\" href=\"/store/purchases\">Purchases</a></nav></aside>";
+        var rpLink = listed is not null ? string.Empty : $"<a class=\"store-rp-link{(rp ? " active" : string.Empty)}\" href=\"/store/rp\">Purchase RP</a>";
+        return $"<aside class=store-nav>{rpLink}<nav class=store-tabs>{supported}<a class=\"store-tab{codesClass}\" href=\"/store/codes\">Codes</a><a class=\"store-tab{purchasesClass}\" href=\"/store/purchases\">Purchases</a></nav></aside>";
     }
 
     private static string RenderFilters(string? filter, string search, bool notOwned, string sort,
         string? runeType = null, RuneTier? runeTier = null, string? currency = null,
-        string? championTag = null, bool focusSearch = false, bool onSale = false, bool championOwned = false)
+        string? championTag = null, bool focusSearch = false, bool onSale = false, bool championOwned = false, bool rpOff = false)
     {
         var kind = filter is null ? string.Empty : WebUtility.HtmlEncode(filter);
         var encodedSearch = WebUtility.HtmlEncode(search);
@@ -108,7 +115,9 @@ public static partial class PlatformStore
         var showAll = $"<a class=check-label href=\"{StoreQuery(filter, string.Empty, false, "name")}\"><input type=checkbox{(notOwned || onSale || championOwned || championTag is not null || runeType is not null || runeTier is not null || currency is not null || search.Length > 0 ? string.Empty : " checked")} onclick=\"return false\"> Show All</a>";
 
         var options = new System.Text.StringBuilder();
-        if (filter is "CHAMPION" or "CHAMPION_SKIN") options.Append(Check("sale", "On Sale", onSale));
+        // NOT RETAIL (batch 751): rpOff, the host's "Offer skins and RP" switch is off: no sale (a sale lowers the RP price), no RP currency and
+        // no RP price sort; retail always offered them.
+        if (filter is "CHAMPION" or "CHAMPION_SKIN" && !rpOff) options.Append(Check("sale", "On Sale", onSale));
         if (filter == "CHAMPION_SKIN") options.Append(Check("championOwned", "Champion Owned", championOwned));
         if (filter is null or "CHAMPION" or "CHAMPION_SKIN" or "RUNE" or "BOOST" or "BUNDLE" or "SPELL_BOOK_PAGE")
             options.Append(Check("notOwned", "Not Owned", notOwned));
@@ -126,13 +135,14 @@ public static partial class PlatformStore
             foreach (var (value, label) in new[] { ("Red", "Mark"), ("Blue", "Glyph"), ("Yellow", "Seal"), ("Black", "Quintessence") })
                 options.Append($"<label class=check-label><input type=radio name=runeType value={value}{(runeType == value ? " checked" : string.Empty)}{submit}> {label}</label>");
             options.Append($"<span class=filter-label>Available for</span><select id=rune-currency name=currency class=sort-select onchange=\"this.form.submit()\"><option value=\"\">Any currency</option>" +
-                $"<option value=IP{(currency == "IP" ? " selected" : string.Empty)}>IP</option><option value=RP{(currency == "RP" ? " selected" : string.Empty)}>RP</option></select>");
+                $"<option value=IP{(currency == "IP" ? " selected" : string.Empty)}>IP</option>" +
+                (rpOff ? string.Empty : $"<option value=RP{(currency == "RP" ? " selected" : string.Empty)}>RP</option>") + "</select>");
         }
         options.Append(showAll);
 
         var sortRows = new System.Text.StringBuilder();
         // The screenshots offer RP and IP price sorts for champions, RP for skins and bundles, IP for runes.
-        if (filter is null or "CHAMPION" or "CHAMPION_SKIN" or "BUNDLE" or "BOOST" or "SPELL_BOOK_PAGE")
+        if (filter is null or "CHAMPION" or "CHAMPION_SKIN" or "BUNDLE" or "BOOST" or "SPELL_BOOK_PAGE" && !rpOff)
             sortRows.Append($"<label class=check-label><input type=radio name=sort value=rp{(sort == "rp" ? " checked" : string.Empty)}{submit}> Price (RP)</label>");
         if (filter is null or "CHAMPION" or "RUNE")
             sortRows.Append($"<label class=check-label><input type=radio name=sort value=ip{(sort == "ip" ? " checked" : string.Empty)}{submit}> Price (IP)</label>");

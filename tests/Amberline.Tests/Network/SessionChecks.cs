@@ -969,7 +969,8 @@ public static class SessionChecks
             TestAssert.Equal(0xFFFFu, BinaryPrimitives.ReadUInt32LittleEndian(bytes[15..19]), name + " mask");
             // The two fields the client kept at its constructor defaults (25 and 0) before the shrine was given this block.
             TestAssert.Equal(999.0f, BinaryPrimitives.ReadSingleLittleEndian(bytes[19..23]), name + " mBaseAttackDamage");
-            TestAssert.Equal(1.0f, BinaryPrimitives.ReadSingleLittleEndian(bytes[39..43]), name + " mPercentPhysicalDamageMod");
+            // Batch 752: mPercentPhysicalDamageMod is the constructor's 0 too; the client adds 1 to it wherever it reads it.
+            TestAssert.Equal(0.0f, BinaryPrimitives.ReadSingleLittleEndian(bytes[39..43]), name + " mPercentPhysicalDamageMod");
             TestAssert.Equal(1u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[67..71]), name + " invulnerable");
             TestAssert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[71..75]), name + " targetable");
             TestAssert.Equal(CombatPackets.SFlagNontargetableAll,

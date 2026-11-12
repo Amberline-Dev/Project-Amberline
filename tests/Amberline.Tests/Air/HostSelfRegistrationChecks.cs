@@ -58,14 +58,14 @@ public static class HostSelfRegistrationChecks
             var settings = await browser.GetStringAsync(HostSettingsPage.PagePath);
             TestAssert.True(settings.Contains($"href=\"{HostPages.StyleHref}\"", StringComparison.Ordinal), "the host pages keep the host stylesheet");
             TestAssert.True(settings.Contains("Let people register themselves", StringComparison.Ordinal) &&
-                !settings.Contains("name=on value=on checked", StringComparison.Ordinal) && !settings.Contains(link, StringComparison.Ordinal), settings);
+                !settings.Contains("name=on value=on checked>Let people register themselves", StringComparison.Ordinal) && !settings.Contains(link, StringComparison.Ordinal), settings);
             TestAssert.False((await browser.GetStringAsync(HostInvite.AddPath)).Contains(link, StringComparison.Ordinal), "Invite has no link while it is off");
 
             // On: saved in platform.json; Settings and Invite show the link, its Copy and the line on the browser's warning.
             await PostAsync(browser, Switch, Token(settings), HttpStatusCode.Redirect, ("on", "on"));
             settings = await browser.GetStringAsync(HostSettingsPage.PagePath + "?saved=register");
             TestAssert.True(settings.Contains("<p class=notice role=status>Saved.", StringComparison.Ordinal) &&
-                settings.Contains("name=on value=on checked", StringComparison.Ordinal) && settings.Contains($">{link}</pre>", StringComparison.Ordinal) &&
+                settings.Contains("name=on value=on checked>Let people register themselves", StringComparison.Ordinal) && settings.Contains($">{link}</pre>", StringComparison.Ordinal) &&
                 settings.Contains("data-copy=register-link>Copy</button>", StringComparison.Ordinal) && settings.Contains(Warning, StringComparison.Ordinal), settings);
             var invite = await browser.GetStringAsync(HostInvite.AddPath);
             TestAssert.True(invite.Contains($">{link}</pre>", StringComparison.Ordinal) && invite.Contains(Warning, StringComparison.Ordinal), invite);
@@ -157,7 +157,8 @@ public static class HostSelfRegistrationChecks
                 TestAssert.True(routes.Any(route => route.Path == expected) || expected == "/setup", expected + " is one of the routes walked");
             foreach (var (path, methods) in routes.Append(("/setup", ["GET", "POST"])).Append(("/register/x", ["GET"])))
             {
-                if (AirRemoteTunnel.IsPublicPath(path) || SignUpPaths.Contains(path)) continue;
+                // Batch 751: My account is served there too, whether sign-ups are on or off (server.host-account-page-*).
+                if (AirRemoteTunnel.IsPublicPath(path) || SignUpPaths.Contains(path) || path is HostAccountPage.PagePath or HostAccountPage.StylePath) continue;
                 foreach (var method in methods)
                 {
                     using var remote = await HostSessionChecks.PacedAsync(browser, () => HostSessionChecks.Request(method, $"https://127.0.0.1:{home.RemotePort}{path}"));

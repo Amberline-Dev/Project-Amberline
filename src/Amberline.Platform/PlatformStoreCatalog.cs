@@ -106,7 +106,17 @@ public sealed partial class PlatformStoreCatalog
     /// while the calendar says its window is open. The clock is this catalog's own, read on every call, never a request value.
     /// </summary>
     private bool Offered(PlatformStoreItem product, HashSet<int> open) =>
-        !IsWindowProduct(product.ContentId, product.Kind) || open.Contains(product.ContentId);
+        (!IsWindowProduct(product.ContentId, product.Kind) || open.Contains(product.ContentId)) && !Hidden(product);
+
+    /// <summary>
+    /// NOT RETAIL (batch 751): the host's "Offer skins and RP" switch is off (<see cref="PlatformControls.PaidContentOff"/>, read live on every
+    /// call); retail always sold skins and took RP. While it is, no skin and nothing sold for RP alone is on offer (the listing,
+    /// <see cref="TryGet"/> and the sales leave it out, as a closed limited rune; <see cref="TryGetKnown"/> still names it for a receipt), the
+    /// rest carries no RP price (<see cref="Live"/>) and no sale is live, since a sale lowers only the RP price.
+    /// </summary>
+    public Func<bool> PaidContentOff { get; init; } = () => false;
+
+    private bool Hidden(PlatformStoreItem product) => (product.Kind == "CHAMPION_SKIN" || product.IpPrice is null) && PaidContentOff();
 
     private bool IsWindowProduct(int contentId, string kind) => kind == "RUNE" && _calendar.WindowRuneIds.Contains(contentId);
 
@@ -130,7 +140,7 @@ public sealed partial class PlatformStoreCatalog
     public bool TryGet(string? id, out PlatformStoreItem item)
     {
         item = null!;
-        if (string.IsNullOrWhiteSpace(id) || !_byId.TryGetValue(id.Trim(), out var product)) return false;
+        if (string.IsNullOrWhiteSpace(id) || !_byId.TryGetValue(id.Trim(), out var product) || Hidden(product)) return false;
         if (IsWindowProduct(product.ContentId, product.Kind) && !_calendar.OpenRuneIdsAt(_time.GetUtcNow()).Contains(product.ContentId))
             return false;
         item = Live(product, SalePercents());
@@ -160,6 +170,7 @@ public sealed partial class PlatformStoreCatalog
     /// </summary>
     private PlatformStoreItem Live(PlatformStoreItem product, Dictionary<string, int> percents)
     {
+        if (PaidContentOff()) return product with { RpPrice = null };
         if (product.RpPrice is not > 0 || _overrides.ContainsKey(product.Id) ||
             !percents.TryGetValue(product.Id, out var percent)) return product;
         return product with
@@ -177,10 +188,11 @@ public sealed partial class PlatformStoreCatalog
     public IReadOnlyList<PlatformStoreSale> ActiveSales()
     {
         var sales = new List<PlatformStoreSale>();
+        if (PaidContentOff()) return sales;
         foreach (var active in _calendar.ActiveAt(_time.GetUtcNow()))
         {
             var entry = active.Entry;
-            var ids = entry.Items.Where(item => _byId.ContainsKey(item.Id)).Select(item => item.Id).ToArray();
+            var ids = entry.Items.Where(item => _byId.TryGetValue(item.Id, out var product) && !Hidden(product)).Select(item => item.Id).ToArray();
             if (ids.Length == 0) continue;
             var names = ids.Select(id => _byId[id].Name).ToArray();
             var champions = entry.Kind == "CHAMPION";

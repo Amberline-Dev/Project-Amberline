@@ -116,12 +116,16 @@ public static class HostChecks
         {
             changed.Add("BUILD.json");
         }
+        // Batch 751 merge-sweep fix: the Hide subject is the first 16 hex digits of the folder's SHA-256 and the problem's kind, never the folder
+        // itself, since the status JSON carries subjects and hosts share dashboard screenshots. A subject saved with the full path matches nothing.
+        string Subject(string kind) => Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(app)))[..16] + ":" + kind;
         if (missing.Count > 0)
             return new("A-FILES-06", $"Windows Security may have removed {Path.GetFileName(missing[0])}, a part of Amberline{More(missing.Count + changed.Count)}.",
-                "Restore it in Windows Security (Protection history), or download Amberline again; your settings and users stay. Then press Restart.", null);
+                "Restore it in Windows Security (Protection history), or download Amberline again; your settings and users stay. Then press Restart.", null,
+                Subject("missing"));
         return changed.Count == 0 ? null
             : new("A-FILES-06", $"A part of Amberline was changed: {Path.GetFileName(changed[0])}{More(changed.Count)}.",
-                "Download Amberline again and start it. Your settings and users stay.", null);
+                "Download Amberline again and start it. Your settings and users stay.", null, Subject("changed"));
     }
 
     private static string More(int count) => count switch { 1 => "", 2 => " (and 1 more part)", _ => $" (and {count - 1} more parts)" };
@@ -142,7 +146,7 @@ public static class HostChecks
     public static DashboardCard? VpnCard(IPAddress? computer, IPAddress? outbound) =>
         computer is null || outbound is null || computer.Equals(outbound) ? null
         : new("A-NET-08", "A VPN is on, so players may not reach you.",
-            "Switch the VPN off while you host, then press Test again.", "network");
+            "Switch the VPN off while you host, then press Test again.", "network", "A-NET-08");
 
     /// <summary>A-NET-09, the address-change banner of design section 5.6.</summary>
     public static DashboardCard AddressChanged(DateTimeOffset at, DateTimeOffset now)
@@ -171,6 +175,104 @@ public static class HostChecks
 }
 
 /// <summary>
+/// NOT RETAIL: the cards the host hid from "Needs your attention" (batch 751; retail's servers had no host page). A card is identified by its
+/// code and a stable subject, never its text (texts embed times). Saved in <c>host\state.json</c> under <c>hiddenCards</c> as
+/// <c>[{"code": "...", "subject": "..."}]</c>; the file's other keys stay as they are. A missing or unreadable key hides nothing. A pass that
+/// owns a card's source forgets the entries of that source it did not raise (<see cref="Keep"/>), so the same problem shows again when it
+/// comes back. Hiding one card never hides another.
+/// </summary>
+public sealed class HostHidden
+{
+    private const string Key = "hiddenCards";
+    private readonly string _file;
+    private readonly HashSet<(string Code, string Subject)> _hidden;
+
+    public HostHidden(string dataFolder)
+    {
+        _file = HostFriendLight.StateFile(dataFolder);
+        _hidden = Read(_file);
+    }
+
+    /// <summary>The codes the page hides generically; A-NET-09, A-NET-10 and A-RUN-01 keep their own Hide.</summary>
+    public static bool Hideable(string code) => code is "A-NET-02" or "A-NET-03" or "A-NET-04" or "A-NET-05" or "A-NET-06" or "A-NET-07" or "A-NET-08"
+        or "A-CERT-01" or "A-FILES-06" or "A-DATA-02";
+
+    public int Count { get { lock (HostAttention.StateGate) return _hidden.Count; } }
+
+    public bool Contains(string code, string subject)
+    {
+        lock (HostAttention.StateGate) return _hidden.Contains((code, subject));
+    }
+
+    /// <summary>Hides one card and saves it at once.</summary>
+    public void Add(string code, string subject)
+    {
+        lock (HostAttention.StateGate)
+            if (_hidden.Add((code, subject))) Save();
+    }
+
+    /// <summary>Forgets each entry of <paramref name="code"/> that <paramref name="keep"/> does not keep; the file changes only when one goes.</summary>
+    public void Keep(string code, Func<string, bool> keep)
+    {
+        lock (HostAttention.StateGate)
+        {
+            var gone = _hidden.Where(entry => entry.Code == code && !keep(entry.Subject)).ToArray();
+            if (gone.Length == 0) return;
+            foreach (var entry in gone) _hidden.Remove(entry);
+            Save();
+        }
+    }
+
+    /// <summary>Show them: every hidden card shows again.</summary>
+    public void Clear()
+    {
+        lock (HostAttention.StateGate)
+        {
+            if (_hidden.Count == 0) return;
+            _hidden.Clear();
+            Save();
+        }
+    }
+
+    private void Save()
+    {
+        try
+        {
+            var state = (File.Exists(_file) ? JsonNode.Parse(File.ReadAllText(_file)) as JsonObject : null) ?? new JsonObject();
+            if (_hidden.Count == 0) state.Remove(Key);
+            else
+            {
+                var entries = new JsonArray();
+                foreach (var entry in _hidden.OrderBy(entry => entry.Code, StringComparer.Ordinal).ThenBy(entry => entry.Subject, StringComparer.Ordinal))
+                    entries.Add(new JsonObject { ["code"] = entry.Code, ["subject"] = entry.Subject });
+                state[Key] = entries;
+            }
+            HostFiles.Write(_file, state);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // The card stays hidden in memory; a full disk must not stop Amberline.
+            Console.Error.WriteLine($"Amberline could not save the hidden cards: {ex.GetType().Name}");
+        }
+    }
+
+    private static HashSet<(string Code, string Subject)> Read(string file)
+    {
+        var hidden = new HashSet<(string Code, string Subject)>();
+        try
+        {
+            if (JsonNode.Parse(File.ReadAllText(file)) is JsonObject state && state[Key] is JsonArray entries)
+                foreach (var entry in entries)
+                    if (entry is JsonObject item && item["code"] is JsonValue codeValue && codeValue.TryGetValue<string>(out var code) && code.Length > 0 &&
+                        item["subject"] is JsonValue subjectValue && subjectValue.TryGetValue<string>(out var subject))
+                        hidden.Add((code, subject));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
+        return hidden;
+    }
+}
+
+/// <summary>
 /// NOT RETAIL: the dashboard's cards from the start checks (Amberline Host design, sections 2.5, 4.2, 4.4 and 5.6; retail had no host
 /// page). Each full start compares the app folder with <c>BUILD.json</c> in the background (A-FILES-06), reads the certificate's end
 /// (A-CERT-01) and, while the host's address is the router's (<c>addressSource</c> <c>router</c>), asks the router for it at the start
@@ -195,14 +297,19 @@ public sealed class HostAttention : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private Task _files = Task.CompletedTask, _watch = Task.CompletedTask;
     private DashboardCard? _filesCard;
+    private volatile bool _filesDone;
     private DateTimeOffset? _certificateEnds, _changedAt;
+    private string? _thumbprint;
+    private readonly HostHidden _hidden;
 
     /// <param name="retest">The network panel's test, run again after a change so the dashboard's address line shows the new one.</param>
-    public HostAttention(HostLoop loop, Func<IReadOnlyList<DashboardGame>> games, Func<CancellationToken, Task> retest)
+    /// <param name="hidden">The dashboard's hidden cards (<see cref="HostHidden"/>); the checks here forget the entries they no longer raise.</param>
+    public HostAttention(HostLoop loop, Func<IReadOnlyList<DashboardGame>> games, Func<CancellationToken, Task> retest, HostHidden hidden)
     {
         _loop = loop;
         _games = games;
         _retest = retest;
+        _hidden = hidden;
         _state = HostFriendLight.StateFile(loop.Paths.Data);
         _changedAt = ReadChanged();
     }
@@ -214,6 +321,7 @@ public sealed class HostAttention : IAsyncDisposable
     public void Map(WebApplication app, HostSteps? steps, X509Certificate2? certificate)
     {
         _certificateEnds = certificate is null ? null : new DateTimeOffset(certificate.NotAfter);
+        _thumbprint = certificate?.Thumbprint;
         app.Lifetime.ApplicationStarted.Register(() =>
         {
             _files = CompareFilesAsync();
@@ -248,15 +356,24 @@ public sealed class HostAttention : IAsyncDisposable
         });
     }
 
-    /// <summary>The cards of the checks at <paramref name="now"/>; <paramref name="net"/> is the network panel's last test.</summary>
+    /// <summary>
+    /// The cards of the checks at <paramref name="now"/>, hidden ones included (the dashboard takes those out); <paramref name="net"/> is the
+    /// network panel's last test. The checks that ran here forget the hidden entries of their cards that they did not raise (batch 751).
+    /// </summary>
     public IEnumerable<DashboardCard> Cards(DateTimeOffset now, NetworkResult net)
     {
-        if (_filesCard is { } files) yield return files;
-        if (_certificateEnds is { } ends && HostChecks.CertificateCard(ends, now) is { } certificate) yield return certificate;
-        if (net.RouterDone && HostChecks.VpnCard(net.Computer, _loop.Network?.Outbound?.Invoke()) is { } vpn) yield return vpn;
+        var cards = new List<DashboardCard>();
+        if (_filesCard is { } files) cards.Add(files);
+        // Batch 751 final review: the subject is the certificate and its state, so hiding "stop working on <date>" never hides "stopped working".
+        if (_certificateEnds is { } ends && HostChecks.CertificateCard(ends, now) is { } certificate)
+            cards.Add(certificate with { Subject = (_thumbprint ?? "") + (ends <= now ? ":expired" : ":soon") });
+        if (net.RouterDone && HostChecks.VpnCard(net.Computer, _loop.Network?.Outbound?.Invoke()) is { } vpn) cards.Add(vpn);
         DateTimeOffset? changed;
         lock (_gate) changed = _changedAt;
-        if (changed is { } at) yield return HostChecks.AddressChanged(at, now);
+        if (changed is { } at) cards.Add(HostChecks.AddressChanged(at, now));
+        if (_filesDone) _hidden.Keep("A-FILES-06", subject => cards.Any(card => card.Code == "A-FILES-06" && card.Subject == subject));
+        if (_certificateEnds is not null) _hidden.Keep("A-CERT-01", subject => cards.Any(card => card.Code == "A-CERT-01" && card.Subject == subject));
+        return cards;
     }
 
     /// <summary>
@@ -301,7 +418,11 @@ public sealed class HostAttention : IAsyncDisposable
 
     private async Task CompareFilesAsync()
     {
-        try { _filesCard = await Task.Run(() => HostChecks.AppFilesAsync(Path.Combine(_loop.Paths.App, ".."), _stop.Token)); }
+        try
+        {
+            _filesCard = await Task.Run(() => HostChecks.AppFilesAsync(Path.Combine(_loop.Paths.App, ".."), _stop.Token));
+            _filesDone = true;
+        }
         catch (OperationCanceledException) { }
     }
 

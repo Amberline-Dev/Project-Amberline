@@ -214,6 +214,9 @@ public static class PlatformManagement
         {
             var token = antiforgery.GetAndStoreTokens(context);
             var field = $"<input type=hidden name=\"{WebUtility.HtmlEncode(token.FormFieldName)}\" value=\"{WebUtility.HtmlEncode(token.RequestToken)}\">";
+            // NOT RETAIL (batch 751): while the host's "Offer skins and RP" switch is off (PlatformControls.PaidContentOff) the page has no Give RP,
+            // no RP field of a new reward code and no RP balance beside a login.
+            var rpOff = accounts.Controls.PaidContentOff;
             string? At(string id) => shown?.Field == id ? shown.Text : null;
             string? Typed(string form, string name) => shown?.Form == form && shown.Values is { } values ? values[name].ToString() : null;
             string Value(string form, string name, string fallback) => $" value=\"{WebUtility.HtmlEncode(Typed(form, name) ?? fallback)}\"";
@@ -222,7 +225,7 @@ public static class PlatformManagement
                 var chosen = Typed(form, "accountId");
                 var options = string.Concat(accounts.ListAccounts().Select(a =>
                     $"<option value=\"{a.Id}\"{(chosen == a.Id.ToString(CultureInfo.InvariantCulture) ? " selected" : "")}>" +
-                    $"{WebUtility.HtmlEncode(a.Summoner)} · {PlatformEconomy.For(a).Rp} RP</option>"));
+                    $"{WebUtility.HtmlEncode(a.Summoner)}{(rpOff ? "" : $" · {PlatformEconomy.For(a).Rp} RP")}</option>"));
                 return $"<label for={id}>Login <span class=req>(required)</span></label>{HostPages.FieldError(id, At(id))}" +
                     $"<select id={id} name=accountId required{HostPages.Described(id, false, At(id))}>{options}</select>";
             }
@@ -233,7 +236,10 @@ public static class PlatformManagement
             {
                 "grant" => "The RP is given.",
                 "logout" => "Done. The next time their PC connects, they log in again.",
+                "logout-unsaved" => "Done until Amberline restarts: Amberline could not save it just now. Try again in a minute.",
                 "password" => "Saved. Send the new password to the player privately.",
+                "password-unsaved" => "Saved, and the player was logged out. Send the new password to the player privately. Amberline could not save every " +
+                    "change just now (their remote sign-in): set a new password again in a minute.",
                 "code" => "The reward code is cancelled.",
                 "leaver" => "Cleared: the player's leaves and dodges so far are forgiven.",
                 "report" => "The report is closed.",
@@ -256,6 +262,12 @@ public static class PlatformManagement
                 "<h2>Make a user log in again</h2><p>They log in again the next time their PC connects.</p>" +
                 $"<form method=post action=/manage/remote-revoke novalidate>{field}{Logins("logout", "logout-login")}" +
                 Send("Make them log in again");
+            var giveRp = rpOff ? "" : $$"""
+                <h2>Give RP</h2><p>Free RP for the store.</p>
+                <form method=post action=/manage/grant novalidate>{{field}}<input type=hidden name=requestId value="{{Guid.NewGuid()}}">
+                {{Logins("grant", "grant-login")}}{{Number("grant", "grant-rp", "rp", "RP amount", "1 to 1,000,000.", 1, "1000")}}
+                {{Send("Give RP")}}
+                """;
             var codes = accounts.ListRewardCodes().OrderByDescending(code => code.CreatedAt).ToArray();
             string CodeRow(PlatformRewardCode code)
             {
@@ -275,19 +287,16 @@ public static class PlatformManagement
                 {{(shown is null ? "" : HostPages.Errors((shown.Text, shown.Field)))}}
                 {{(online is null ? "" : RenderOnline(online(), context.Request.Query["refresh"] != "off", home: true))}}
                 {{noticeForm}}
-                <h2>Give RP</h2><p>Free RP for the store.</p>
-                <form method=post action=/manage/grant novalidate>{{field}}<input type=hidden name=requestId value="{{Guid.NewGuid()}}">
-                {{Logins("grant", "grant-login")}}{{Number("grant", "grant-rp", "rp", "RP amount", "1 to 1,000,000.", 1, "1000")}}
-                {{Send("Give RP")}}
+                {{giveRp}}
                 {{logout}}
                 <h2>Set a new password</h2><p>For any login, yours too. The player is logged out at once.</p>
                 <form method=post action=/manage/password novalidate>{{field}}{{Logins("password", "password-login")}}
                 {{HostPages.Field("password-new", "New password", "At least 10 characters.", At("password-new"), "type=password required minlength=10 maxlength=128 autocomplete=new-password", name: "password")}}
                 {{HostPages.Field("password-confirm", "Repeat the new password", null, At("password-confirm"), "type=password required minlength=10 maxlength=128 autocomplete=new-password", name: "confirm")}}
                 {{Send("Save")}}
-                <h2>Make a reward code</h2><p>A one-time code for Influence Points (IP) and RP, typed in the store's Redeem a code page.</p>
+                <h2>Make a reward code</h2><p>A one-time code for Influence Points (IP){{(rpOff ? "" : " and RP")}}, typed in the store's Redeem a code page.</p>
                 <form method=post action=/manage/reward-code/create novalidate{{HostPages.Wait("Making the reward code.")}}>{{field}}<input type=hidden name=requestId value="{{Guid.NewGuid()}}">
-                {{Number("code", "code-ip", "ip", "IP amount", "0 to 1,000,000.", 0, "0")}}{{Number("code", "code-rp", "rp", "RP amount", "0 to 1,000,000; IP or RP above 0.", 0, "1000")}}
+                {{Number("code", "code-ip", "ip", "IP amount", "0 to 1,000,000.", 0, "0")}}{{(rpOff ? "" : Number("code", "code-rp", "rp", "RP amount", "0 to 1,000,000; IP or RP above 0.", 0, "1000"))}}
                 {{Send("Make a reward code")}}
                 <h2 id=codes-heading>Reward codes</h2>{{(codes.Length == 0 ? "<p>You have not made a reward code yet.</p>"
                     : Wide("codes-heading", "<table><thead><tr><th scope=col>Status</th><th scope=col>Made</th><th scope=col>Amount</th><th scope=col>Used by</th><th scope=col>Change</th></tr></thead>" +
@@ -322,15 +331,21 @@ public static class PlatformManagement
             if (invite is not null) return HostMode.Page(HomePage(context, antiforgery, null));
             var token = antiforgery.GetAndStoreTokens(context);
             var field = $"<input type=hidden name=\"{WebUtility.HtmlEncode(token.FormFieldName)}\" value=\"{WebUtility.HtmlEncode(token.RequestToken)}\">";
+            // NOT RETAIL (batch 751): as on HomePage, no Grant RP, no RP field and no RP balance while the "Offer skins and RP" switch is off.
+            var rpOff = accounts.Controls.PaidContentOff;
             var accountOptions = string.Join("", accounts.ListAccounts().Select(a =>
-                $"<option value=\"{a.Id}\">{WebUtility.HtmlEncode(a.Summoner)} · {PlatformEconomy.For(a).Rp} RP</option>"));
+                $"<option value=\"{a.Id}\">{WebUtility.HtmlEncode(a.Summoner)}{(rpOff ? "" : $" · {PlatformEconomy.For(a).Rp} RP")}</option>"));
             var revokeForm = remoteAccess is null ? "" :
                 $"<h2>Revoke remote access</h2><p>Ends the account's friend sign-in token. Tunnels already open end when the companion reconnects.</p>" +
+                (context.Request.Query["revoke"] == "unsaved" ? "<p role=status>The token ended, but that could not be saved just now: it lasts only until " +
+                    "the platform restarts. Revoke it again in a minute.</p>" : "") +
                 $"<form method=post action=/manage/remote-revoke>{field}<label>Account<select name=accountId required>{accountOptions}</select></label><button>Revoke remote access</button></form>";
             // NOT RETAIL: host tool for a friend who forgot the password (retail's was Riot's account website).
             var passwordForm = "<h2>Set a new password</h2><p>The old password stops working at once: the account's remote-access token is " +
                 "revoked and its sessions end, so the player logs in again with the new one. Send it to them privately.</p>" +
                 (context.Request.Query["password"] == "changed" ? "<p role=status>The password was changed.</p>" : "") +
+                (context.Request.Query["password"] == "unsaved" ? "<p role=status>The password was changed and the player was logged out, but the end of " +
+                    "their remote-access token could not be saved just now. Set a new password again in a minute.</p>" : "") +
                 $"<form method=post action=/manage/password>{field}<label>Account<select name=accountId required>{accountOptions}</select></label>" +
                 "<label>New password<input type=password name=password required minlength=10 maxlength=128 autocomplete=new-password></label>" +
                 "<label>Repeat the new password<input type=password name=confirm required minlength=10 maxlength=128 autocomplete=new-password></label>" +
@@ -358,21 +373,24 @@ public static class PlatformManagement
                 <p>Friends connect through HTTPS TCP {{remotePort}}; games use the configured UDP game ports. The raw AIR login and RTMP ports stay local.</p>
                 <h2>Create an account</h2><p><a href="/register">Open account registration</a></p>
                 """;
+            var grantRp = rpOff ? "" : $$"""
+                <h2>Grant testing RP</h2><p>No payment is required. RP grants are saved with the account.</p>
+                <form method=post action=/manage/grant>{{field}}<input type=hidden name=requestId value="{{Guid.NewGuid()}}">
+                <label>Account<select name=accountId required>{{accountOptions}}</select></label>
+                <label>RP amount<input type=number name=rp min=1 max=1000000 value=1000 required></label><button>Grant RP</button></form>
+                """;
             var body = $$"""
                 {{heading}}
                 {{(online is null ? "" : RenderOnline(online(), live, home: false))}}
                 {{noticeForm}}
                 {{friends}}
-                <h2>Grant testing RP</h2><p>No payment is required. RP grants are saved with the account.</p>
-                <form method=post action=/manage/grant>{{field}}<input type=hidden name=requestId value="{{Guid.NewGuid()}}">
-                <label>Account<select name=accountId required>{{accountOptions}}</select></label>
-                <label>RP amount<input type=number name=rp min=1 max=1000000 value=1000 required></label><button>Grant RP</button></form>
+                {{grantRp}}
                 {{revokeForm}}
                 {{passwordForm}}
-                <h2>Issue one-time reward code</h2><p>Codes grant testing IP and/or RP. The raw code is shown only in the issuance response.</p>
+                <h2>Issue one-time reward code</h2><p>Codes grant testing IP{{(rpOff ? "" : " and/or RP")}}. The raw code is shown only in the issuance response.</p>
                 <form method=post action=/manage/reward-code/create>{{field}}<input type=hidden name=requestId value="{{Guid.NewGuid()}}">
                 <label>IP amount<input type=number name=ip min=0 max=1000000 value=0 required></label>
-                <label>RP amount<input type=number name=rp min=0 max=1000000 value=1000 required></label><button>Issue reward code</button></form>
+                {{(rpOff ? "" : "<label>RP amount<input type=number name=rp min=0 max=1000000 value=1000 required></label>")}}<button>Issue reward code</button></form>
                 <h2>Issued reward codes</h2>{{rewardCodeRows}}
                 {{RenderLeavers(accounts, field)}}
                 {{RenderReports(accounts, field)}}
@@ -402,13 +420,17 @@ public static class PlatformManagement
                 throw new FormProblem("Choose an account and an RP amount from 1 to 1,000,000.",
                     !chosen ? ("Choose a login.", "grant-login") : !amount ? ("Choose an RP amount from 1 to 1,000,000.", "grant-rp") : (Expired, null));
             accounts.GrantCurrency(accountId, 0, rp, requestId);
-            notify?.Invoke(accountId, AirDtos.AccountBalanceNotification(accounts.Get(accountId)));
+            // Batch 751 final review: a re-sent form replays an earlier grant after the switch went off; the client still gets RP 0 then.
+            notify?.Invoke(accountId, AirDtos.AccountBalanceNotification(accounts.Get(accountId), accounts.Controls.PaidContentOff));
             return Results.Redirect(Back("/manage", "grant"));
         }));
         app.MapPost("/manage/reward-code/create", (HttpContext context, IAntiforgery antiforgery) => Answer(context, antiforgery, "code", form =>
         {
             var ipOk = long.TryParse(form["ip"], NumberStyles.None, CultureInfo.InvariantCulture, out var ip) && ip <= 1_000_000;
-            var rpOk = long.TryParse(form["rp"], NumberStyles.None, CultureInfo.InvariantCulture, out var rp) && rp <= 1_000_000;
+            // NOT RETAIL (batch 751): the form has no RP field while the host's "Offer skins and RP" switch is off; a missing amount is 0 then.
+            var rpOff = accounts.Controls.PaidContentOff;
+            var rpOk = long.TryParse(rpOff && form["rp"].Count == 0 ? "0" : form["rp"].ToString(), NumberStyles.None, CultureInfo.InvariantCulture,
+                out var rp) && rp <= 1_000_000;
             if (!ipOk || !rpOk || ip == 0 && rp == 0 || !Guid.TryParse(form["requestId"], out var requestId) || requestId == Guid.Empty)
                 throw new FormProblem("Enter IP and/or RP from 0 to 1,000,000 and a valid request id.",
                     !ipOk ? ("Choose an IP amount from 0 to 1,000,000.", "code-ip") : !rpOk ? ("Choose an RP amount from 0 to 1,000,000.", "code-rp")
@@ -419,7 +441,7 @@ public static class PlatformManagement
             // The home host's page copies the code with page.js's Copy (no inline handler).
             if (invite is not null)
                 return HostMode.Page($"""
-                    <h1>Your reward code</h1><p>It gives {ip.ToString("N0", CultureInfo.InvariantCulture)} IP and {rp.ToString("N0", CultureInfo.InvariantCulture)} RP once. Copy it now: Amberline shows it only this once.</p>
+                    <h1>Your reward code</h1><p>It gives {ip.ToString("N0", CultureInfo.InvariantCulture)} IP{(rpOff && rp == 0 ? "" : $" and {rp.ToString("N0", CultureInfo.InvariantCulture)} RP")} once. Copy it now: Amberline shows it only this once.</p>
                     <p class=message id=reward-code>{WebUtility.HtmlEncode(issued.Code)}</p>
                     <p class=buttons><button type=button data-copy=reward-code>Copy</button> <span id=copy-status role=status></span></p>
                     <p><a href="/manage">Back</a></p>
@@ -441,9 +463,12 @@ public static class PlatformManagement
             if (password != form["confirm"].ToString())
                 throw new FormProblem("The two passwords do not match.", ("The two passwords are not the same. Type the new password twice.", "password-confirm"));
             accounts.SetPassword(accountId, password);
-            remoteAccess?.Revoke(accountId);
+            // Batch 751 final review: the sessions end first, in memory, so a token file that cannot be written just now never leaves the player
+            // logged in (UserRemoval.LogOut); the page then says the token's end could not be saved.
             sessions?.EndAccount(accountId);
-            return Results.Redirect(Back("/manage?refresh=off&password=changed", "password"));
+            return UserRemoval.Revoke(remoteAccess, accountId)
+                ? Results.Redirect(Back("/manage?refresh=off&password=changed", "password"))
+                : Results.Redirect(Back("/manage?refresh=off&password=unsaved", "password-unsaved"));
         }));
         app.MapPost("/manage/report", (HttpContext context, IAntiforgery antiforgery) => Answer(context, antiforgery, "report", form =>
         {
@@ -483,8 +508,10 @@ public static class PlatformManagement
             {
                 if (!long.TryParse(form["accountId"], out var accountId) || accountId < 1)
                     throw new FormProblem("Choose an account.", ("Choose a login.", "logout-login"));
-                access.Revoke(accountId);
-                return Results.Redirect(Back("/manage", "logout"));
+                // Batch 751 final review: a file that cannot be written just now is said on the page (the token is gone from memory until a
+                // restart), never a failure.
+                return UserRemoval.Revoke(access, accountId) ? Results.Redirect(Back("/manage", "logout"))
+                    : Results.Redirect(Back("/manage?revoke=unsaved", "logout-unsaved"));
             }));
     }
 

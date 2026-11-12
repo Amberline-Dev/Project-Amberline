@@ -239,7 +239,7 @@ public static class HostSessionChecks
 
     private static async Task RoutesNeverPublicAsync()
     {
-        foreach (var path in new[] { "/open", "/setup", "/manage", "/manage/grant", "/register", "/host", "/host/play-file" })
+        foreach (var path in new[] { "/open", "/setup", "/manage", "/manage/grant", "/register", HostAccountPage.PagePath, "/host", "/host/play-file" })
         {
             TestAssert.True(HostGate.IsHostPath(path), path + " is a host route");
             TestAssert.False(AirRemoteTunnel.IsPublicPath(path), path + " is never on the public allow-list");
@@ -269,7 +269,7 @@ public static class HostSessionChecks
             foreach (var expected in new[] { "/open", "/manage", "/manage/online.json", "/manage/grant", "/manage/password", "/manage/broadcast.json", "/register",
                          "/host", "/host/status.json", "/host/page.js", "/host/stop", "/host/restart", "/host/firewall", "/host/network",
                          "/host/invite", "/host/play-file", "/host/friends", "/host/users", "/host/users/add", "/host/users/password", "/host/users/disable",
-                         "/host/users/enable", "/host/users/delete",
+                         "/host/users/enable", "/host/users/delete", HostAccountPage.PagePath, HostAccountPage.StylePath,
                          HostSettingsPage.PagePath, HostSettingsPage.NamePath, HostSettingsPage.AddressPath, HostSettingsPage.FoldersPath, HostSettingsPage.UninstallPath })
                 TestAssert.True(hostRoutes.Any(route => route.Path == expected), expected + " is one of the routes walked");
 
@@ -278,6 +278,8 @@ public static class HostSessionChecks
             foreach (var (path, methods) in routes)
             {
                 if (AirRemoteTunnel.IsPublicPath(path)) { TestAssert.False(HostGate.IsHostPath(path), path + " is public and a host route"); continue; }
+                // Batch 751: My account is the friends' port's own page whether sign-ups are on or off (server.host-account-page-*).
+                if (path is HostAccountPage.PagePath or HostAccountPage.StylePath) continue;
                 foreach (var method in methods)
                 {
                     using var remote = await PacedAsync(browser, () => Request(method, $"https://127.0.0.1:{home.RemotePort}{path}"));

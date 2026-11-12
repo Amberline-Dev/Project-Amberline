@@ -36,6 +36,8 @@ public static partial class PlatformStore
             "Runeborn Xerath, Battlecast Xerath, Cryocore Brand and Officer Caitlyn skins are here!",
             "Unlock These Skins", StoreQuery("CHAMPION_SKIN", string.Empty, false, "name"), 0,
             ["skin-loading-101001", "skin-loading-101002", "skin-loading-63003"]));
+        // NOT RETAIL (batch 751): no skins promo while the host's "Offer skins and RP" switch is off (the store lists no skin then).
+        if (catalog.PaidContentOff()) slides.RemoveAll(slide => slide.Title == "New Skins");
 
         var promoMarkup = new System.Text.StringBuilder();
         var pager = new System.Text.StringBuilder();
@@ -64,7 +66,7 @@ public static partial class PlatformStore
             .Where(item => item is not null).Select(item => RenderTopSeller(item!, account, economy, catalog, state)));
         return $$"""
             <section class="store-frame store-home">
-              {{RenderStoreHeader(null)}}
+              {{RenderStoreHeader(catalog, null)}}
               <div class=store-panel>
                 <div class=home-dashboard>
                   <section class=home-hero>{{promoMarkup}}<div class=promo-pager>{{pager}}</div></section>

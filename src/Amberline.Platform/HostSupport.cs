@@ -19,7 +19,8 @@ namespace Amberline.Platform;
 /// <item>A-RUN-01: a match server of this start stopped unexpectedly or could not start (<see cref="GameManager"/>'s Failed).</item>
 /// <item>A-DATA-02: the drive of the data folder has less than <see cref="LowDisk"/> free.</item>
 /// </list>
-/// The cards live in memory for this start; Hide ends the first two until the next one happens. The support log
+/// Hide ends the first two until the problem changes: the hidden seats and games are saved in host\state.json (batch 751), so a restart
+/// keeps them hidden, and a seat that connects (or a game that is gone) is forgotten. The support log
 /// (<see cref="PagePath"/>) is a short report with every name and address replaced by a mark (<see cref="Mask"/>).
 /// </summary>
 public sealed class HostSupport : IAsyncDisposable
@@ -44,13 +45,10 @@ public sealed class HostSupport : IAsyncDisposable
         public required bool Friend;
         // The first and the last look that found its game waiting or playing without it: a game that ends stops the wait.
         public DateTimeOffset? WaitingSince, WaitedUntil;
-        public bool Connected, Hidden;
+        public bool Connected;
     }
 
-    private sealed record Failure(DateTimeOffset At, string? Error)
-    {
-        public bool Hidden { get; set; }
-    }
+    private sealed record Failure(DateTimeOffset At, string? Error);
 
     private readonly HostLoop _loop;
     private readonly PlatformSettings _settings;
@@ -67,6 +65,8 @@ public sealed class HostSupport : IAsyncDisposable
     private long? _free;
     private HostDashboard? _dashboard;
     private HostSteps? _steps;
+    // The dashboard's store once Map gives it (the same instance the attention cards use); this folder's own store until then.
+    private HostHidden _hidden;
 
     /// <param name="games">Every match the manager lists; the ones listed now are from before this start and never raise a card.</param>
     /// <param name="seat">The login behind a seat's summoner id: its username and whether it came through the friends' tunnel.</param>
@@ -83,6 +83,7 @@ public sealed class HostSupport : IAsyncDisposable
         _logins = logins;
         _deleted = deleted ?? (() => []);
         _before = [.. games().Select(game => game.Id)];
+        _hidden = new HostHidden(loop.Paths.Data);
     }
 
     /// <summary>The real Platform's watch: the match manager, the logins and the sessions' tunnel mark.</summary>
@@ -113,6 +114,7 @@ public sealed class HostSupport : IAsyncDisposable
     {
         _dashboard = dashboard;
         _steps = steps;
+        _hidden = dashboard.Hidden;
         app.Lifetime.ApplicationStarted.Register(() => _watch = WatchAsync());
         app.MapPost(HidePath, async (HttpContext context, IAntiforgery antiforgery) =>
         {
@@ -120,8 +122,9 @@ public sealed class HostSupport : IAsyncDisposable
             var card = (await context.Request.ReadFormAsync(context.RequestAborted))["card"].ToString();
             lock (_gate)
             {
-                if (card == "A-NET-10") foreach (var seat in _seats.Values) seat.Hidden = true;
-                else if (card == "A-RUN-01") foreach (var failure in _failed.Values) failure.Hidden = true;
+                // NOT RETAIL (batch 751): the hidden seats and games are saved, so they stay hidden across a restart until the problem changes.
+                if (card == "A-NET-10") foreach (var pair in _seats) { if (Stuck(pair.Value)) _hidden.Add("A-NET-10", SeatKey(pair.Key)); }
+                else if (card == "A-RUN-01") foreach (var game in _failed.Keys) _hidden.Add("A-RUN-01", game.ToString("D"));
                 else return Results.BadRequest();
             }
             return Results.Redirect(HostDashboard.PagePath);
@@ -183,6 +186,15 @@ public sealed class HostSupport : IAsyncDisposable
             var listed = games.Select(game => game.Id).ToHashSet();
             foreach (var key in _seats.Where(pair => !listed.Contains(pair.Key.Game) && !Stuck(pair.Value)).Select(pair => pair.Key).ToArray())
                 _seats.Remove(key);
+            // Batch 751: a saved seat is forgotten once its login connected, or once its game is gone; a saved stop once this start no longer
+            // knows it as stopped; a saved disk card once the drive has room again. One still waiting or still stopped stays hidden.
+            var stopped = games.Where(game => game.State == "Failed").Select(game => game.Id).ToHashSet();
+            // A game listed before this start (_before) never raises its cards again, so its saved entries go too (a restart forgets them).
+            _hidden.Keep("A-NET-10", subject => ParseSeat(subject) is { } key && !_before.Contains(key.Game) &&
+                (_seats.TryGetValue(key, out var known) ? !known.Connected : listed.Contains(key.Game)));
+            _hidden.Keep("A-RUN-01", subject => Guid.TryParse(subject, out var game) && !_before.Contains(game) &&
+                (stopped.Contains(game) || _failed.ContainsKey(game)));
+            if (free is { } bytes) _hidden.Keep("A-DATA-02", subject => bytes < LowDisk && subject == DiskCard(Drive(_loop.Paths.Data), bytes).Subject);
         }
     }
 
@@ -192,9 +204,10 @@ public sealed class HostSupport : IAsyncDisposable
         var cards = new List<DashboardCard>();
         lock (_gate)
         {
-            var stuck = _seats.Values.Where(seat => Stuck(seat) && !seat.Hidden).Select(seat => seat.Username).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var stuck = _seats.Where(pair => Stuck(pair.Value) && !_hidden.Contains("A-NET-10", SeatKey(pair.Key))).Select(pair => pair.Value.Username)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             if (stuck.Length > 0) cards.Add(SeatsCard(stuck, homeOnly));
-            var failures = _failed.Values.Where(failure => !failure.Hidden).ToArray();
+            var failures = _failed.Where(pair => !_hidden.Contains("A-RUN-01", pair.Key.ToString("D"))).Select(pair => pair.Value).ToArray();
             if (failures.Length > 0) cards.Add(StoppedCard(failures.Length, failures.Max(failure => failure.At)));
             if (_free is { } free && free < LowDisk) cards.Add(DiskCard(Drive(_loop.Paths.Data), free));
         }
@@ -230,12 +243,26 @@ public sealed class HostSupport : IAsyncDisposable
             "Everyone can start a new game. If it happens again, send a support log with an issue report.", "run");
     }
 
-    /// <summary>A-DATA-02: the data folder's drive has <paramref name="free"/> bytes free, less than <see cref="LowDisk"/>.</summary>
+    /// <summary>
+    /// A-DATA-02: the data folder's drive has <paramref name="free"/> bytes free, less than <see cref="LowDisk"/>. Its subject is the drive and its
+    /// state (batch 751 final review), so hiding "almost full" never hides "full".
+    /// </summary>
     public static DashboardCard DiskCard(string drive, long free) =>
         new("A-DATA-02", free < FullDisk
                 ? $"The drive Amberline keeps its data on ({drive}) is full: {Size(free)} free. Games, settings and the log may not save."
                 : $"The drive Amberline keeps its data on ({drive}) is almost full: {Size(free)} free.",
-            $"Free at least {Size(LowDisk)} on {drive}, for example by emptying the Recycle Bin. This message goes by itself.", null);
+            $"Free at least {Size(LowDisk)} on {drive}, for example by emptying the Recycle Bin. This message goes by itself.", null,
+            drive + (free < FullDisk ? ":full" : ":low"));
+
+    /// <summary>A seat's saved identity: its game's id and its seat number (batch 751).</summary>
+    private static string SeatKey((Guid Game, int Seat) key) => $"{key.Game:D}:{key.Seat}";
+
+    private static (Guid Game, int Seat)? ParseSeat(string subject)
+    {
+        var at = subject.LastIndexOf(':');
+        return at > 0 && Guid.TryParse(subject[..at], out var game) && int.TryParse(subject[(at + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var seat)
+            ? (game, seat) : null;
+    }
 
     /// <summary>
     /// The support log at <paramref name="now"/>: the version, the status and network checks, the folder checks, the cards, the counts,

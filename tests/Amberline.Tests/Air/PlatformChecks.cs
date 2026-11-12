@@ -346,7 +346,7 @@ public static class PlatformChecks
                 var lockedSelection = ((IEnumerable)AsObject(games.Current(players[0].Id)!) ["playerChampionSelections"])
                     .Cast<AsObject>().Single(s => (string)s["summonerInternalName"] == AirGameDtos.InternalName(players[0]));
                 var lockedChampion = Integer(lockedSelection, "championId");
-                games.SelectSkin(players[0].Id, lockedChampion, AirGameDtos.SkinIds(lockedChampion).First());
+                games.SelectSkin(players[0].Id, lockedChampion, AirGameDtos.SkinIds(lockedChampion, skinsOff: false).First());
                 TestAssert.Throws<ArgumentException>(() => games.Pick(players[0].Id, 35),
                     "individual lock-in freezes champion identity, not the remaining loadout");
                 games.LockIn(players[1].Id);

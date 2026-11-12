@@ -143,6 +143,7 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
             {{HostSteps.StartChoice("Start at", mode, At("mode"))}}
             <div class=actions><button type=submit>Create your login</button></div></form>
             <p class=already>Already have a login?</p><p><a class=button href={{PlayFilePath}} download>Download the Play file</a></p>
+            <p><a href={{HostAccountPage.PagePath}}>Change your password or delete your account</a></p>
             """;
     }
 

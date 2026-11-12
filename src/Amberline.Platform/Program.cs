@@ -26,6 +26,12 @@ public sealed record PlatformSettings(string DataRoot, string ServerExecutable, 
     public bool SelfRegistration { get; init; }
     /// <summary>Settings' "Share the game files with players" (<see cref="HostFileShare"/>, batch 681); off unless the host turned it on.</summary>
     public bool ShareFiles { get; init; }
+    /// <summary>NOT RETAIL: Settings' "Offer skins and RP" (<see cref="PlatformControls"/>); written only when on, so a file without it offers them.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool PaidContentOff { get; init; }
+    /// <summary>NOT RETAIL: Settings' Champions list: the playable champion ids the host disabled, null until its first Save.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int[]? DisabledChampions { get; init; }
     /// <summary>
     /// Retired (batch 680): batch 666's "Allow cheat commands in my games". Read only while <see cref="CheatAccounts"/> is missing, when
     /// it ticks the host's own login (<see cref="CheatLogins"/>); the list's first Save drops it.
@@ -130,6 +136,8 @@ public static class Program
         // ChampionCatalog reads its rows from this AIR client (AirChampionData.ResolveSwf).
         Environment.SetEnvironmentVariable("AIR_CLIENT_ROOT", airRoot);
         using var accounts = new PlatformAccounts(home, airRoot);
+        // NOT RETAIL (batch 751): retail had no host switch for skins, RP or champions; the store's live controls start from platform.json (a file without the fields: all on).
+        accounts.Controls = PlatformControls.From(settings);
         await using var manager = new GameManager(hostSettings, Path.Combine(home, "games"));
         accounts.RecoverResults(manager, Console.Out);
         var sessions = new PlatformSessions(accounts, activity: host?.Activity);
@@ -152,6 +160,8 @@ public static class Program
         var pin = tls.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256);
         // NOT RETAIL: people register themselves on the friends' port while Settings' switch is on (HostSelfRegistration); home mode only.
         using var signUp = host is null ? null : new HostSelfRegistration(host, accounts, settings.RemotePort, pin, settings.SelfRegistration);
+        // NOT RETAIL (batch 751): My account, where users change their own password or delete their own account (HostAccountPage); home mode only.
+        using var accountPage = host is null ? null : new HostAccountPage(host, accounts, sessions, remoteAccess, games, chat, settings.RemotePort);
         // NOT RETAIL: the host's own game and AIR client for players who have none, while Settings' switch is on (HostFileShare); home mode only.
         var share = host is null ? null : new HostFileShare(host, settings.DataRoot, airRoot, settings.RemotePort, settings.ShareFiles);
         await using var rtmp = new AirRtmpHost(new IPEndPoint(IPAddress.Loopback, settings.RtmpPort),
@@ -188,8 +198,11 @@ public static class Program
             o.RejectionStatusCode = 429;
             // LoginView treats any status but 403 as "login queue unavailable" and falls back to a queue-less
             // login, so the login queue's rejection is the client's own retry form instead of a bare 429.
-            // Batch 656: the friends' port's sign-up says "Too many sign-ups" in a page of its own.
-            o.OnRejected = (rejected, _) => signUp?.Serves(rejected.HttpContext) == true
+            // Batch 656: the friends' port's sign-up says "Too many sign-ups" in a page of its own. Batch 751: My account says "Too many
+            // tries", on either port.
+            o.OnRejected = (rejected, _) => accountPage is not null && rejected.HttpContext.Request.Path == HostAccountPage.PagePath
+                ? new ValueTask(HostAccountPage.TooMany.ExecuteAsync(rejected.HttpContext))
+                : signUp?.Serves(rejected.HttpContext) == true
                 ? new ValueTask(HostSelfRegistration.TooMany.ExecuteAsync(rejected.HttpContext))
                 : rejected.HttpContext.Request.Path != LoginQueuePath ? ValueTask.CompletedTask
                 : new ValueTask(AttemptRateTooFast(rejected.Lease.TryGetMetadata(MetadataName.RetryAfter, out var wait)
@@ -199,6 +212,10 @@ public static class Program
             o.AddPolicy("registration", context => RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new FixedWindowRateLimiterOptions
                 { PermitLimit = 12, Window = TimeSpan.FromHours(1), QueueLimit = 0 }));
+            // NOT RETAIL (batch 751): My account's own limit per address, every POST counted (its cap in all is HostAccountPage's).
+            o.AddPolicy(HostAccountPage.Policy, context => RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new FixedWindowRateLimiterOptions
+                { PermitLimit = HostAccountPage.PerAddress, Window = TimeSpan.FromHours(1), QueueLimit = 0 }));
         });
         await using var app = builder.Build();
         // DIAGNOSTICS: the dashboard's demo data follows the switch as this start read it (HostLoop.DemoData), never the live variable.
@@ -218,7 +235,7 @@ public static class Program
             if (context.Connection.LocalPort == settings.RemotePort)
             {
                 if (!context.Request.IsHttps || !(AirRemoteTunnel.IsPublicPath(context.Request.Path.Value ?? "/") || signUp?.Serves(context) == true ||
-                    share?.Serves(context) == true))
+                    accountPage?.Serves(context) == true || share?.Serves(context) == true))
                 { context.Response.StatusCode = 404; return; }
                 host?.Friend.Observe(context.Connection.RemoteIpAddress, context.Request.Path.Value, DateTimeOffset.UtcNow);
             }
@@ -227,7 +244,7 @@ public static class Program
             {
                 context.Response.StatusCode = 400;
                 context.Response.ContentType = "text/html; charset=utf-8";
-                await context.Response.WriteAsync(PlatformStore.ErrorPage(ex.Message));
+                await context.Response.WriteAsync(PlatformStore.ErrorPage(ex.Message, accounts.StoreCatalog));
             }
             catch (ArgumentException ex) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { error = ex.Message }); }
             catch (AntiforgeryValidationException) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { error = "Refresh the local management page and try again." }); }
@@ -238,7 +255,7 @@ public static class Program
             ? Results.Json(new { status = "ready", service = "Amberline.AirPlatform", protocol = 1, client = "1.45.11_10_04_15_28" })
             : Results.Json(new { status = "ready", service = "Amberline.AirPlatform", protocol = 1, client = "1.45.11_10_04_15_28", mode = "home" }));
         // NOT RETAIL: the home host's pages answer only the host's signed-in browser (HostGate); /open signs it in.
-        if (host is not null) HostGate.Use(app, settings.HttpPort, host.Sessions, HostSteps.Start, signUp!.Serves);
+        if (host is not null) HostGate.Use(app, settings.HttpPort, host.Sessions, HostSteps.Start, context => signUp!.Serves(context) || accountPage!.Serves(context));
         // NOT RETAIL: the home host's first-run steps; the name and the address they save reach /bootstrap/client.json at once.
         var steps = host is null ? null : HostSteps.Map(app, host, accounts);
         // NOT RETAIL: the host pages' shell and stylesheet (HostPages), after the gate so its refusal pages stay bare.
@@ -249,6 +266,7 @@ public static class Program
         if (host is not null) HostInvite.Map(app, host, () => steps!.PublicHost, () => steps!.ServerName, accounts, sessions, remoteAccess,
             settings.RemotePort, pin, signUp, games, chat);
         signUp?.Map(app);
+        accountPage?.Map(app);
         share?.Map(app);
         dashboard?.Map(app, steps, tls);
         // NOT RETAIL: Settings (what the first run asked) and Uninstall Amberline, under the gated /host pages.

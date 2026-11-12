@@ -62,11 +62,14 @@ public static class AirDtos
             ("password", session.ChatToken));
     }
 
-    public static AsObject LoginData(PlatformAccount account, object? reconnect = null, PlatformEconomyRules? rules = null)
+    /// <param name="rpOff">Batch 751: the host's "Offer skins and RP" switch is off (PlatformControls.PaidContentOff), so the RP balance is sent as 0.</param>
+    /// <param name="disabled">Batch 751: the champions the host turned off (<see cref="PlatformControls.DisabledChampions"/>).</param>
+    public static AsObject LoginData(PlatformAccount account, object? reconnect = null, PlatformEconomyRules? rules = null, bool rpOff = false,
+        IReadOnlySet<int>? disabled = null)
     {
         ArgumentNullException.ThrowIfNull(account);
         return AirWire.Object(LoginDataAlias,
-            ("rpBalance", (double)PlatformEconomy.For(account).Rp),
+            ("rpBalance", (double)ShownRp(PlatformEconomy.For(account), rpOff)),
             ("clientHeartBeatEnabled", true),
             ("playerStatSummaries", StatsSummary(account)),
             ("maxPracticeGameSize", MatchRoster.MaxPlayers),
@@ -74,7 +77,7 @@ public static class AirDtos
             ("platformId", "NA1"),
             ("gameTypeConfigs", GameTypes()),
             ("ipBalance", (double)PlatformEconomy.For(account).Ip),
-            ("clientSystemStates", ClientSystemStates(rules)),
+            ("clientSystemStates", ClientSystemStates(rules, disabled)),
             ("summonerCatalog", SummonerCatalog()),
             // The typo is present in the AIR class and is therefore wire ABI.
             ("langauges", AirWire.List(new object[] { "en_US" })),
@@ -101,9 +104,19 @@ public static class AirDtos
             ("summonerLevel", Level(account, rules)));
     }
 
-    public static ArrayCollection Champions(PlatformAccount? account = null, PlatformEconomyRules? rules = null) => AirWire.List(
+    /// <param name="skinsOff">Batch 751: the host's skins switch is off (<see cref="AirGameDtos.SkinIds"/>), so no champion lists a skin.</param>
+    /// <param name="disabled">Batch 751: the champions the host turned off (<see cref="PlatformControls.DisabledChampions"/>).</param>
+    public static ArrayCollection Champions(PlatformAccount? account = null, PlatformEconomyRules? rules = null, bool skinsOff = false,
+        IReadOnlySet<int>? disabled = null) => AirWire.List(
         AirGameDtos.AllChampionNames.OrderBy(pair => pair.Key)
-            .Select(pair => Champion(pair.Value, pair.Key, account, rules)));
+            .Select(pair => Champion(pair.Value, pair.Key, account, rules, skinsOff, !Greyed(disabled, pair.Key))));
+
+    /// <summary>
+    /// Batch 751: a champion the host turned off is greyed out in the client, except Battle Training's three, which stay active so its fixed
+    /// grid keeps them (<see cref="PlatformGames.KeptByBattleTraining"/>); the server still refuses those outside Battle Training.
+    /// </summary>
+    private static bool Greyed(IReadOnlySet<int>? disabled, int champion) =>
+        disabled?.Contains(champion) == true && !PlatformGames.KeptByBattleTraining(champion);
 
     public static AsObject PublicSummonerData(PlatformAccount account, PlatformEconomyRules? rules = null)
     {
@@ -384,14 +397,14 @@ public static class AirDtos
             ("displayIpBoostTooltip", string.Join("\n", new[] { ipPerWin, ipEndDate }.Where(value => value.Length > 0))));
     }
 
-    public static AsObject ActiveBoostsNotification(PlatformAccount account)
+    public static AsObject ActiveBoostsNotification(PlatformAccount account, bool rpOff = false)
     {
         ArgumentNullException.ThrowIfNull(account);
         var economy = PlatformEconomy.For(account);
         return AirWire.Object(FulfillmentAlias,
             ("inventoryType", "BOOST"),
             ("ip", (double)economy.Ip),
-            ("rp", (double)economy.Rp),
+            ("rp", (double)ShownRp(economy, rpOff)),
             ("data", ActiveBoosts(account)));
     }
 
@@ -410,12 +423,19 @@ public static class AirDtos
             : [AirWire.Object(AirProtocolNames.BroadcastMessage, ("id", 1d), ("active", true), ("content", content),
                 ("messageKey", "generic"), ("severity", severity))])));
 
-    public static AsObject AccountBalanceNotification(PlatformAccount account)
+    public static AsObject AccountBalanceNotification(PlatformAccount account, bool rpOff = false)
     {
         var economy = PlatformEconomy.For(account);
         return AirWire.Object(AirProtocolNames.StoreAccountBalanceNotification,
-            ("ip", (double)economy.Ip), ("rp", (double)economy.Rp));
+            ("ip", (double)economy.Ip), ("rp", (double)ShownRp(economy, rpOff)));
     }
+
+    /// <summary>
+    /// NOT RETAIL (batch 751): the RP balance the client is sent. While the host's "Offer skins and RP" switch is off
+    /// (<see cref="PlatformControls.PaidContentOff"/>) it is 0; the stored balance is untouched and shows again when the switch is on.
+    /// Retail always sent the balance.
+    /// </summary>
+    public static long ShownRp(PlatformEconomyState economy, bool rpOff) => rpOff ? 0 : economy.Rp;
 
     private static string FormatBoostEndDate(long endDate, DateTimeOffset now)
     {
@@ -445,7 +465,7 @@ public static class AirDtos
     // Reconstruction: minNumPlayersForPracticeGame = 1 (retail's 'custom games temporarily require a minimum of {0}
     // players' knob; the owner allows a solo start), clientHeartBeatRateSeconds = 60 (the client's own default),
     // mucServiceEnabled = false (the client then builds local rooms and joins them over the XMPP connection).
-    private static AsObject ClientSystemStates(PlatformEconomyRules? rules = null) => AirWire.Object(ClientStatesAlias,
+    private static AsObject ClientSystemStates(PlatformEconomyRules? rules = null, IReadOnlySet<int>? disabled = null) => AirWire.Object(ClientStatesAlias,
         ("practiceGameEnabled", true),
         ("observerModeEnabled", false),
         // Batch 669: Battle Training runs (PlatformGames.CreateBattleTraining), so the client's own default, true (ClientSystemStatesNotification,
@@ -468,7 +488,11 @@ public static class AirDtos
         ("freeToPlayChampionIdList", AirWire.List((rules ?? new PlatformEconomyRules()).FreeChampionIds
             .Where(AirGameDtos.ChampionNames.ContainsKey).Select(id => (object)id))),
         ("freeToPlayRewardChampionIdList", AirWire.List(Array.Empty<object>())),
-        ("inactiveChampionIdList", AirWire.List(Array.Empty<object>())),
+        // Batch 751: retail's list of champions pulled from play, here the ones the host turned off, less Battle Training's three (Greyed).
+        // Once the champion list has loaded, the client sets every champion active and then this list's inactive
+        // (Inventory.updateChampionsRoster_internal, Inventory.as:335-347, from ApplicationController.as:1040), so the greyed grid follows
+        // this list rather than ChampionDTO.active alone.
+        ("inactiveChampionIdList", AirWire.List((disabled ?? new HashSet<int>()).Where(id => Greyed(disabled, id)).Order().Select(id => (object)id))),
         ("inactiveSpellIdList", AirWire.List(Array.Empty<object>())),
         ("queueThrottleDTO", null));
 
@@ -526,7 +550,7 @@ public static class AirDtos
             ("summonerAssociatedTalents", AirWire.List(entries)));
     }
 
-    private static AsObject Champion(string name, int id, PlatformAccount? account, PlatformEconomyRules? rules)
+    private static AsObject Champion(string name, int id, PlatformAccount? account, PlatformEconomyRules? rules, bool skinsOff, bool enabled)
     {
         var economy = account is null ? null : PlatformEconomy.For(account);
         // A champion the server cannot play is listed but locked, as an unowned champion was in retail: owned and free
@@ -538,17 +562,22 @@ public static class AirDtos
             ("displayName", name),
             ("description", string.Empty),
             ("skinName", name),
-            ("active", true),
+            // Batch 751: retail's own switch for a champion pulled from play. The client greys an inactive champion out and will not
+            // let it be chosen or randomed (ChampionSelectionController.as:1085, 1736, 1828) and its tooltip reads "Disabled"
+            // (ChampionTooltip.as:274). The client resets this flag from ClientSystemStates.inactiveChampionIdList, which says the same.
+            ("active", enabled),
             ("owned", playable && (economy is null || economy.AllUnlocked || (economy.OwnedChampions?.Contains(id) ?? false))),
             ("freeToPlay", playable && (rules ?? new PlatformEconomyRules()).FreeChampionIds.Contains(id)),
             ("freeToPlayReward", false),
             ("ownedByYourTeam", true),
             ("ownedByEnemyTeam", true),
-            ("botEnabled", PlatformBots.IsBotEnabled(id)),
+            // NOT RETAIL (batch 751): a champion the host turned off is not botEnabled, so the lobby's add-bot list, which offers only
+            // botEnabled champions (TeamSelectionController.as:861, 875), leaves it out; retail had no host switch.
+            ("botEnabled", enabled && PlatformBots.IsBotEnabled(id)),
             ("banned", false),
             // AIR constructs its default skin itself; sending skinId=0 here
             // duplicates the base skin and indexes absent generated metadata.
-            ("championSkins", AirWire.List(AirGameDtos.SkinIds(id).Select(skin => AirWire.Object(ChampionSkinAlias,
+            ("championSkins", AirWire.List(AirGameDtos.SkinIds(id, skinsOff).Select(skin => AirWire.Object(ChampionSkinAlias,
                 ("championId", (double)id), ("skinId", (double)skin),
                 ("owned", playable && (account is null || PlatformEconomy.OwnsSkin(account, skin))), ("lastSelected", false))))));
     }

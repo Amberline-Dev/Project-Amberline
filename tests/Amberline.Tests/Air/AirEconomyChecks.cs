@@ -338,7 +338,7 @@ public static class AirEconomyChecks
     {
         var method = typeof(PlatformStore).GetMethod("Fulfillment", BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new MissingMethodException(nameof(PlatformStore), "Fulfillment");
-        return (AsObject)(method.Invoke(null, [item, account, state, 1])
+        return (AsObject)(method.Invoke(null, [item, account, state, 1, false])
             ?? throw new InvalidOperationException("Fulfillment returned null."));
     }
 

@@ -114,7 +114,9 @@ public static class HostFileShareChecks
             TestAssert.True(routes.Any(route => route.Path == Switch) && routes.Any(route => route.Path == "/files/x"), "the routes walked include the switch and the files");
             foreach (var (path, methods) in routes)
             {
-                if (AirRemoteTunnel.IsPublicPath(path) || path == "/files" || path.StartsWith("/files/", StringComparison.Ordinal)) continue;
+                // Batch 751: My account is the friends' port's own page too (server.host-account-page-*).
+                if (AirRemoteTunnel.IsPublicPath(path) || path == "/files" || path.StartsWith("/files/", StringComparison.Ordinal) ||
+                    path is HostAccountPage.PagePath or HostAccountPage.StylePath) continue;
                 foreach (var method in methods)
                 {
                     using var remote = await HostSessionChecks.PacedAsync(browser, () => HostSessionChecks.Request(method, $"https://127.0.0.1:{home.RemotePort}{path}"));

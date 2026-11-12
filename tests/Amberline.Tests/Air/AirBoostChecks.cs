@@ -289,7 +289,7 @@ public static class AirBoostChecks
     {
         var method = typeof(PlatformStore).GetMethod("Fulfillment", BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new MissingMethodException(nameof(PlatformStore), "Fulfillment");
-        return (AsObject)(method.Invoke(null, [item, account, state, 1]) ?? throw new InvalidOperationException("Fulfillment returned null."));
+        return (AsObject)(method.Invoke(null, [item, account, state, 1, false]) ?? throw new InvalidOperationException("Fulfillment returned null."));
     }
 
     private static MatchResult Result(PlatformAccount account, string team, bool wasAfk,
