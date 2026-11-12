@@ -967,7 +967,8 @@ public static partial class ChampionLiveRegressionChecks
                     TestAssert.True(stats.Length > 0, "temporary turret stat changes reach each visible peer");
                     var raw = stats[^1].Plaintext.Span;
                     TestAssert.Near(expected, BinaryPrimitives.ReadSingleLittleEndian(raw[19..]), 1e-5);
-                    TestAssert.Near(1.3, BinaryPrimitives.ReadSingleLittleEndian(raw[31..]), 1e-6);
+                    // mAttackSpeedMod: 1 since batch 759 (the assist bonus adds no attack speed).
+                    TestAssert.Near(1.0, BinaryPrimitives.ReadSingleLittleEndian(raw[31..]), 1e-6);
                 }
             }
         }

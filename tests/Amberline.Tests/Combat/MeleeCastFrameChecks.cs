@@ -46,7 +46,9 @@ public static class MeleeCastFrameChecks
 
     // Batch 742 (owner, 11 November 2026, on a ranged monster's shot in flight when it dies: "Full hit, like the rest"). A shot already in
     // the air lands as it would have with its attacker alive, its character script's on-hit included: the Wraith's CharOnHitUnit x1.43 on
-    // Annie, the siege minion's CharOnHitUnit x2 on a turret. Before, the unit character module dropped the dead unit's script at its death.
+    // a lane minion, the siege minion's CharOnHitUnit x2 on a turret. Before, the unit character module dropped the dead unit's script at its
+    // death. Batch 758: the Wraith shoots a lane minion, no longer Annie, since its x1.43 never reaches a champion (2011 footage), so a shot
+    // on her would deal the same with the script or without it.
     [Check("combat.missile-in-flight-lands-with-its-dead-attackers-on-hit")]
     public static void MissileInFlightLandsWithItsDeadAttackersOnHit()
     {
@@ -54,6 +56,7 @@ public static class MeleeCastFrameChecks
         using var _ = runtime;
         var wraith = Monster(runtime, 3);
         TestAssert.Equal("Wraith", wraith.Name, "camp 3's first member");
+        var minion = StandingMinion(runtime, MinionType.Melee);
         var siege = StandingMinion(runtime, MinionType.Siege);
         // A bare Order turret in the river: a real one's armour moves with its backdoor bonus (TurretBackdoorBonus, 150) as minions come
         // and go, which a comparison of two shots cannot take. It has no wire, so its health is read.
@@ -61,20 +64,20 @@ public static class MeleeCastFrameChecks
         var turret = runtime.World.Register(new Entity(runtime.World.Allocate(UnitType.Turret), EntityKind.Turret, UnitType.Turret, Team.Order,
             siege.Position + new Position2(0.0, siege.CombatRadius + 250.0)) { MaxHealth = 1e6, Health = 1e6 });
         var failures = new List<string>();
-        foreach (var (attacker, target, label) in new[] { (wraith, annie, "Wraith on Annie"), (siege, turret, "siege minion on a turret") })
+        foreach (var (attacker, target, label) in new[] { (wraith, minion, "Wraith on a lane minion"), (siege, turret, "siege minion on a turret") })
         {
-            // A shot of a few hundred units: the Wraith's flies at 750 a second to Annie 400 units off on a spot it sees, the cannon's at 1200
-            // to the turret 250 units off.
+            // A shot of a few hundred units: the Wraith's flies at 750 a second to the minion 400 units off on a spot it sees, the cannon's
+            // at 1200 to the turret 250 units off. Neither target has a wire here, so its health is read.
             if (attacker == wraith)
-                annie.Position = new[] { (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (0.7071, 0.7071), (-0.7071, 0.7071), (0.7071, -0.7071),
+                minion.Position = new[] { (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (0.7071, 0.7071), (-0.7071, 0.7071), (0.7071, -0.7071),
                         (-0.7071, -0.7071) }
                     .Select(direction => wraith.Position + new Position2(direction.Item1 * 400.0, direction.Item2 * 400.0))
                     .First(spot => runtime.Navigation.IsMovementWalkable(spot) &&
-                                   runtime.Navigation.HasUnitVision(wraith.Position, wraith.SelectionRadius, spot, annie.SelectionRadius));
+                                   runtime.Navigation.HasUnitVision(wraith.Position, wraith.SelectionRadius, spot, minion.SelectionRadius));
             annie.Waypoints.Clear();
             runtime.Delivery.Flush();
-            var control = Swing(runtime, capture, attacker, target, kill: false, wire: target == annie);
-            var killed = Swing(runtime, capture, attacker, target, kill: true, wire: target == annie);
+            var control = Swing(runtime, capture, attacker, target, kill: false, wire: false);
+            var killed = Swing(runtime, capture, attacker, target, kill: true, wire: false);
             Console.WriteLine($"{label}: alive {control.Damage:F2}, killed with its shot in the air {killed.Damage:F2} " +
                               $"(lands {killed.StepsLate} steps after the cast frame)");
             if (killed.StepsLate == 0) failures.Add($"{label}: the shot did not fly");

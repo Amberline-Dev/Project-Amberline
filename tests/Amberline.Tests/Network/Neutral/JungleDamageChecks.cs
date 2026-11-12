@@ -9,16 +9,20 @@ using Amberline.Simulation.Combat;
 
 namespace Amberline.Tests.Network.Neutral;
 
-// Batch 739 (owner, 11 November 2026: "jungle is doing more damage than intended; like almost double on certain monsters"). Every camp
-// member of Summoner's Rift (Map1) and the Twisted Treeline (Map4), as the shipped level scripts spawn them, swings at a champion of
-// armour 54 in a 3v3 production match (the server's own map composition, GameData.ConfigureDefault). Each swing is read off the
-// champion's own wire (0x0D swing, 0x68 damage) and its queued hit (CombatService.PendingHits), and the champion's health loss is
-// compared with the wire. The shipped expectation of a swing on a champion: the record's AD, times the map's dr_UnitToHero (0.7), the
-// record's CritDamageBonus on a critical roll (only wolf, GiantWolf and Worm have a BaseCritChance; V3.14 "Giant Wolf: No longer
-// critically strikes"), CharOnHitUnit's x1.43 (every jungle CharScript), then armour. Besides the swings only two shipped scripts deal
-// damage: the Dragon's CharOnHitUnit adds Burning (15 TRUE_DAMAGE a second, BUFF_RENEW_EXISTING), and the Worm attacks only through its
-// scripted spells (WormAttack: its base AD as PHYSICAL_DAMAGE, no ratio, no x1.43; Propel 300 and SweepingBlow 200 MAGIC_DAMAGE). Batch 739
-// measured every member at this expectation, so the owner's excess is the scripts' own.
+// Batch 739 (owner, 11 November 2026: "jungle is doing more damage than intended; like almost double on certain monsters"), restated by
+// batch 758 (owner, 12 November 2026: "Match the footage"). Every camp member of Summoner's Rift (Map1) and the Twisted Treeline (Map4), as
+// the shipped level scripts spawn them, swings at a champion in a 3v3 production match (the server's own map composition,
+// GameData.ConfigureDefault). Each swing is read off the champion's own wire (0x0D swing, 0x68 damage) and its queued hit
+// (CombatService.PendingHits), and the champion's health loss is compared with the wire. A swing on a champion deals the record's AD, times
+// the map's dr_UnitToHero (0.7), the record's CritDamageBonus on a critical roll (only wolf, GiantWolf and Worm have a BaseCritChance; V3.14
+// "Giant Wolf: No longer critically strikes"), then armour, and nothing more: retail 2011 footage (a ranked game of 1 October 2011, patch
+// 1.0.0.125; 99 clean hits of seven monster types on a champion, levels 1-12, docs/maintenance/2026-11-12-batch-758-jungle-champion-damage.md)
+// shows no trace of the x1.43 every jungle CharScript's CharOnHitUnit
+// writes into DamageAmount, which batch 739 measured on top. A camp the footage shows fights a champion of the armour he had then, and its
+// hits must be the footage's (Pins); the other camps fight one of armour 54. The x1.43 stays on a hit that is not on a champion (the footage
+// cannot show one): the production hit stage gives a lane minion 1.43 times the hit. Besides the swings only two shipped scripts deal damage:
+// the Dragon's CharOnHitUnit adds Burning (15 TRUE_DAMAGE a second, BUFF_RENEW_EXISTING), which still ticks, and the Worm attacks only through
+// its scripted spells (WormAttack: its base AD as PHYSICAL_DAMAGE, no ratio, no x1.43; Propel 300 and SweepingBlow 200 MAGIC_DAMAGE).
 // The check is Serial: it swaps GameData's default map, as the server does for a match on another map.
 public static class JungleDamageChecks
 {
@@ -28,19 +32,49 @@ public static class JungleDamageChecks
     private const int FightSteps = 140;
     private const int SettleSteps = 50;
 
-    [Check("neutral.jungle-hits-on-a-champion-match-the-shipped-scripts", Serial = true, TimeoutSeconds = 300)]
-    public static void JungleHitsOnAChampionMatchTheShippedScripts()
+    // The champion's armour in the footage while he cleared each camp (HUD stats panel, 11.5 + 3.5 x level): the camp's other members share it.
+    private static readonly Dictionary<string, double> FootageArmor = new()
+    {
+        ["Golem"] = 15.0, ["GiantWolf"] = 18.5, ["AncientGolem"] = 22.0, ["LizardElder"] = 29.0, ["LesserWraith"] = 32.5,
+    };
+
+    // The footage's hits (JUNGLE-REPORT.md, per-monster averages; the HUD shows integers, so each reading is +/- 1): AD x 0.7 (x crit) x
+    // 100/(100 + armour) at the armour he had. Every landed swing of the monster and result on a champion of that armour must be this one.
+    private static readonly (string Monster, bool Critical, double Armor, double Hit, string Video)[] Pins =
+    [
+        ("Golem", false, 15.0, 39.57, "level 1, 18 hits, mean 39.56"),
+        ("GiantWolf", false, 18.5, 15.36, "level 2, 1 hit, 16"),
+        ("GiantWolf", true, 18.5, 46.08, "level 2, critical x3, 2 hits, 47 and 46"),
+        ("wolf", false, 18.5, 10.63, "level 2, 3 hits, mean 10.33"),
+        ("wolf", true, 18.5, 21.27, "level 2, critical x2, 2 hits, 21 and 22"),
+        ("AncientGolem", false, 22.0, 63.11, "level 3, 5 hits, mean 63.20"),
+        ("YoungLizard", false, 22.0, 10.33, "level 3, 14 hits, mean 10.21"),
+        ("LizardElder", false, 29.0, 59.69, "level 5, 19 hits, mean 59.68"),
+        ("YoungLizard", false, 29.0, 9.77, "level 5, 2 hits, mean 9.50"),
+        ("LesserWraith", false, 32.5, 18.49, "level 6, 9 hits, mean 18.33"),
+    ];
+
+    [Check("neutral.jungle-hits-on-a-champion-match-2011-footage", Serial = true, TimeoutSeconds = 300)]
+    public static void JungleHitsOnAChampionMatch2011Footage()
     {
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
         var failures = new List<string>();
+        var pinned = new int[Pins.Length];
         try
         {
             foreach (var map in new[] { GameMaps.Normal, GameMaps.TwistedTreeline })
-                foreach (var row in Measure(map, failures)) Console.WriteLine(row);
+                foreach (var row in Measure(map, failures, pinned)) Console.WriteLine(row);
         }
         finally
         {
             GameData.ConfigureDefault(GameDataPaths.Default);
+        }
+        for (var index = 0; index < Pins.Length; index++)
+        {
+            var pin = Pins[index];
+            Console.WriteLine($"footage {pin.Monster}{(pin.Critical ? " critical" : "")} on armour {pin.Armor}: {pin.Hit:F2} ({pin.Video}), " +
+                              $"{pinned[index]} landed hit(s) measured");
+            if (pinned[index] == 0) failures.Add($"no {(pin.Critical ? "critical " : "")}{pin.Monster} hit on armour {pin.Armor} was measured");
         }
         TestAssert.True(failures.Count == 0, $"{failures.Count} finding(s): " + string.Join("; ", failures));
     }
@@ -51,12 +85,14 @@ public static class JungleDamageChecks
         public double SpawnAd { get; init; }
         public double? Ad600 { get; set; }
         public double? Ad1200 { get; set; }
+        // The period it fights with: the record's, or faster under its own script buff (RabidWolf's CrestOfNaturesFury, +0.2 attack speed).
+        public double? Period { get; set; }
         public List<double> Swings { get; } = [];
         public List<(double Damage, BasicAttackOutcome Outcome)> Queued { get; } = [];
         public List<(double Damage, byte Type, bool AfterKill)> Events { get; } = [];
     }
 
-    private static List<string> Measure(int map, List<string> failures)
+    private static List<string> Measure(int map, List<string> failures, int[] pinned)
     {
         var paths = GameDataPaths.Default.ForMap(map);
         GameData.ConfigureDefault(paths);
@@ -108,8 +144,22 @@ public static class JungleDamageChecks
 
         TestAssert.Near(ChampionArmor, hero.Armor, 1e-9, $"map {map}: the measured champion's armour");
         var ratio = data.LevelConstants.DamageRatios.UnitToHero;
-        var mitigation = 100.0 / (100.0 + ChampionArmor);
         var lines = new List<string> { $"map {map}: dr_UnitToHero {ratio}, champion armour {hero.Armor}" };
+
+        // Batch 758: the x1.43 stays on a hit that is not on a champion. Every living camp member's landed hit of 100 on a lane minion, through
+        // the stage CombatService runs as a swing lands (ICombatHooks.ModifyBasicAttackDamage: the character script's CharOnHitUnit, then its
+        // buffs' BuffOnHitUnit), comes out at 143; the Worm's script has no CharOnHitUnit. The minion dies right after, before any camp fights.
+        var minion = runtime.Waves.SpawnFixture(Team.Chaos, MinionType.Melee, 0, runtime.Waves.ActiveLanes[0], clock, 0);
+        foreach (var member in runtime.World.Entities.Values.Where(unit => unit.Kind == EntityKind.Neutral && unit.Alive)
+                     .GroupBy(unit => unit.Name).Select(group => group.First()).OrderBy(unit => unit.Name, StringComparer.Ordinal))
+        {
+            var onMinion = runtime.Dependencies.CombatHooks.ModifyBasicAttackDamage(member, minion, 100.0, false, BasicAttackOutcome.Normal);
+            var scripted = member.Name == "Worm" ? 100.0 : 143.0;
+            lines.Add($"map {map} {member.Name,-18} landed hit of 100 on a lane minion: {onMinion:F2}");
+            if (Math.Abs(onMinion - scripted) > 1e-9)
+                failures.Add($"map {map} {member.Name}: a landed hit of 100 on a lane minion deals {onMinion:F2}, its script gives {scripted:F2}");
+        }
+        runtime.Combat.Kill(minion);
         foreach (var camp in runtime.Waves.LevelScript.NeutralCamps.OrderBy(camp => camp.Number))
         {
             var members = runtime.World.Entities.Values
@@ -128,6 +178,12 @@ public static class JungleDamageChecks
                 failures.Add($"map {map} camp {camp.Number}: no walkable spot near {first.Name} that it sees");
                 continue;
             }
+            // A camp the footage shows fights the champion of the armour he had then (a stat buff on top of the probe's 54, removed after it).
+            var armor = members.Select(member => FootageArmor.GetValueOrDefault(member.Name)).FirstOrDefault(value => value > 0.0, ChampionArmor);
+            var footage = runtime.Buffs.AddBuff(hero, "B758FootageArmor", BuffType.CombatEnhancer, 1e6, hero.NetId,
+                new BuffPayload { Armor = armor - hero.Armor });
+            TestAssert.Near(armor, hero.Armor, 1e-9, $"map {map} camp {camp.Number}: the champion's armour");
+            var mitigation = 100.0 / (100.0 + armor);
             hero.Position = spot.Value;
             hero.Waypoints.Clear();
             hero.Health = hero.MaxHealth;
@@ -139,6 +195,7 @@ public static class JungleDamageChecks
             var (lost, wired) = (0.0, 0.0);
             TestAssert.True(runtime.Combat.ApplyHit(hero.NetId, first.NetId, 1.0, DamageType.True, DamageSourceKind.Spell),
                 $"map {map} camp {camp.Number}: the champion's poke lands");
+            foreach (var member in members) samples[member.NetId].Period = member.AttackPeriod;
             for (var step = 0; step < FightSteps + SettleSteps; step++)
             {
                 if (step == FightSteps)
@@ -173,14 +230,18 @@ public static class JungleDamageChecks
             var fight = (FightSteps + SettleSteps) * Step;
             if (lost > wired + 0.5 || lost < wired - 0.5 - hero.HealthRegen * fight)
                 failures.Add($"map {map} camp {camp.Number}: the champion lost {lost:F2} health, its wire reported {wired:F2}");
-            lines.Add($"map {map} camp {camp.Number}: lost {lost:F2} wired {wired:F2}" + (foreign.Count > 0 ? $" foreign {foreign.Count}" : ""));
-            foreach (var member in members) lines.Add(Row(map, camp.Number, member, samples[member.NetId], data, ratio, mitigation, failures));
+            lines.Add($"map {map} camp {camp.Number}: armour {armor} lost {lost:F2} wired {wired:F2}" +
+                      (foreign.Count > 0 ? $" foreign {foreign.Count}" : ""));
+            foreach (var member in members)
+                lines.Add(Row(map, camp.Number, member, samples[member.NetId], data, ratio, armor, mitigation, failures, pinned));
+            if (footage is not null) runtime.Buffs.RemoveBuff(hero, footage.Slot);
+            TestAssert.Near(ChampionArmor, hero.Armor, 1e-9, $"map {map} camp {camp.Number}: the champion's armour after the camp");
         }
         return lines;
     }
 
-    private static string Row(int map, int camp, Entity member, Sample sample, GameData data, double ratio, double mitigation,
-        List<string> failures)
+    private static string Row(int map, int camp, Entity member, Sample sample, GameData data, double ratio, double armor, double mitigation,
+        List<string> failures, int[] pinned)
     {
         var label = $"map {map} camp {camp} m{member.NeutralMember} {sample.Name}";
         var record = data.Champion(member.Name).BaseDamage;
@@ -188,10 +249,11 @@ public static class JungleDamageChecks
             failures.Add($"{label}: attack damage {sample.SpawnAd}/{sample.Ad600}/{sample.Ad1200} (spawn/10/20 min), the record has {record}");
         var crit = member.CritMultiplier;
         var worm = member.Name == "Worm";
-        // A swing's hit as the shipped scripts deal it: the queued amount is the record AD times the ratio (and the crit multiplier),
-        // and CharOnHitUnit's x1.43 and the armour come on top. The Worm never swings: WormAttack's TargetExecute deals its base AD.
+        // A swing's hit on a champion as the 2011 footage shows it: the queued amount is the record AD times the ratio (and the crit
+        // multiplier), and only the armour comes on top (CharOnHitUnit's x1.43 does not reach a champion, batch 758). The Worm never swings:
+        // WormAttack's TargetExecute deals its base AD.
         double Expected(BasicAttackOutcome outcome) => worm ? member.AttackDamage * mitigation :
-            member.AttackDamage * ratio * (outcome == BasicAttackOutcome.Critical ? crit : 1.0) * 1.43 * mitigation;
+            member.AttackDamage * ratio * (outcome == BasicAttackOutcome.Critical ? crit : 1.0) * mitigation;
         bool IsHit((double Damage, byte Type, bool AfterKill) item) => (item.Type & 0x7f) is 3 or 4 &&
             (Math.Abs(item.Damage - Expected(BasicAttackOutcome.Normal)) < 0.01 || Math.Abs(item.Damage - Expected(BasicAttackOutcome.Critical)) < 0.01);
         var landed = sample.Events.Where(item => !item.AfterKill).ToArray();
@@ -204,11 +266,11 @@ public static class JungleDamageChecks
             if (Math.Abs(damage - raw) > 1e-6) failures.Add($"{label}: queued {damage:F3} for a {outcome} swing, the ratio gives {raw:F3}");
         }
         var swings = sample.Swings.Count;
-        var period = member.AttackPeriod;
+        var period = sample.Period ?? member.AttackPeriod;
         var rate = swings > 1 ? (swings - 1) / (sample.Swings[^1] - sample.Swings[0]) : double.NaN;
         // The swings are stamped at the end of the 0.1 s read step, so the span of n swings may read one step short of (n - 1) periods.
         if (swings > 1 && sample.Swings[^1] - sample.Swings[0] < (swings - 1) * period - Step - 1e-6)
-            failures.Add($"{label}: {rate:F3} swings a second, the record's period gives {1.0 / period:F3}");
+            failures.Add($"{label}: {rate:F3} swings a second, the period it fights with gives {1.0 / period:F3}");
         if (!worm && swingHits.Length > swings) failures.Add($"{label}: {swingHits.Length} swing hits from {swings} swings");
         if (!worm && swings < 8) failures.Add($"{label}: only {swings} swings in the fight");
         // Damage events that are not one of the swings' own hits: only the Dragon's Burning and the Worm's scripted spells deal any.
@@ -220,19 +282,34 @@ public static class JungleDamageChecks
             _ => others.Length == 0,
         };
         if (!allowed) failures.Add($"{label}: other damage events [{string.Join(", ", others.Select(item => $"{item.Damage:F2}/{item.Type:X2}"))}]");
+        // The rest of the Dragon's CharOnHitUnit still runs on a champion: its Burning ticks.
+        if (member.Name == "Dragon" && others.Length == 0) failures.Add($"{label}: no Burning tick from its swings");
+        // The footage's own numbers, read off the wire: every landed swing of a pinned monster and result on a champion of the pinned armour.
+        for (var index = 0; index < Pins.Length; index++)
+        {
+            var pin = Pins[index];
+            if (pin.Monster != member.Name || Math.Abs(pin.Armor - armor) > 1e-9) continue;
+            var hits = landed.Where(item => (item.Type & 0x7f) == (pin.Critical ? 3 : 4)).Select(item => item.Damage).ToArray();
+            pinned[index] += hits.Length;
+            var off = hits.Where(hit => Math.Abs(hit - pin.Hit) > 0.01).ToArray();
+            if (off.Length > 0)
+                failures.Add($"{label}: {off.Length} of {hits.Length} {(pin.Critical ? "critical " : "")}hit(s) on armour {armor} deal " +
+                             $"[{string.Join(", ", off.Distinct().Select(hit => hit.ToString("F2")))}], the footage shows {pin.Hit:F2} ({pin.Video})");
+        }
         var crits = swingHits.Count(item => (item.Type & 0x7f) == 3);
         var mean = swingHits.Length > 0 ? swingHits.Average(item => item.Damage) : double.NaN;
         var perSwing = swings > 0 ? landed.Sum(item => item.Damage) / swings : double.NaN;
         var late = sample.Events.Where(item => item.AfterKill).Select(item => item.Damage.ToString("F2")).ToArray();
         // Batch 742 (owner, 11 November 2026: "Full hit, like the rest"): a shot still in the air when its monster dies lands as the swing
-        // would have with the monster alive (blueDragon 178.75, not 125.00 without its CharOnHitUnit); the Dragon's Burning ticks on.
-        var lateOff = sample.Events.Where(item => item.AfterKill && !IsHit(item) &&
+        // would have with the monster alive (on a champion that is its plain hit since batch 758); the Dragon's Burning ticks on, and so
+        // does a debuff the Worm's scripted spells left on the champion (WrathDebuff's ramping ticks; the batch 758 name's draws show one).
+        var lateOff = sample.Events.Where(item => item.AfterKill && !IsHit(item) && !worm &&
                                                   !(member.Name == "Dragon" && Math.Abs(item.Damage - 15.0) < 1e-4)).ToArray();
         if (lateOff.Length > 0)
             failures.Add($"{label}: after its death it dealt [{string.Join(", ", lateOff.Select(item => item.Damage.ToString("F2")))}], " +
                          $"its swing deals {Expected(BasicAttackOutcome.Normal):F2}");
         return $"{label,-34} record AD {record,6:F1} AD(spawn/10/20 min) {sample.SpawnAd:F1}/{sample.Ad600:F1}/{sample.Ad1200:F1} " +
-               $"period {period:F3} rate {rate:F3} (record {1.0 / period:F3}) crit {member.CritChance:P0} x{crit:F1} | " +
+               $"period {period:F3} rate {rate:F3} (its period {1.0 / period:F3}) crit {member.CritChance:P0} x{crit:F1} | " +
                $"swings {swings} queued {queued} hits {swingHits.Length} (crit {crits}) mean {mean:F2} expected {Expected(BasicAttackOutcome.Normal):F2} " +
                $"ratio {mean / Expected(BasicAttackOutcome.Normal):F3} | other {others.Length} [{string.Join(",", extra.Select(value => value.ToString("F2")))}] " +
                $"per swing {perSwing:F2} ({perSwing / Expected(BasicAttackOutcome.Normal):F3})" + (late.Length > 0 ? $" | after kill [{string.Join(",", late)}]" : "");

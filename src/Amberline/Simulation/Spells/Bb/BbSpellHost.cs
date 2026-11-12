@@ -506,9 +506,19 @@ internal sealed class BbSpellHost : IBbHost
             // Spells/ResistantSkin.luaobj's OnBuffActivate writes GameTime x 0.00625 as IncPermanentFlatHPRegenMod (0475-0483);
             // on the Worm, a non-hero, that is its baseline regeneration (the field the lifecycle's Percent*RegenMod scales).
             case "FlatHPRegenMod": pet.HealthRegen += delta; break;
-            // The turret's own assist bonus (PersonalTurretAssistBonus, batch 159 step 2): a percent amount on the
-            // unit's base attacks-per-second, the same additive family a buff's IncPercentAttackSpeedMod joins.
-            case "PercentAttackSpeedMod": BuffLifecycle.IncreaseNpcBaseAttackSpeed(pet, delta); break;
+            // A percent amount on the unit's base attacks-per-second, the same additive family a buff's IncPercentAttackSpeedMod joins
+            // (batch 159 step 2).
+            case "PercentAttackSpeedMod":
+                // Reconstruction (batch 759, owner decision of 12 November 2026, "Match the footage"): the lane turret's own assist bonus,
+                // PersonalTurretAssistBonus (TurretAssistManager adds it to every lane turret), adds IncPermanentPercentAttackSpeedMod +0.3 in
+                // OnBuffActivate (and -0.2 in OnBuffDeactivate), which would make the turret's 1.2 s record period 0.923 s. Retail 2011
+                // footage shows lane and inhibitor turrets firing every 1.24 s (median 30 frames at 24.25 fps over 24 clean intervals),
+                // the 1.2 s period without it. Why the script's amount
+                // had no effect in retail is not known. Only this accessor of this buff is skipped: its armour and magic resist (+25),
+                // TurretAssistManager's +150 and backdoor updates, and every other attack-speed source (Fortify's buff) still apply.
+                if (HasFrame && string.Equals(Frame.ScriptName, "PersonalTurretAssistBonus", StringComparison.OrdinalIgnoreCase)) return;
+                BuffLifecycle.IncreaseNpcBaseAttackSpeed(pet, delta);
+                break;
             case "FlatMagicDamageMod": pet.AbilityPower += delta; break;
             case "FlatMovementSpeedMod":
                 // The speed is recomputed from the baseline and the buffs' factors (a Q ghoul's 25 percent applies to the bonus too).

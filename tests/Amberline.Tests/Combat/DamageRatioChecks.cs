@@ -80,7 +80,8 @@ public static class DamageRatioChecks
 
         // Jungle monster: UnitToHero 0.7. The character scripts' own CharOnHitUnit x1.43 (CharScriptGolem and its nine
         // siblings, 0039-0063) is not this raw formula's business any more (batch 159 part 2): the raw hit is 18 x 0.7
-        // against a champion and 18 against a minion, and the script brings the champion hit back to about 18.
+        // against a champion and 18 against a minion. The script's x1.43 then applies to the minion only: 2011 footage shows a
+        // champion taking 18 x 0.7 (batch 758, BbHookRouter.RunHitUnit).
         var wolf = Unit(12, EntityKind.Neutral, UnitType.Monster, Team.Neutral, 18);
         wolf.Name = "wolf";
         TestAssert.Near(18 * 0.7, Raw(wolf, hero), 1e-9, "wolf against a champion");

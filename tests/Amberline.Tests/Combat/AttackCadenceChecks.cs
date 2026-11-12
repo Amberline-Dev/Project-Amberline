@@ -97,9 +97,11 @@ public static class AttackCadenceChecks
 
     /// <summary>
     /// A Summoner's Rift outer turret, run by its shipped Turret.luaobj on a champion in its range: one swing per its record's 1.2 s
-    /// (AttackDelayOffsetPercent -0.25) over 1.3, the +0.3 IncPermanentPercentAttackSpeedMod of PersonalTurretAssistBonus (added once,
-    /// by TurretAssistManager from the turret's CharOnActivate): 0.923 s, 1.083 attacks per second. A lane melee minion swings at its
-    /// record's 0.8 s. Both are what the shipped data gives; the check pins that the live cadence adds nothing to it.
+    /// (AttackDelayOffsetPercent -0.25), 0.833 attacks per second, 36 steps at 30 Hz. Batch 759 (owner decision of 12 November 2026, "Match
+    /// the footage"): retail 2011 footage shows lane turrets firing every 1.24 s (median 30 frames at 24.25 fps), so PersonalTurretAssistBonus's
+    /// +0.3 IncPermanentPercentAttackSpeedMod no longer applies; before, the
+    /// period was 1.2 s over 1.3. A buff's own attack speed still applies: SummonerFortify's shipped buff (BuffOnUpdateStats
+    /// IncPercentAttackSpeedMod 1.0) doubles it while it lasts, 0.6 s, 18 steps. A lane melee minion swings at its record's 0.8 s.
     /// </summary>
     [Check("combat.summoners-rift-turret-and-minion-swing-at-their-record-period")]
     public static void SummonersRiftTurretAndMinionSwingAtTheirRecordPeriod()
@@ -119,7 +121,18 @@ public static class AttackCadenceChecks
         hero.Position = new Position2(turret.Position.X + dx / length * 450.0, turret.Position.Z + dz / length * 450.0);
         foreach (var other in new[] { match.Ally, match.Foe, match.FarFoe })
             other.Position = other.Team == Team.Order ? new Position2(400, 400) : new Position2(13900, 14000);
-        AssertCadence(turret.Name, RecordPeriod(character, 1.3), MeanInterval(match, turret, 12.0));
+        AssertCadence(turret.Name, RecordPeriod(character), MeanInterval(match, turret, 12.0));
+        TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-9, $"{turret.Name}'s attack-speed multiplier without the assist bonus's +0.3");
+        TestAssert.True(BbM3.Buff(turret, "PersonalTurretAssistBonus") is not null, $"{turret.Name} still holds PersonalTurretAssistBonus");
+
+        // Batch 759: Fortify's own +1.0 still joins the turret's attack speed (1 + 1 = 2), and leaves with the buff.
+        TestAssert.True(BbM3.ScriptBuff(match.Runtime, turret, "SummonerFortify", 7.0) is not null, "SummonerFortify's buff is added to the turret");
+        AssertCadence(turret.Name + " under SummonerFortify", RecordPeriod(character, 2.0), MeanInterval(match, turret, 6.0));
+        TestAssert.Near(2.0, turret.AttackSpeedMod, 1e-9, $"{turret.Name}'s attack-speed multiplier under SummonerFortify");
+        match.Advance(2.0);
+        TestAssert.True(BbM3.Buff(turret, "SummonerFortify") is null, "SummonerFortify's buff has run out");
+        TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-9, $"{turret.Name}'s attack-speed multiplier after SummonerFortify");
+        TestAssert.Near(RecordPeriod(character), turret.AttackPeriod, 1e-9, $"{turret.Name}'s period after SummonerFortify");
 
         var minion = match.Runtime.Waves!.SpawnFixture(Team.Order, MinionType.Melee, 0, "C", 0.0, 0.0);
         minion.Position = new Position2(7000, 7000);
@@ -133,15 +146,16 @@ public static class AttackCadenceChecks
     /// <summary>
     /// Batch 670 (owner, 3 November 2026: "Check turret attack speed on all maps"): every turret CreateLevelProps makes on every shipped map
     /// (Summoner's Rift, the Harrowing rift, the tutorial, Twisted Treeline, the Crystal Scar), run by the production composition (its character
-    /// script and Turret.luaobj), swings at its record's period over the multiplier its shipped character script gives it. The multiplier is
-    /// 1.3 when the character's CharOnActivate adds TurretAssistManager, which adds PersonalTurretAssistBonus to the turret itself
-    /// (IncPermanentPercentAttackSpeedMod +0.3, batch 660); 1 otherwise (the shrines, the Crystal Scar's shrines, the tutorial's two turrets,
-    /// whose CharOnActivate adds only TurretDamageManager). The expectation reads the shipped inibin and the shipped character script, not the
-    /// production tables. Each turret has a 1e7-health enemy minion 450 units toward the map's centre; the window ends before any wave arrives.
+    /// script and Turret.luaobj), swings at its record's period. Batch 759 (owner decision of 12 November 2026, "Match the footage"): the
+    /// multiplier is 1 for every turret. A character whose CharOnActivate adds TurretAssistManager (which adds PersonalTurretAssistBonus to the
+    /// turret itself, IncPermanentPercentAttackSpeedMod +0.3) gave 1.3 until then; retail footage shows the 1.2 s base period instead
+    ///. The shrines, the Crystal Scar's shrines and the tutorial's two turrets
+    /// (whose CharOnActivate adds only TurretDamageManager) were always 1. The expectation reads the shipped inibin, not the production tables.
+    /// Each turret has a 1e7-health enemy minion 450 units toward the map's centre; the window ends before any wave arrives.
     /// The Crystal Scar's capture point guardians are DominionGuardianChecks' (they need a captured point).
     /// </summary>
-    [Check("combat.turrets-on-every-map-swing-at-their-shipped-rate", Serial = true, TimeoutSeconds = 600)]
-    public static void TurretsOnEveryMapSwingAtTheirShippedRate()
+    [Check("combat.turrets-on-every-map-swing-at-their-record-period", Serial = true, TimeoutSeconds = 600)]
+    public static void TurretsOnEveryMapSwingAtTheirRecordPeriod()
     {
         const double Window = 12.0;
         try
@@ -187,7 +201,7 @@ public static class AttackCadenceChecks
                     var script = CaseInsensitivePaths.Resolve(paths.Under("DATA", "Characters", character, "Scripts", "CharScript" + character + ".luaobj"));
                     var assisted = File.Exists(script) &&
                                    System.Text.Encoding.ASCII.GetString(File.ReadAllBytes(script)).Contains("TurretAssistManager", StringComparison.Ordinal);
-                    var period = RecordPeriod(character, assisted ? 1.3 : 1.0);
+                    var period = RecordPeriod(character);
                     var swings = starts[turret];
                     var interval = swings.Count >= 3 ? (swings[^1] - swings[0]) / (swings.Count - 1) : double.NaN;
                     Console.WriteLine($"map {mapId} {turret.Name} {character} {tier} assist={assisted} shipped {period:0.0000} s " +
@@ -592,16 +606,18 @@ public static class AttackCadenceChecks
     /// Batch 733 (owner, 9 November 2026: "People still report turrets shooting too quickly, let's do one last research"). One continuous
     /// fight of the front Chaos lane turret, on maps 1 and 4, through every situation the brief names: a minion and a champion as its target,
     /// with its allied champion beside it (150 units) and in its fountain, and the switches between them (a target last-hit in the turret's
-    /// wind-up, walking out, a call for help, turning untargetable in the wind-up, a taunt, a target's death). What the shipped files give:
-    /// the record's 1.6 x (1 - 0.25) = 1.2 s over 1.3, PersonalTurretAssistBonus's IncPermanentPercentAttackSpeedMod +0.3, which
-    /// TurretAssistManager adds once from the turret's CharOnActivate with no condition on allies, targets or time (its only update adds
-    /// TurretBackdoorBonus, armour and magic resist); IndividualTurretAssistBonus, the per-ally +0.05 that V1.0.0.114 removed, ships unreferenced.
-    /// So 0.9231 s, 0.9333 s in whole 30 Hz steps. A shot the turret launches is a 0x0D no 0x39 stops before its cast frame (a swing cancelled in
-    /// its wind-up launches nothing); between two launched shots there is never less than the period, at either client, and each server swing is
-    /// one 0x0D to each client. A row per situation: shots launched in it, their intervals and targets.
+    /// wind-up, walking out, a call for help, turning untargetable in the wind-up, a taunt, a target's death). Batch 759 (owner decision of
+    /// 12 November 2026, "Match the footage"): retail 2011 footage shows lane turrets firing every 1.24 s (median 30 frames at 24.25 fps),
+    /// which is the record's 1.6 x (1 - 0.25) = 1.2 s without PersonalTurretAssistBonus's +0.3 IncPermanentPercentAttackSpeedMod
+    ///. So 1.2 s, 36 whole 30 Hz steps (batch 733 measured 0.9333 s with the
+    /// +0.3). The buff itself stays, one on each lane turret from TurretAssistManager, with its armour and magic resist;
+    /// IndividualTurretAssistBonus, the per-ally +0.05 that V1.0.0.114 removed, ships unreferenced. A shot the turret launches is a 0x0D no 0x39
+    /// stops before its cast frame (a swing cancelled in its wind-up launches nothing); between two launched shots there is never less than the
+    /// period, at either client, and each server swing is one 0x0D to each client. A row per situation: shots launched in it, their intervals
+    /// and targets.
     /// </summary>
-    [Check("combat.lane-turret-shots-keep-the-shipped-period-in-every-situation", Serial = true, TimeoutSeconds = 600)]
-    public static void LaneTurretShotsKeepTheShippedPeriodInEverySituation()
+    [Check("combat.lane-turret-shots-keep-the-footage-period-in-every-situation", Serial = true, TimeoutSeconds = 600)]
+    public static void LaneTurretShotsKeepTheFootagePeriodInEverySituation()
     {
         var failures = new List<string>();
         try
@@ -623,8 +639,9 @@ public static class AttackCadenceChecks
     {
         using var scene = new TurretScene(mapId);
         var turret = scene.Turret;
-        var period = RecordPeriod(scene.Character, 1.3);
+        var period = RecordPeriod(scene.Character);
         var whole = Math.Ceiling(period / Step - 1e-6) * Step;
+        TestAssert.Near(36 * Step, whole, 1e-9, $"map {mapId}: the footage period is 36 steps at 30 Hz");
         var fountain = MapDefinitions.Layout.ChaosSpawn;
         var phases = new List<(string Label, double From)>();
         void Phase(string label, double seconds, Action setup)
@@ -632,8 +649,8 @@ public static class AttackCadenceChecks
             setup();
             phases.Add((label, scene.Now));
             scene.Advance(seconds);
-            // The script's +0.3 is the turret's one permanent amount: no ally, target or switch moves it.
-            TestAssert.Near(1.3, turret.AttackSpeedMod, 1e-9, $"map {mapId} {label}: {turret.Name}'s attack-speed multiplier");
+            // Batch 759: the assist bonus's +0.3 does not apply, and no ally, target or switch moves the multiplier.
+            TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-9, $"map {mapId} {label}: {turret.Name}'s attack-speed multiplier");
             TestAssert.Near(period, turret.AttackPeriod, 1e-9, $"map {mapId} {label}: {turret.Name}'s period");
             TestAssert.Equal(1, turret.Buffs.Count(buff => buff.Name == "PersonalTurretAssistBonus"),
                 $"map {mapId} {label}: {turret.Name} holds one PersonalTurretAssistBonus");
@@ -746,8 +763,9 @@ public static class AttackCadenceChecks
             Turret = Runtime.World.Entities.Values.Where(unit => unit.Team == Team.Chaos && TurretRules.IsLaneTurret(unit))
                 .OrderBy(unit => Distance(unit.Position)).First();
             Character = layout.TurretCharacter(layout.TurretTiers[Turret.Name], Team.Chaos);
-            // Every front lane character adds TurretAssistManager in its CharOnActivate (batch 670), the 1.3 of the client's delay helper.
-            ClientCastDelay = RecordPeriod(Character, 1.3) * RecordCastFraction(Character);
+            // Every front lane character adds TurretAssistManager in its CharOnActivate (batch 670); since batch 759 its assist bonus adds no
+            // attack speed, so the client's delay helper reads the multiplier 1.
+            ClientCastDelay = RecordPeriod(Character) * RecordCastFraction(Character);
             var length = Math.Max(1.0, Distance(Turret.Position));
             _direction = ((centre.X - Turret.Position.X) / length, (centre.Z - Turret.Position.Z) / length);
             Diver = Runtime.Session.Participants[0].Hero!;

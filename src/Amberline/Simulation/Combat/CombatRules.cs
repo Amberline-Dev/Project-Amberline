@@ -51,10 +51,12 @@ public static class CombatRules
         rolls.Validate();
         // Reconstruction: the native routine that multiplies the ratio is not shipped. It is
         // modelled as a plain raw-damage factor applied once, before the script on-hit
-        // scalars, turret ramp and mitigation. The scripts are compensations built around it:
-        // 0.7 x 1.43 is about 1.0 for the monsters and 0.5 x 2 is 1.0 for the cannon minion
-        // against turrets. Those scalars are the character scripts' own now (batch 159 part 2:
-        // CharOnHitUnit of CharScriptGolem and its nine siblings, CharOnHitUnit of
+        // scalars, turret ramp and mitigation. The cannon minion's script is a compensation
+        // built around it (0.5 x 2 is 1.0 against turrets). The jungle monsters' x1.43 is not
+        // one against a champion: 2011 footage shows their hits on a champion at AD x 0.7, then
+        // armour, with no x1.43 (batch 758, BbHookRouter.RunHitUnit keeps it off a champion).
+        // Those scalars are the character scripts' own now (batch 159 part 2: CharOnHitUnit of
+        // CharScriptGolem and its fourteen jungle siblings, CharOnHitUnit of
         // CharScriptBlue_Minion_MechCannon 0039-0063), so they no longer sit here.
         var ratio = AttackRatio(attacker, target, ratios);
 

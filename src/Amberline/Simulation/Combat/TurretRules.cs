@@ -194,9 +194,9 @@ public static class TurretRules
         turret.AttackRange = selected.AttackRange;
         turret.AcquisitionRange = selected.AcquisitionRange;
         turret.MissileSpeed = selected.MissileSpeed;
-        // PersonalTurretAssistBonus's IncPermanentPercentAttackSpeedMod 0.3 is what makes the lane turret's 1.3
-        // (an NPC's permanent amount joins its base attacks-per-second); the shrine has no assist bonus and stays 1.
-        turret.AttackSpeedMod = scriptOwned ? 1.0 : (tier == TurretTier.Fountain ? 1 : 1.3);
+        // Every turret starts at the multiplier 1. Reconstruction (batch 759, "Match the footage"): PersonalTurretAssistBonus's
+        // IncPermanentPercentAttackSpeedMod 0.3 does not apply (BbSpellHost.PermanentOnPet), so the hand-written form adds none either
+        turret.AttackSpeedMod = 1.0;
         var castFraction = selected.CastFraction ??
             (selected.AttackPeriod > 0.0 ? selected.Windup / selected.AttackPeriod : 0.0);
         turret.AttackPeriod = Math.Clamp(selected.AttackPeriod / turret.AttackSpeedMod, MinAttackDelay, MaxAttackDelay);

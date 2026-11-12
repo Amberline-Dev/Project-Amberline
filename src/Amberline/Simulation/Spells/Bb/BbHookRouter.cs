@@ -882,7 +882,15 @@ internal sealed partial class BbHookRouter : IBbHookSink
             scope.Vars["DamageType"] = (double)BbDamageType.PHYSICAL_DAMAGE;
             var frame = new BbHookFrame("CharOnHitUnit", script.Name, attacker) { Caster = attacker };
             Run(script, "CharOnHitUnit", scope, frame);
-            damage = ChangedHit(frame, scope, damage);
+            // Reconstruction (batch 758, owner 12 November 2026: "Match the footage"): a jungle monster's CharOnHitUnit runs in full, but
+            // its DamageAmount write (the x1.43 of all fifteen jungle CharScripts, their only write) does not reach a champion. Retail
+            // 2011 footage (patch 1.0.0.125; 99 clean hits of seven monster types on a champion, levels 1-12, within 1 %) shows
+            // AD x dr_UnitToHero 0.7 x 100/(100 + armour) and no x1.43. The result is known, the mechanism is not. The rest of the
+            // hook still runs on a champion (the Dragon's Burning, redDragon's splash, the Wraiths' and Ghast's EternalThirst_buf.troy),
+            // and a hit on anything else (minions, pets, clones) keeps the x1.43, which the footage cannot show. Every swing of a camp
+            // monster reaches its CharOnHitUnit only here (CombatService's ModifyBasicAttackDamage, through the hook fan-out), and only
+            // the jungle scheduler makes EntityKind.Neutral units.
+            if (attacker.Kind != EntityKind.Neutral || target.UnitType != UnitType.Hero) damage = ChangedHit(frame, scope, damage);
             critical = KeptCritical(frame, scope, critical);
         }
         foreach (var instance in Buffs.WithHook(attacker, "BuffOnHitUnit"))

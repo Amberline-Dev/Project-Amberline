@@ -308,18 +308,19 @@ public static class BuffLifecycleChecks
         TestAssert.Near(0.5, neutral.AttackWindup, 1e-9);
 
         var turret = context.Entity(42, EntityKind.Turret, UnitType.Turret, Team.Order);
-        turret.AttackSpeedMod = 1.3;
-        turret.AttackPeriod = 1.2 / 1.3;
-        turret.AttackWindup = 0.3 / 1.3;
-        turret.AttackTimingBaseline = new AttackTimingBaseline(1.3, 1.2, 0.3 / 1.2);
+        // Batch 759: a lane turret's native multiplier is 1 (the assist bonus's +0.3 does not apply), period 1.2 s.
+        turret.AttackSpeedMod = 1.0;
+        turret.AttackPeriod = 1.2;
+        turret.AttackWindup = 0.3;
+        turret.AttackTimingBaseline = new AttackTimingBaseline(1.0, 1.2, 0.3 / 1.2);
         var fortify = context.Lifecycle.AddBuff(turret, "SummonerFortify", BuffType.Aura, 10,
             caster.NetId, new BuffPayload { AttackSpeedMod = 1.0 })!;
-        TestAssert.Near(2.3, turret.AttackSpeedMod, 1e-9,
-            "turret additive haste starts from its native 1.3 base");
-        TestAssert.Near(1.2 / 2.3, turret.AttackPeriod, 1e-9);
+        TestAssert.Near(2.0, turret.AttackSpeedMod, 1e-9,
+            "turret additive haste starts from its native 1.0 base");
+        TestAssert.Near(0.6, turret.AttackPeriod, 1e-9);
         context.Lifecycle.RemoveBuff(turret, fortify.Slot);
-        TestAssert.Near(1.3, turret.AttackSpeedMod, 1e-9);
-        TestAssert.Near(1.2 / 1.3, turret.AttackPeriod, 1e-9);
+        TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-9);
+        TestAssert.Near(1.2, turret.AttackPeriod, 1e-9);
 
         var cripple = context.Lifecycle.AddBuff(neutral, "BlindMonkETwoMissile",
             BuffType.CombatDehancer, 5, caster.NetId, new BuffPayload

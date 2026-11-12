@@ -1324,8 +1324,10 @@ public static class CombatChecks
     }
 
     [Check("combat.turret-assist-stats")]
-    public static void TurretAssistScriptsAddPermanentDefensesAndAttackSpeed()
+    public static void TurretAssistScriptsAddPermanentDefensesButNoAttackSpeed()
     {
+        // Batch 759 (owner decision of 12 November 2026, "Match the footage"): PersonalTurretAssistBonus keeps its +25 armour and magic resist,
+        // but its +0.3 attack speed does not apply, so a lane turret swings at its record's 1.2 s
         var runtime = MatchRuntime.CreateProduction(NavigationGrid.LoadDefault(), GameData.Default);
         runtime.Session.CreateWorld();
         var queue = new CapturingCombatPacketQueue();
@@ -1337,9 +1339,9 @@ public static class CombatChecks
             var lane = tier != TurretTier.Fountain;
             TestAssert.Near(raw.Armor + (lane ? 175 : 0), turret.Armor, 1e-8, turret.Name + " assist armor");
             TestAssert.Near(raw.SpellBlock + (lane ? 175 : 0), turret.SpellBlock, 1e-8, turret.Name + " assist MR");
-            TestAssert.Near(lane ? 1.3 : 1, turret.AttackSpeedMod, 1e-8);
-            TestAssert.Near(lane ? 1.2 / 1.3 : raw.AttackPeriod, turret.AttackPeriod, 1e-8);
-            if (lane) TestAssert.Near(1.2 / 1.3 * (0.3 - 0.161), turret.AttackWindup, 1e-8);
+            TestAssert.Near(1.0, turret.AttackSpeedMod, 1e-8, turret.Name + " attack-speed multiplier");
+            TestAssert.Near(lane ? 1.2 : raw.AttackPeriod, turret.AttackPeriod, 1e-8, turret.Name + " period");
+            if (lane) TestAssert.Near(1.2 * (0.3 - 0.161), turret.AttackWindup, 1e-8, turret.Name + " windup");
             queue.Clear();
             transport.SendTurretStats(turret);
             var packet = queue.Packets.Single().Plaintext.Span;

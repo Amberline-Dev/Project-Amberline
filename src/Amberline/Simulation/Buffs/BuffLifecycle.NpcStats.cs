@@ -33,8 +33,8 @@ public sealed partial class BuffLifecycle
 
     /// <summary>
     /// Adds a permanent attack-speed amount to a non-hero unit's baseline and rebuilds its timing from it (batch 159
-    /// step 2: <c>BBIncPermanentStat IncPermanentPercentAttackSpeedMod</c> of <c>PersonalTurretAssistBonus</c>, which a
-    /// turret's own <c>TurretAssistManager</c> puts on it). It is the same additive family a buff's own
+    /// step 2: a script's <c>BBIncPermanentStat IncPermanentPercentAttackSpeedMod</c> on a non-hero; since batch 759
+    /// <c>BbSpellHost.PermanentOnPet</c> skips the lane turret's <c>PersonalTurretAssistBonus</c> one). It is the same additive family a buff's own
     /// <c>IncPercentAttackSpeedMod</c> joins in <see cref="RecomputeNpcAttackTiming"/> — a percent amount on top of the
     /// unit's base attacks-per-second — kept apart here because a permanent outlives the buff that added it and is not
     /// rolled back when a buff expires.
