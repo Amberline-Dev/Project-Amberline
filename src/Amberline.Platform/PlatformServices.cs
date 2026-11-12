@@ -89,6 +89,10 @@ public sealed class PlatformServices
         {
             if (N(index) != account.SummonerId) throw new ArgumentException("This summoner does not belong to your session.");
         }
+        // NOT RETAIL (batch 748; retail had no host-side delete): a player the host deleted (a match history still names them) is read as an empty record under the names they had, as
+        // StatsAccount answers the stats reads; an id no login ever had fails as before.
+        PlatformAccount ByAccount(int id) => accounts.Find(id) ?? accounts.FormerAccount(id) ?? throw new ArgumentException("Account does not exist.");
+        PlatformAccount BySummoner(int id) => accounts.FindSummoner(id) ?? accounts.FormerSummoner(id) ?? throw new ArgumentException("Summoner not found.");
         try
         {
             switch (destination, operation)
@@ -213,10 +217,10 @@ public sealed class PlatformServices
                     games.SaveProfileIcon(account.Id, N(0));
                     return null;
                 case ("summonerService", "getSummoner"):
-                    var bySummoner = accounts.FindSummoner(N(0)) ?? throw new ArgumentException("Summoner not found.");
+                    var bySummoner = BySummoner(N(0));
                     return AirDtos.Summoner(bySummoner, isMe: bySummoner.Id == account.Id);
                 case ("summonerService", "getSummonerByAccountId"):
-                    var byAccount = accounts.Get(N(0));
+                    var byAccount = ByAccount(N(0));
                     return AirDtos.Summoner(byAccount, isMe: byAccount.Id == account.Id);
                 case ("summonerService", "getSummonerByName"):
                     return accounts.FindName(S(0)) is { } found ? AirDtos.PublicSummoner(found) : null;
@@ -240,11 +244,12 @@ public sealed class PlatformServices
                     if (N(0) != account.Id) throw new ArgumentException("This account does not belong to your session.");
                     return AirDtos.AllSummonerData(account, accounts.EconomyRules);
                 case ("summonerService", "getAllPublicSummonerDataByAccount"):
-                    return AirDtos.PublicSummonerData(accounts.Get(N(0)), accounts.EconomyRules);
+                    return AirDtos.PublicSummonerData(ByAccount(N(0)), accounts.EconomyRules);
                 case ("summonerService", "getSummonerNames"):
-                    return List(Items(A(0)).Select(x => accounts.FindSummoner(Integer(x))?.Summoner ?? ""));
+                    // NOT RETAIL (batch 748; retail had no host-side delete): a match history's fellow player whom the host deleted keeps the name they had.
+                    return List(Items(A(0)).Select(x => accounts.FindSummoner(Integer(x))?.Summoner ?? accounts.FindDeletedSummoner(Integer(x))?.Summoner ?? ""));
                 case ("summonerService", "getPublicSummonersByAccountIds"):
-                    return List(Items(A(0)).Select(x => AirDtos.PublicSummoner(accounts.Get(Integer(x)))));
+                    return List(Items(A(0)).Select(x => AirDtos.PublicSummoner(ByAccount(Integer(x)))));
                 case ("summonerService", "changeTalentRankings"):
                     OwnSummoner();
                     var ranks = Fields(A(1)).ToDictionary(p => ParseId(p.Key), p => Integer(p.Value));
@@ -259,7 +264,7 @@ public sealed class PlatformServices
                     OwnSummoner();
                     return AirDtos.RuneInventory(account);
                 case ("spellBookService", "getSpellBook"):
-                    return AirDtos.SpellBook(accounts.FindSummoner(N(0)) ?? throw new ArgumentException("Summoner not found."));
+                    return AirDtos.SpellBook(BySummoner(N(0)));
                 case ("spellBookService", "saveSpellBook"):
                     return SaveRunes(account, A(0));
                 case ("spellBookService", "selectDefaultSpellBookPage"):

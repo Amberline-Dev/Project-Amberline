@@ -7,7 +7,8 @@ namespace Amberline.AirCompanion;
 
 /// <summary>
 /// NOT RETAIL: removing the player's install again (batch 639; retail players removed the client through its own Windows entry). Two
-/// choices: one server (its desktop shortcut and its <c>servers\&lt;id&gt;</c> folder: connection, stage, token cache and logs), or all of
+/// choices: one server (its two shortcuts, the desktop one and the copy in the install folder, and its <c>servers\&lt;id&gt;</c> folder:
+/// connection, stage, token cache and logs), or all of
 /// Amberline: every server, the player tool, <c>Uninstall.cmd</c>, the per-user record, Play.cmd's download and the "Apps" entry. The AIR
 /// and game folders in the install folder stay unless the player asks for them too, and a game folder used in place (a server on this
 /// PC reads it) is never deleted. Only the names Amberline wrote are deleted, so a file of the player's own keeps the install folder.
@@ -17,7 +18,7 @@ internal static class PlayerUninstall
     /// <summary>The per-user entry in Windows' "Apps" list (HKCU, so no administrator is needed).</summary>
     internal const string AppsKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Amberline";
 
-    internal sealed record Server(string Id, string Name, string Folder, string? Shortcut);
+    internal sealed record Server(string Id, string Name, string Folder, string? Shortcut, string? FolderShortcut);
 
     /// <summary>
     /// What a removal kept (the clients, unless they were asked for), what could not be deleted, and the folders left to delete once
@@ -44,14 +45,15 @@ internal static class PlayerUninstall
             {
                 var json = PlayerInstall.ReadObject(Path.Combine(folder, "server.json"));
                 var id = Path.GetFileName(folder);
-                return new Server(id, PlayerInstall.Text(json, "name") ?? id, folder, PlayerInstall.Text(json, "shortcut"));
+                return new Server(id, PlayerInstall.Text(json, "name") ?? id, folder, PlayerInstall.Text(json, "shortcut"),
+                    PlayerInstall.Text(json, "folderShortcut"));
             })
             .OrderBy(server => server.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     /// <summary>
     /// "Remove this server": the folder is first renamed aside, which fails while its shortcut is running (its log is open), so nothing is
-    /// half deleted; then the shortcut (only while it is still Amberline's link for this server) and the folder go.
+    /// half deleted; then its two shortcuts (each only while it is still Amberline's link for this server) and the folder go.
     /// </summary>
     internal static void RemoveServer(PlayerProfile profile, Server server)
     {
@@ -65,6 +67,7 @@ internal static class PlayerUninstall
             }
         }
         if (server.Shortcut is { } shortcut && PlayerInstall.IsOurShortcut(shortcut, server.Id)) File.Delete(shortcut);
+        if (server.FolderShortcut is { } copy && PlayerInstall.IsOurShortcut(copy, server.Id)) File.Delete(copy);
         FolderMove.TryDeleteTree(aside);
         PlayerInstall.Log(profile, $"uninstall: removed the server {server.Name}");
     }

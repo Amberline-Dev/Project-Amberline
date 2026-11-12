@@ -3,6 +3,14 @@ using Amberline.Simulation.Combat;
 
 namespace Amberline.Network.Protocol;
 
+/// <summary>The command byte of 0xE5 (<see cref="CombatPackets.MusicCueCommand"/>); the AB build's enum MusicCueCommand_e names the same values.</summary>
+public enum MusicCueAction : byte
+{
+    Prepare = 0,
+    Begin = 1,
+    End = 2,
+}
+
 public sealed record HeroStatsSnapshot(
     float AttackDamage = 0.0f,
     float Armor = 0.0f,
@@ -1035,6 +1043,26 @@ public static class CombatPackets
         writer.Write(duration);
         writer.Flush();
         return Packet(stream, LeaguePacketReliability.Reliable);
+    }
+
+    /// <summary>
+    /// MusicCueCommand (<c>0xE5</c>, 10 bytes): <c>[0xE5][hero netid u32][command u8][cue id u32]</c> (batch 747).
+    /// Proven in the 126 client: the hero constructor builds the packet's register at hero + 0x34F4 (key helper
+    /// writes opcode 0xE5; the id the client routes by is the hero's net id), and the handler (slot 2 of vtable
+    ///,) reads only the command at 5 and the cue at 6, never the hero: any hero the client holds plays it.
+    /// maps the command to the audio manager's PrepareMusicCue, BeginMusicCue or EndMusicCue (vtable 
+    /// + 0x48, 0x4C, 0x50); any other value is ignored. The cue id is an FMOD music cue of <c>DATA/Sounds/FMOD/LoL_Audio.fev</c>.
+    /// </summary>
+    public static PlaintextPacket MusicCueCommand(uint heroNetId, MusicCueAction command, uint cueId)
+    {
+        if (heroNetId == 0) throw new ArgumentOutOfRangeException(nameof(heroNetId), "the client routes 0xE5 to a hero");
+        using var writer = ProtocolEncoding.Writer(10, out var stream);
+        writer.Write((byte)0xE5);
+        writer.Write(heroNetId);
+        writer.Write((byte)command);
+        writer.Write(cueId);
+        writer.Flush();
+        return Packet(stream, LeaguePacketReliability.Reliable, Hero(heroNetId));
     }
 
     public static PlaintextPacket FadeMinions(Team team, float amount, float duration)

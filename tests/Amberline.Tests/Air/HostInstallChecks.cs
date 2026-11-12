@@ -297,7 +297,7 @@ public static class HostInstallChecks
             var page = HostUpdates.Render("", HostVersion.Read(app), found);
             foreach (var phrase in new[] { "You have Amberline 1.10.0 (built 2 November 2026).", "Amberline 1.11.0 is out", "Open the download page",
                          "href=\"https://github.com/Amberline-Dev/Project-Amberline/releases/tag/v1.11.0\"", "&lt;b&gt;Faster&lt;/b&gt; games",
-                         "Double-click Start Amberline. Your settings and friends stay.", HostUpdates.Notice, "Check now" })
+                         "Double-click Start Amberline. Your settings and users stay.", HostUpdates.Notice, "Check now" })
                 TestAssert.True(page.Contains(phrase, StringComparison.Ordinal), $"the page does not say {phrase}: {page}");
             TestAssert.False(page.Contains("<b>Faster", StringComparison.Ordinal), "the release text is shown as text");
             var newest = HostUpdates.Render("", (new Version(1, 11, 0), null), found);

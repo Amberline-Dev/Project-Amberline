@@ -27,6 +27,9 @@ internal sealed class BbSpellHost : IBbHost
         _natives = new BbNativeHandlers(this);
         Moves = new BbScriptMoves(this);
         Channels = new BbScriptChannels(this);
+        // Batch 743: an effect id handed out again after the missile range wrapped is a new effect, which a superseded stack, a placemarker's
+        // end or a retired instance must still be able to kill (the batch 726 retirement skips a killed id).
+        system.World.Allocator.Recycled += id => KilledEffects.Remove(id);
     }
 
     public SpellSystem Spells { get; }

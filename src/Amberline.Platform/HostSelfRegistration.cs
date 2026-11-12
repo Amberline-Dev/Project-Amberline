@@ -20,7 +20,7 @@ namespace Amberline.Platform;
 /// and never shown back.</item>
 /// <item>The pages have the host pages' policy (<see cref="HostPages.Policy"/>), no script and no link to a host page.</item>
 /// </list>
-/// A new login is a friend like any other: Friends lists it, and Remove access ends it.
+/// A new login is a user like any other: Users lists it (marked Signed up, batch 748), and Disable or Delete ends it.
 /// </summary>
 public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts accounts, int remotePort, string certificateSha256, bool on) : IDisposable
 {
@@ -55,10 +55,16 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
         _on = value;
     }
 
+    /// <summary>
+    /// The sign-up link while the switch is on and the address is known, else null: the one place it is made (batch 748), for Settings,
+    /// Add a user, Users and the Dashboard, so all of them give the same link (the saved address, never the router's).
+    /// </summary>
+    internal string? Url(string? publicHost) => _on && !string.IsNullOrWhiteSpace(publicHost) ? $"https://{publicHost}:{remotePort}{PagePath}" : null;
+
     /// <summary>The link to send, with Copy and the line on the warning, as Settings and Invite show it while the switch is on; else empty.</summary>
     internal string Link(string? publicHost) => !_on ? ""
-        : publicHost is null ? "<p>The link appears here once Amberline knows your address.</p>"
-        : $"<pre id=register-link class=message>https://{WebUtility.HtmlEncode(publicHost)}:{remotePort}{PagePath}</pre>" +
+        : Url(publicHost) is not { } url ? "<p>The link appears here once Amberline knows your address.</p>"
+        : $"<pre id=register-link class=message>{WebUtility.HtmlEncode(url)}</pre>" +
           "<p class=buttons><button type=button data-copy=register-link>Copy</button> <span id=copy-status role=status></span></p>" +
           $"<p class=tip>{Warning}</p>";
 
@@ -91,7 +97,14 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
         {
             using var lease = _logins.AttemptAcquire();
             if (!lease.IsAcquired) return TooMany;
-            try { return HostPages.PublicPage(Ready(accounts.RegisterPublic(username, password, stored, maxed: mode == "maxed").Username)); }
+            try
+            {
+                // Batch 748: marked as signed up, which the host's Users page shows.
+                var name = accounts.RegisterPublic(username, password, stored, maxed: mode == "maxed", signedUp: true).Username;
+                // NOT RETAIL: the host page's activity feed names a sign-up by its username only, never the password.
+                loop.Activity.Add($"{name} signed up");
+                return HostPages.PublicPage(Ready(name));
+            }
             catch (ArgumentException ex) { problems = [ex.Message]; }
         }
         return HostPages.PublicPage(FormPage(Program.RegistrationToken(context, antiforgery), problems, username, summoner, mode),

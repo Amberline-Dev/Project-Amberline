@@ -161,6 +161,8 @@ public sealed partial class PlatformAccounts
                 account.Economy?.Grants?.Any(grant => grant.RequestId == code.Id) == true).ToArray();
             if (code.RedeemedBy is { } accountId)
             {
+                // NOT RETAIL (batch 748; retail had no host-side delete): a code redeemed by a login the host deleted stays as history; its grant left with the login.
+                if (recipients.Length == 0 && _state.Deleted?.Any(deleted => deleted.Id == accountId) == true) continue;
                 if (recipients.Length != 1 || recipients[0].Id != accountId)
                     throw new InvalidDataException("Reward-code recipient and grant do not match.");
                 var grant = recipients[0].Economy!.Grants!.Single(candidate => candidate.RequestId == code.Id);

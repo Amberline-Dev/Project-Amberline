@@ -213,6 +213,7 @@ public static class PacketCatalogChecks
         yield return new("SpellPackets.ChangeCharacterVoice", SpellPackets.ChangeCharacterVoice(A, "Ult"));
         yield return new("SpellPackets.ChangeParColorOverride", SpellPackets.ChangeParColorOverride(A, new ParColorOverride(0x11223344u, 0x55667788u)));
         yield return new("SpellPackets.ColorRemapFx", SpellPackets.ColorRemapFx(true, 1f, 100, 0xFF336699u, 0.5f));
+        yield return new("CombatPackets.MusicCueCommand", CombatPackets.MusicCueCommand(A, MusicCueAction.Begin, 15));
         // FxPackets, ItemsPackets, ClassicHeroStatsPackets, and the single-purpose builders
         yield return new("FxPackets.CreateGroup", FxPackets.CreateGroup(1, C, P2, Bounds, (_, _) => 0.0, targetNetId: B,
             bindNetId: D, headerNetId: A));

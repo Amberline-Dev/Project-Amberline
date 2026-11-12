@@ -84,6 +84,15 @@ public sealed class HostLoop(HostPaths paths, Action<string> openBrowser, TextWr
     /// <summary>The dashboard's friend light, kept across restarts.</summary>
     public HostFriendLight Friend { get; } = new(paths.Data);
 
+    /// <summary>The host page's activity feed (<see cref="HostActivity"/>): memory only, so a Platform start (a Restart's new process too) begins it empty.</summary>
+    public HostActivity Activity { get; } = new();
+
+    /// <summary>
+    /// DIAGNOSTICS: the demo switch as this start read it (<see cref="HostDemoData.FromEnvironment"/>, once, in <see cref="HostMode.RunAsync"/>).
+    /// The dashboard and the feed follow this value for the whole run, never the variable again.
+    /// </summary>
+    public bool DemoData { get; internal set; }
+
     /// <summary>Where the address step asks for the host's address (<see cref="HostSteps"/>); only the real start goes online.</summary>
     public HostAddressSources Addresses { get; set; } = HostAddressSources.Offline;
 
@@ -297,6 +306,9 @@ public static class HostMode
             }
             // Settings from a newer Amberline are left exactly as they are: no mode starts, nothing is saved.
             if (HostChecks.NewerData(loop.Paths.Settings) is { } newer) return Fail(loop, newer);
+            // DIAGNOSTICS: the demo switch is read once, at this start (HostDemoData.FromEnvironment); a switched-on start opens its feed with the made-up lines.
+            loop.DemoData = HostDemoData.FromEnvironment();
+            if (loop.DemoData) HostDemoData.Seed(loop.Activity, DateTimeOffset.UtcNow);
             while (true)
             {
                 PlatformSettings? settings = null;

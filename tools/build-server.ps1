@@ -334,7 +334,7 @@ PLAYERS
   Windows 10 or 11 and their own 1.0.0.126 game and AIR client folders. Play.cmd downloads the player tool from this server
   (the server's certificate must match the pin, the archive its SHA-256) and opens a setup window: it finds or asks for the
   two folders, moves them into one install folder the player picks (on another drive: copied, every file checked, then the
-  originals removed), and puts a shortcut named "{SERVERNAME}" on the desktop. The shortcut asks this server for a newer
+  originals removed), and puts a shortcut named "{SERVERNAME}" on the desktop, with a copy in that folder. The shortcut asks this server for a newer
   player tool, updates it when there is one, and starts the AIR client, without a console window. A player who already
   installed for another server keeps that install: your Play.cmd only adds your server and its shortcut. Running Play.cmd
   again repairs the shortcut.
@@ -412,7 +412,7 @@ exit /b 1
 AMBERLINE {VERSION}: READ ME FIRST
 ==================================
 
-Amberline hosts the game on patch 1.0.0.126 (October 2011) on your PC for your friends.
+Amberline hosts the game on patch 1.0.0.126 (October 2011) on your PC for your players.
 This zip holds no game or AIR client file. You need your own game folder (with
 DATA and LEVELS) and AIR client folder (with its assets folder).
 You need Windows 10 or 11, 64-bit, and nothing else.
@@ -425,12 +425,12 @@ STARTING
    keeps everything there and puts an Amberline icon on your desktop. You can then
    delete the zip.
 4. Follow the setup page that opens in your browser.
-5. Keep the Amberline window open while friends play.
+5. Keep the Amberline window open while players play.
 
 UPDATING
 Choose Update now on Amberline's page. Or unzip the new zip, double-click its
 START-HERE.cmd and answer Y when it asks to update.
-Your settings and friends stay. If the new version does not start, the old one comes back.
+Your settings and users stay. If the new version does not start, the old one comes back.
 Amberline asks GitHub once a day whether a new version is out (untick it on the setup page
 to stop that). It never installs anything by itself.
 

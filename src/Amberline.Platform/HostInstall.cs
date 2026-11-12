@@ -332,7 +332,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
                 if (Confirmed) screen.WriteLine(ConfirmedLine);
                 else
                 {
-                    screen.WriteLine("Updating ends any game in progress. Your settings and friends stay. To keep the one you have, close this window.");
+                    screen.WriteLine("Updating ends any game in progress. Your settings and users stay. To keep the one you have, close this window.");
                     screen.WriteLine(ContinueLine);
                     if (!Confirm()) return 1;
                 }
@@ -486,7 +486,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     /// <summary>Batch 653: the word list's pause, and the line while the installed Amberline starts until its page answers.</summary>
     public const string ContinueLine = "Press Enter to continue.";
     /// <summary>The window's line instead of the question when Update now started it (<see cref="Confirmed"/>).</summary>
-    public const string ConfirmedLine = "You chose Update now on Amberline's page, so the update goes on. Your settings and friends stay.";
+    public const string ConfirmedLine = "You chose Update now on Amberline's page, so the update goes on. Your settings and users stay.";
     public const string StartingLine = "Starting Amberline and opening its page in your browser. This takes a few seconds.";
 
     /// <summary>
@@ -552,7 +552,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     public static void MapSetupStop(WebApplication app, HostLoop loop)
     {
         app.MapGet(StopPath, (HttpContext context, IAntiforgery antiforgery) => HostMode.Page(
-            "<h1>Stop Amberline?</h1><p>Friends cannot log in until you start Amberline again.</p>" +
+            "<h1>Stop Amberline?</h1><p>Users cannot log in until you start Amberline again.</p>" +
             $"<form method=post action={StopPath}{HostPages.Wait("Stopping Amberline.")}>{Program.RegistrationToken(context, antiforgery)}<input type=hidden name=games value=0>" +
             $"<div class=buttons><button type=submit>Stop Amberline</button> <a class=\"button secondary\" href={HostSteps.Start}>Cancel</a></div></form>"));
         app.MapPost(StopPath, async (HttpContext context, IAntiforgery antiforgery) =>

@@ -235,7 +235,7 @@ public static class HostUninstall
         var clients = plan.Has(UninstallKind.Clients) &&
             Ask(screen, read, $"Also delete the game and AIR client copies in it ({Size(plan.Size(UninstallKind.Clients))})?");
         var data = plan.Has(UninstallKind.Data) && Ask(screen, read, $"Also delete your logins and settings ({Size(plan.Size(UninstallKind.Data))})? " +
-            "Your friends' logins and Play files then stop working.");
+            "Your users' logins and Play files then stop working.");
         screen.WriteLine($"Type {ConfirmWord} and press Enter to uninstall Amberline now. To keep it, close this window.");
         if (!Confirmed(read()))
         {

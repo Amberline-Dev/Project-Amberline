@@ -303,6 +303,7 @@ public sealed class PacketCatalog
         c.Row(0x89, "SetInputLockingFlag");
         c.Row(0x62, "FadeOutMainSfx");
         c.Row(0xE4, "ColorRemapFX");
+        c.Row(0xE5, "MusicCueCommand", refs: one); // batch 747: the client routes it to the hero at 1
         c.Row(0xD4, "FadeMinions");
         c.Row(0xC4, "DisableHUDForEndOfGame");
         c.Row(0xCD, "EndOfGameEvent");

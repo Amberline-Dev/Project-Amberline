@@ -159,7 +159,7 @@ public static class HostSettingsChecks
             Has(refused, HostAddress.NameProblem("Friday/League")!, $"action={HostSettingsPage.NamePath}");
             await SavedAsync(browser, HostSettingsPage.NamePath, "name", ("name", "Saturday League"));
             var renamed = await GetAsync(browser, HostSettingsPage.PagePath + "?saved=name");
-            Has(renamed, "<strong>Saturday League</strong> · Amberline", "<p class=notice role=status>Saved. Send your friends the new Play file",
+            Has(renamed, "<p class=server><span class=light aria-hidden=true></span>Saturday League</p>", "<p class=notice role=status>Saved. Send your users the new Play file",
                 $"<a href={HostInvite.PlayFilePath} download>Download the Play file</a></p>");
             TestAssert.Equal("Saturday League", Setting(home, "serverName"), "platform.json holds the new name");
 
@@ -167,7 +167,7 @@ public static class HostSettingsChecks
             var updates = HostUpdates.StateFile(home.Loop.Paths.Data);
             var updatesBefore = File.Exists(updates) ? File.ReadAllText(updates) : null;
             var address = await GetAsync(browser, HostSettingsPage.AddressPath);
-            Has(address, "<h1>Change your address</h1>","How do your friends find this PC?", "value=lan", $"action={HostSettingsPage.AddressPath}",
+            Has(address, "<h1>Change your address</h1>","How do your players find this PC?", "value=lan", $"action={HostSettingsPage.AddressPath}",
                 "<a href=/host/settings>Cancel</a><button type=submit>Save</button>");
             TestAssert.False(address.Contains("name=updates", StringComparison.Ordinal) || address.Contains("class=step", StringComparison.Ordinal),
                 "no update question and no step number in Settings: " + address);
@@ -176,7 +176,7 @@ public static class HostSettingsChecks
             Has(wrong, WebUtility.HtmlEncode(HostAddress.Check("192.168.1.20").Problem!));
             await SavedAsync(browser, HostSettingsPage.AddressPath, "address", ("choice", HostAddress.Lan), ("lan", "192.168.1.20"));
             var moved = await GetAsync(browser, HostSettingsPage.PagePath + "?saved=address");
-            Has(moved, "<p class=notice role=status>Saved. Send your friends the new Play file: their old one looks at the old address.",
+            Has(moved, "<p class=notice role=status>Saved. Send your users the new Play file: their old one looks at the old address.",
                 "<b>192.168.1.20</b> (home network only)");
             TestAssert.Equal("192.168.1.20", Setting(home, "publicHost"), "platform.json holds the new address");
             TestAssert.Equal(HostAddress.Lan, Setting(home, "addressSource"), "and where it came from");

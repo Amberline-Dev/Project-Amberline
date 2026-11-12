@@ -93,6 +93,8 @@ public static class AirPlayerInstallChecks
         TestAssert.Equal(record, second.Record, "the second server changed the install");
         TestAssert.Equal(2, Directory.GetDirectories(Path.Combine(fixture.Install, "servers")).Length);
         TestAssert.Equal(new[] { "Alpha.lnk", "Bravo.lnk" }, Directory.GetFiles(fixture.Profile.Desktop).Select(path => Path.GetFileName(path)).Order().ToArray());
+        TestAssert.Equal(new[] { "Alpha.lnk", "Bravo.lnk" }, Directory.GetFiles(fixture.Install, "*.lnk").Select(path => Path.GetFileName(path)).Order().ToArray(),
+            "the install folder holds no copy of each shortcut");
         foreach (var (result, pin, host) in new[] { (first, PinA, "one.example.test"), (second, PinB, "two.example.test") })
         {
             var link = ShellLink.Read(result.Shortcut);
@@ -111,10 +113,12 @@ public static class AirPlayerInstallChecks
         TestAssert.Equal("host=prod.example.test\r\n", File.ReadAllText(Path.Combine(record.Air, "lol.properties.stock")));
         TestAssert.True(RetailClients.AirProblem(record.Air, fixture.Pins.Air) is null, "the configured AIR folder no longer passes its check");
 
-        // Running the first Play file again repairs its shortcut and keeps everything else.
+        // Running the first Play file again repairs its shortcut and its copy in the install folder, and keeps everything else.
         File.Delete(first.Shortcut);
+        File.Delete(Path.Combine(fixture.Install, "Alpha.lnk"));
         PlayerInstall.Install(fixture.Profile, plan, Connection("one.example.test", PinA), "Alpha", fixture.Tool);
         TestAssert.True(File.Exists(first.Shortcut), "running the Play file again did not repair its shortcut");
+        TestAssert.True(File.Exists(Path.Combine(fixture.Install, "Alpha.lnk")), "running the Play file again did not repair the install folder's copy");
         TestAssert.Equal(2, Directory.GetFiles(fixture.Profile.Desktop).Length);
         TestAssert.Equal(2, Directory.GetDirectories(Path.Combine(fixture.Install, "servers")).Length);
     });
@@ -136,6 +140,11 @@ public static class AirPlayerInstallChecks
         // The icon is a reference to the moved game executable's own first icon; no icon file exists in the install.
         TestAssert.Equal(Path.Combine(result.Record.Game, "League of Legends.exe"), link.IconPath);
         TestAssert.Equal(0, link.IconIndex);
+        // The same shortcut is copied into the install folder under the desktop file's name, and server.json names the copy.
+        var folderCopy = Path.Combine(fixture.Install, name + ".lnk");
+        TestAssert.True(File.Exists(folderCopy), "the install folder holds no copy of the shortcut");
+        TestAssert.Equal(link, ShellLink.Read(folderCopy), "the install folder's copy differs from the desktop shortcut");
+        TestAssert.Equal(folderCopy, FolderShortcutOf(result.Server), "server.json does not name the copy");
         TestAssert.Equal(0, Directory.GetFiles(fixture.Install, "*.ico", SearchOption.AllDirectories).Length);
 
         // The windowless copy differs from the console apphost only in the PE Subsystem field (3 console, 2 Windows GUI).
@@ -239,6 +248,8 @@ public static class AirPlayerInstallChecks
         TestAssert.Equal(1, Directory.GetDirectories(Path.Combine(fixture.Install, "servers")).Length);
         TestAssert.Equal("new.example.test", Amberline.AirCompanion.Program.ReadRemoteInvitation(Path.Combine(again.Server, "server.json")).Host);
         TestAssert.Equal(new[] { "Alpha Two.lnk" }, Directory.GetFiles(fixture.Profile.Desktop).Select(path => Path.GetFileName(path)).ToArray());
+        TestAssert.Equal(new[] { "Alpha Two.lnk" }, Directory.GetFiles(fixture.Install, "*.lnk").Select(path => Path.GetFileName(path)).ToArray(),
+            "the install folder's copy did not follow the rename");
 
         // Another server under a name the desktop already has (a file that is not ours) gets a numbered shortcut; the file is kept.
         var foreign = Path.Combine(fixture.Profile.Desktop, "Bravo.lnk");
@@ -316,8 +327,8 @@ public static class AirPlayerInstallChecks
             using var browser = home.Client();
             await HostModeChecks.WaitForHealthAsync(browser, "ready", run);
             await home.SignInAsync(browser);
-            var invite = await browser.GetStringAsync(Amberline.Platform.HostInvite.InvitePath);
-            TestAssert.True(invite.Contains("Friends must be on the same home network as this PC.", StringComparison.Ordinal), "Invite says it: " + invite);
+            var invite = await browser.GetStringAsync(Amberline.Platform.HostInvite.AddPath);
+            TestAssert.True(invite.Contains("Players must be on the same home network as this PC.", StringComparison.Ordinal), "Invite says it: " + invite);
             using var file = await browser.GetAsync(Amberline.Platform.HostInvite.PlayFilePath);
             var play = await file.Content.ReadAsStringAsync();
             TestAssert.Equal(System.Net.HttpStatusCode.OK, file.StatusCode, play);
@@ -572,9 +583,12 @@ public static class AirPlayerInstallChecks
         using (new FileStream(Path.Combine(alpha.Server, "logs", "shortcut.log"), FileMode.Create, FileAccess.Write, FileShare.Read))
             Refused(() => PlayerUninstall.RemoveServer(fixture.Profile, servers[0]), "Alpha is still running");
         TestAssert.True(File.Exists(Path.Combine(alpha.Server, "server.json")) && File.Exists(alpha.Shortcut), "a refused removal changed the server");
+        TestAssert.True(File.Exists(Path.Combine(install, "Alpha.lnk")), "a refused removal deleted Alpha's copy in the install folder");
         PlayerUninstall.RemoveServer(fixture.Profile, servers[0]);
         TestAssert.False(File.Exists(alpha.Shortcut) || Directory.Exists(alpha.Server), "Alpha's shortcut or folder is left");
         TestAssert.True(File.Exists(bravo.Shortcut) && Directory.Exists(bravo.Folder), "removing Alpha touched Bravo");
+        TestAssert.False(File.Exists(Path.Combine(install, "Alpha.lnk")), "Alpha's copy in the install folder is left");
+        TestAssert.True(File.Exists(Path.Combine(install, "Bravo.lnk")), "removing Alpha removed Bravo's copy");
 
         // "Remove Amberline from this PC", game files kept: shortcuts, servers, the tool's files, the record and the user's files go; the
         // AIR client (its stock properties back) and the game stay byte for byte; the player's own file keeps the install folder.
@@ -649,6 +663,48 @@ public static class AirPlayerInstallChecks
         TestAssert.False(Directory.Exists(all.Profile.PlayerFolder) || Directory.Exists(old), "the per-user folder is left");
         TestAssert.True(File.Exists(all.Profile.HostSettings), "the player's removal deleted the host's settings");
         foreach (var (path, hash) in gameBefore) TestAssert.Equal(hash, Fixture.Hash(path), $"the game used in place lost {path}");
+    });
+
+    [Check("server.air-player-install-folder-copy", TimeoutSeconds = 300)]
+    public static void TheInstallFolderKeepsACopyOfEachShortcut() => WithRoot("league-air-install-folder-copy", root =>
+    {
+        // The copy has the desktop file's name in the install folder. A file of the player's own with that name is left alone: the copy is numbered.
+        var fixture = Fixture.Make(root);
+        var install = fixture.Install;
+        var alpha = PlayerInstall.Install(fixture.Profile, fixture.Plan(), Connection("one.example.test", PinA), "Alpha", fixture.Tool);
+        var plan = PlayerInstall.MakePlan(fixture.Profile, alpha.Record.Air, alpha.Record.Game, install, fixture.Pins);
+        File.WriteAllText(Path.Combine(install, "Bravo.lnk"), "the player's own file");
+        var bravo = PlayerInstall.Install(fixture.Profile, plan, Connection("two.example.test", PinB), "Bravo", fixture.Tool);
+        TestAssert.Equal("the player's own file", File.ReadAllText(Path.Combine(install, "Bravo.lnk")), "the player's own file changed");
+        TestAssert.Equal(Path.Combine(install, "Bravo 2.lnk"), FolderShortcutOf(bravo.Server), "server.json does not name the numbered copy");
+        TestAssert.Equal(ShellLink.Read(bravo.Shortcut), ShellLink.Read(Path.Combine(install, "Bravo 2.lnk")), "the numbered copy differs from the desktop shortcut");
+        TestAssert.Equal(new[] { "Alpha.lnk", "Bravo 2.lnk", "Bravo.lnk" }, Directory.GetFiles(install, "*.lnk").Select(path => Path.GetFileName(path)).Order(StringComparer.Ordinal).ToArray(),
+            "the install folder's shortcuts are not the expected ones");
+
+        // "Remove this server" removes Bravo's copy and its desktop shortcut; the player's own file stays.
+        PlayerUninstall.RemoveServer(fixture.Profile, PlayerUninstall.Servers(install).Single(server => server.Name == "Bravo"));
+        TestAssert.Equal(new[] { "Alpha.lnk", "Bravo.lnk" }, Directory.GetFiles(install, "*.lnk").Select(path => Path.GetFileName(path)).Order(StringComparer.Ordinal).ToArray(),
+            "removing Bravo did not remove its copy");
+        TestAssert.False(File.Exists(bravo.Shortcut), "removing Bravo left its desktop shortcut");
+        TestAssert.Equal("the player's own file", File.ReadAllText(Path.Combine(install, "Bravo.lnk")), "removing Bravo deleted the player's own file");
+
+        // An install from before this batch has no folderShortcut and no copy: the next Play file writes both.
+        var delta = PlayerInstall.Install(fixture.Profile, plan, Connection("four.example.test", new string('D', 64)), "Delta", fixture.Tool);
+        var stored = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(delta.Server, "server.json")))!.AsObject();
+        stored.Remove("folderShortcut");
+        File.WriteAllText(Path.Combine(delta.Server, "server.json"), stored.ToJsonString());
+        File.Delete(Path.Combine(install, "Delta.lnk"));
+        PlayerInstall.Install(fixture.Profile, plan, Connection("four.example.test", new string('D', 64)), "Delta", fixture.Tool);
+        TestAssert.True(File.Exists(Path.Combine(install, "Delta.lnk")), "the next Play file did not write the copy");
+        TestAssert.Equal(Path.Combine(install, "Delta.lnk"), FolderShortcutOf(delta.Server), "the next Play file did not name the copy");
+
+        // A missing Desktop folder: the desktop write fails as it always has, but the copy in the install folder is written first.
+        Directory.Delete(fixture.Profile.Desktop, recursive: true);
+        var echo = new string('E', 64);
+        try { PlayerInstall.Install(fixture.Profile, plan, Connection("five.example.test", echo), "Echo", fixture.Tool); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException) { }
+        TestAssert.True(File.Exists(Path.Combine(install, "Echo.lnk")), "a missing desktop stopped the copy in the install folder");
+        TestAssert.Equal(Path.Combine(install, "Echo.lnk"), FolderShortcutOf(Path.Combine(install, "servers", PlayerInstall.ServerId(echo))), "server.json does not name the copy");
     });
 
     [Check("server.air-player-old-folder-parent", TimeoutSeconds = 300)]
@@ -1018,6 +1074,10 @@ public static class AirPlayerInstallChecks
         File.WriteAllBytes(Path.Combine(folder, "Amberline.AirCompanion.exe"), executable);
         File.WriteAllText(Path.Combine(folder, "version.txt"), version);
     }
+
+    /// <summary>The install folder's copy of a server's shortcut, as the server's server.json names it (null when it names none).</summary>
+    private static string? FolderShortcutOf(string server) =>
+        PlayerInstall.Text(PlayerInstall.ReadObject(Path.Combine(server, "server.json")), "folderShortcut");
 
     private static string Version(string tool) => File.ReadAllText(Path.Combine(tool, "version.txt"));
 

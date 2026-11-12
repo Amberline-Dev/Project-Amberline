@@ -114,7 +114,7 @@ public sealed class HostFriendLight
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 // The light stays in memory; a full disk must not stop a friend's sign-in.
-                Console.Error.WriteLine($"Amberline could not save the friend light: {ex.Message}");
+                Console.Error.WriteLine($"Amberline could not save the reach light: {ex.Message}");
             }
         }
     }
@@ -153,7 +153,7 @@ public sealed class HostNetworkPanel(HostNetwork? network, Func<IReadOnlyList<Fi
     Func<bool>? homeOnly = null) : IAsyncDisposable
 {
     /// <summary>The card after the host declined the Windows prompt (design 2.2, step 3).</summary>
-    public static readonly FirewallProblem Declined = new("A-NET-02", "Windows did not allow it, so friends cannot join yet.",
+    public static readonly FirewallProblem Declined = new("A-NET-02", "Windows did not allow it, so players cannot join yet.",
         "Choose Allow through Windows Firewall and press Yes.");
 
     private readonly SemaphoreSlim _busy = new(1, 1);
@@ -256,10 +256,31 @@ public sealed record DashboardCard(string Code, string Message, string WhatToDo,
 
 public sealed record DashboardPerson(string Username, string Summoner, string Doing, string Since);
 
+/// <summary>One seat of a game card: the player's username (a bot says "Bot") and the champion's name ("No pick" before a pick).</summary>
+public sealed record DashboardSeat(string Player, string Champion);
+
+/// <summary>
+/// One game card: a match in progress, its map and mode under neutral names, when it started, each team's seats and whether the host can end
+/// it. <see cref="Id"/> is the match server's game id, Guid.Empty for a match that has no game of its own. <see cref="ElapsedSeconds"/> is the
+/// whole seconds since <see cref="Since"/> at the status's time, which the page shows as mm:ss (the board leaves it 0).
+/// </summary>
+public sealed record DashboardGameCard(Guid Id, string Map, string Mode, DateTimeOffset Since, DashboardSeat[] Blue, DashboardSeat[] Red, bool CanEnd,
+    int ElapsedSeconds = 0);
+
+/// <summary>
+/// One line of the activity feed as the status sends it: when it was added (<see cref="At"/>), its text, which the page sets as text and never as
+/// markup, and its clock time as the server formats it (<see cref="Time"/>, shown as it is).
+/// </summary>
+public sealed record DashboardEvent(DateTimeOffset At, string Text, string Time);
+
+/// <summary>The game cards and the line about the lobbies still waiting (null when none waits), from <see cref="PlatformGames.HostBoard"/>.</summary>
+public sealed record DashboardBoard(DashboardGameCard[] Cards, string? Lobbies);
+
 /// <summary>The status card, as <c>/host/status.json</c> sends it. Every text is plain words the page shows as they are.</summary>
 public sealed record DashboardStatus(string State, DateTimeOffset Since, string Headline, string Address, string Network, string Friend,
     DashboardCheck[] Checks, DashboardPerson[] Online, int GamesRunning, int GamesMax, string[] Games, DashboardCard[] Attention,
-    string[]? Guide);
+    string[]? Guide, int OnlineCount, bool SignUpsOpen, string? SignUpLink, string? PublicHost, DashboardGameCard[] Cards, string? Lobbies,
+    DashboardEvent[] Activity);
 
 /// <summary>
 /// NOT RETAIL: the home host's dashboard (Amberline Host design, section 2.3; retail had no host page). Under <c>/host</c>, behind
@@ -284,16 +305,32 @@ public sealed class HostDashboard : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private Task _testing = Task.CompletedTask;
     private HostSteps? _steps;
+    private readonly HostSelfRegistration? _signUp;
+    private readonly Func<DashboardBoard> _board;
+    private readonly Func<Guid, Task> _endGame;
+    // DIAGNOSTICS: the demo games End game has taken off the board (HostDemoData); they stay off until the Platform restarts.
+    private readonly HashSet<Guid> _demoEnded = new();
+    // DIAGNOSTICS: the demo switch as this start read it (HostLoop.DemoData): the board, the count and End game follow it for the whole run.
+    private readonly bool _demoData;
 
     /// <param name="platformProgram">The program the sign-in rule names; the running one by default.</param>
     /// <param name="maxGames">How many games may run at once now (<see cref="GameManager.MaxGames"/>); the settings' value by default.</param>
+    /// <param name="signUp">The friends' sign-up switch (its link shows while it is on); none by default.</param>
+    /// <param name="board">The game cards and the waiting-lobbies line (<see cref="PlatformGames.HostBoard"/>); none by default.</param>
+    /// <param name="endGame">Ends a running game (<see cref="GameManager.StopAsync"/> as the admin); none by default.</param>
+    /// <param name="demoData">DIAGNOSTICS: the demo switch as this start read it (<see cref="HostLoop.DemoData"/>); off by default.</param>
     public HostDashboard(HostLoop loop, PlatformSettings settings, Func<PlatformManagement.OnlineRow[]> online,
-        Func<IReadOnlyList<DashboardGame>> games, string? platformProgram = null, Func<int>? maxGames = null)
+        Func<IReadOnlyList<DashboardGame>> games, string? platformProgram = null, Func<int>? maxGames = null,
+        HostSelfRegistration? signUp = null, Func<DashboardBoard>? board = null, Func<Guid, Task>? endGame = null, bool demoData = false)
     {
         _loop = loop;
         _settings = settings;
         _online = online;
         _games = games;
+        _signUp = signUp;
+        _board = board ?? (() => new DashboardBoard([], null));
+        _endGame = endGame ?? (_ => Task.CompletedTask);
+        _demoData = demoData;
         _maxGames = maxGames ?? (() => settings.MaxGames);
         var program = platformProgram ?? Environment.ProcessPath!;
         Network = new HostNetworkPanel(loop.Network,
@@ -359,6 +396,10 @@ public sealed class HostDashboard : IAsyncDisposable
         app.MapGet(PagePath + "/restart", (HttpContext context, IAntiforgery antiforgery) => Confirm(context, antiforgery, restart: true, null));
         app.MapPost(PagePath + "/stop", (HttpContext context, IAntiforgery antiforgery) => EndAsync(context, antiforgery, restart: false));
         app.MapPost(PagePath + "/restart", (HttpContext context, IAntiforgery antiforgery) => EndAsync(context, antiforgery, restart: true));
+        // End game (a game card's button): the confirm page for a running game, then its POST, which stops that game and goes back to the dashboard.
+        app.MapGet(PagePath + "/games/end", (HttpContext context, IAntiforgery antiforgery, string? id) =>
+            RunningCard(id) is { } card ? EndConfirm(context, antiforgery, card) : Gone());
+        app.MapPost(PagePath + "/games/end", (HttpContext context, IAntiforgery antiforgery) => EndGameAsync(context, antiforgery));
         app.MapPost(PagePath + "/firewall", async (HttpContext context, IAntiforgery antiforgery) =>
         {
             if (!await antiforgery.IsRequestValidAsync(context)) return Expired;
@@ -397,7 +438,7 @@ public sealed class HostDashboard : IAsyncDisposable
         if (Network.Off) Add("firewall", "unknown", "Amberline did not check Windows Firewall");
         else if (net.FirewallCard is { } card) Add("firewall", "bad", card.Message, card.Code, card.WhatToDo, card == HostNetworkPanel.Declined ? "firewall" : null);
         else if (net.Firewall is not { } firewall) Add("firewall", "checking", "Checking Windows Firewall");
-        else if (firewall == FirewallState.Allowed) { firewallOk = true; Add("firewall", "ok", "Windows Firewall lets friends in"); }
+        else if (firewall == FirewallState.Allowed) { firewallOk = true; Add("firewall", "ok", "Windows Firewall lets players in"); }
         else
         {
             var problem = HostFirewall.Problem(firewall)!;
@@ -445,17 +486,17 @@ public sealed class HostDashboard : IAsyncDisposable
 
         var fromInternet = _loop.Friend.FromInternet;
         var fromHome = _loop.Friend.FromHomeNetwork;
-        if (fromInternet is { } seen) Add("friend", "ok", $"A friend reached Amberline from the internet {Ago(now - seen)}");
-        else if (fromHome is { } local && homeOnly) Add("friend", "ok", $"A friend on your home network reached Amberline {Ago(now - local)}");
+        if (fromInternet is { } seen) Add("friend", "ok", $"A player reached Amberline from the internet {Ago(now - seen)}");
+        else if (fromHome is { } local && homeOnly) Add("friend", "ok", $"A player on your home network reached Amberline {Ago(now - local)}");
         else if (fromHome is { } near)
-            Add("friend", "waiting", $"A friend on your home network reached Amberline {Ago(now - near)}. Waiting for a friend from the internet.");
-        else Add("friend", "waiting", "Waiting for the first friend to start the Play file.");
+            Add("friend", "waiting", $"A player on your home network reached Amberline {Ago(now - near)}. Waiting for a player from the internet.");
+        else Add("friend", "waiting", "Waiting for the first player to start the Play file.");
 
         var checking = checks.Any(check => check.State == "checking");
         var bad = checks.Count(check => check.State == "bad");
         var canJoin = firewallOk && (homeOnly || routerOk && addressOk || fromInternet is not null);
-        var headline = $"Running since {Clock(_since, now)}." + (canJoin ? " Friends can join."
-            : checking ? " Checking whether friends can reach you." : " Friends may not be able to join: see Needs your attention.");
+        var headline = $"Running since {Clock(_since, now)}." + (canJoin ? " Players can join."
+            : checking ? " Checking whether players can reach you." : " Players may not be able to join: see Needs your attention.");
         var network = checking ? "Network: checking"
             : bad > 0 ? $"Network: {Count(bad, "thing")} {(bad == 1 ? "needs" : "need")} your attention"
             : checks.Any(check => check.State == "unknown") ? "Network: some checks could not run"
@@ -467,16 +508,27 @@ public sealed class HostDashboard : IAsyncDisposable
             : !string.IsNullOrWhiteSpace(saved) ? $"Address: {saved} (from your settings)"
             : "Address: not known yet";
         var last = fromInternet > fromHome || fromHome is null ? fromInternet : fromHome;
-        var friend = last is { } at ? $"Last friend connected {Ago(now - at)}" : "No friend has connected yet";
+        var friend = last is { } at ? $"Last player connected {Ago(now - at)}" : "No player has connected yet";
         cards.AddRange(Attention.Cards(now, net));
         if (Support is not null) cards.AddRange(Support.Cards(homeOnly));
         var games = _games();
+        var people = _online();
+        // DIAGNOSTICS: the board holds the made-up games while the switch is on (Board), so the cards, the count and the tile agree.
+        var board = Board();
+        // DIAGNOSTICS: the made-up games count as running while the switch is on, so the tile and the heading agree with the cards.
+        var demo = _demoData ? board.Cards.Count(card => HostDemoData.IsDemo(card.Id)) : 0;
+        // The address players type, bare: what Copy address copies, and what the sign-up link is made from. Batch 748: the saved address, the
+        // one Users, Settings, Add a user and the Play file give (the router's public address shows only in the Address line above).
+        var publicHost = string.IsNullOrWhiteSpace(saved) ? null : saved;
+        var signUpLink = _signUp?.Url(publicHost);
         return new DashboardStatus("running", _since, headline, address, network, friend, [.. checks],
-            [.. _online().Select(row => new DashboardPerson(row.Username, row.Summoner, row.Doing, row.Since))],
-            games.Count, _maxGames(),
+            [.. people.Select(row => new DashboardPerson(row.Username, row.Summoner, row.Doing, row.Since))],
+            games.Count + demo, _maxGames(),
             [.. games.Select((game, index) => $"Game {index + 1} · {Count(game.Players, "player")}" +
                 (game.Bots > 0 ? $" and {Count(game.Bots, "bot")}" : "") + " · " + StateWords(game.State))],
-            [.. cards], guide);
+            [.. cards], guide, people.Length, _signUp is { On: true }, signUpLink, publicHost,
+            [.. board.Cards.Select(card => card with { ElapsedSeconds = Elapsed(card.Since, now) })], board.Lobbies,
+            [.. _loop.Activity.Recent().Select(entry => new DashboardEvent(entry.At, entry.Text, Clock(entry.At, now)))]);
     }
 
     public async ValueTask DisposeAsync()
@@ -527,7 +579,7 @@ public sealed class HostDashboard : IAsyncDisposable
         var games = _games();
         var verb = restart ? "Restart" : "Stop";
         var warning = games.Count == 0
-            ? restart ? "Amberline is back in a few seconds." : "Friends cannot log in until you start Amberline again."
+            ? restart ? "Amberline is back in a few seconds." : "Users cannot log in until you start Amberline again."
             : $"{Count(games.Count, "game")} {(games.Count == 1 ? "is" : "are")} running ({Count(games.Sum(game => game.Players), "player")}). " +
               $"{(restart ? "Restarting" : "Stopping")} ends {(games.Count == 1 ? "it" : "them")} for everyone.";
         var wait = HostPages.Wait(restart ? "Restarting Amberline. This takes a few seconds." : "Stopping Amberline.");
@@ -570,7 +622,7 @@ public sealed class HostDashboard : IAsyncDisposable
         _ => "starting",
     };
 
-    private static string Ago(TimeSpan age) => age < TimeSpan.FromMinutes(1) ? "just now"
+    internal static string Ago(TimeSpan age) => age < TimeSpan.FromMinutes(1) ? "just now"
         : age < TimeSpan.FromHours(1) ? Count((int)age.TotalMinutes, "minute") + " ago"
         : age < TimeSpan.FromDays(1) ? Count((int)age.TotalHours, "hour") + " ago"
         : Count((int)age.TotalDays, "day") + " ago";
@@ -580,31 +632,102 @@ public sealed class HostDashboard : IAsyncDisposable
     private static string Clock(DateTimeOffset since, DateTimeOffset now) =>
         since.ToLocalTime().ToString(since.ToLocalTime().Date == now.ToLocalTime().Date ? "HH:mm" : "d MMMM, HH:mm", CultureInfo.InvariantCulture);
 
+    /// <summary>Whole seconds from <paramref name="since"/> to <paramref name="now"/>, never negative: the page shows them as mm:ss.</summary>
+    private static int Elapsed(DateTimeOffset since, DateTimeOffset now) => (int)Math.Clamp((now - since).TotalSeconds, 0, int.MaxValue);
+
+    /// <summary>The end-game confirm page of a running game: what ends, and the answer with its antiforgery token. A GET ends nothing.</summary>
+    private static IResult EndConfirm(HttpContext context, IAntiforgery antiforgery, DashboardGameCard card)
+    {
+        var players = card.Blue.Length + card.Red.Length;
+        return HostMode.Page("<h1>End this game?</h1>" +
+            $"<p>The {card.Map} game ({card.Mode}, {Count(players, "player")}) ends for everyone in it.</p>" +
+            $"<form method=post action={PagePath}/games/end{HostPages.Wait("Ending the game. This takes a few seconds.")}>{Program.RegistrationToken(context, antiforgery)}" +
+            $"<input type=hidden name=id value={card.Id:D}><div class=buttons><button type=submit>End game</button> " +
+            $"<a class=\"button secondary\" href={PagePath}>Cancel</a></div></form>");
+    }
+
+    /// <summary>The page for a game that is no longer running: its id is unknown, or it ended before the answer came.</summary>
+    private static IResult Gone() => HostMode.Page(
+        $"<h1>This game has already ended.</h1><p><a href={PagePath}>Back to the dashboard</a></p>", StatusCodes.Status404NotFound);
+
     /// <summary>
-    /// The page; the script fills it from the status and shows each button only when a card needs it. Only the headline and the
-    /// network line are a live region, and the script changes a text only when it changed, so a screen reader hears what changed,
-    /// once, and the focus stays where it is.
+    /// DIAGNOSTICS: the board the page shows: the real games and lobbies, plus the demo data's two games and their lobbies line while the switch was read on at this start
+    /// (<see cref="HostDemoData"/>). A demo game that End game took off stays off until the Platform restarts.
+    /// </summary>
+    private DashboardBoard Board()
+    {
+        var real = _board();
+        if (!_demoData) return real;
+        lock (_demoEnded)
+            return new([.. real.Cards, .. HostDemoData.Cards(_since).Where(card => !_demoEnded.Contains(card.Id))], real.Lobbies ?? HostDemoData.Lobbies);
+    }
+
+    // DIAGNOSTICS: looks in Board(), which holds the made-up games only while the switch is on.
+    /// <summary>The card of a game the host can end now, by its id; null for an unknown, ended or unendable game.</summary>
+    private DashboardGameCard? RunningCard(string? id) =>
+        Guid.TryParse(id, out var game) ? Board().Cards.FirstOrDefault(card => card.Id == game && card.CanEnd) : null;
+
+    /// <summary>
+    /// End game's answer: the antiforgery check, then the stop of the game the page named (the match server's game, as the admin), then 303 to the
+    /// dashboard. A game that is no longer running, or that ended while it was being stopped, gets the "already ended" page, not a failure.
+    /// </summary>
+    private async Task<IResult> EndGameAsync(HttpContext context, IAntiforgery antiforgery)
+    {
+        if (!await antiforgery.IsRequestValidAsync(context)) return Expired;
+        var form = await context.Request.ReadFormAsync(context.RequestAborted);
+        if (RunningCard(form["id"].ToString()) is not { } card) return Gone();
+        // DIAGNOSTICS: a demo game (on the board only while the switch is on) only leaves the board; no match server is asked to stop it.
+        if (HostDemoData.IsDemo(card.Id))
+        {
+            if (!_demoData) return Gone();
+            lock (_demoEnded) _demoEnded.Add(card.Id);
+        }
+        else
+        {
+            try { await _endGame(card.Id); }
+            catch (RemoteFault) { return Gone(); }
+        }
+        // 303: the browser asks the dashboard with a GET after the answer (Results has no See Other helper, so the header is set here).
+        context.Response.Headers.Location = PagePath;
+        return Results.StatusCode(StatusCodes.Status303SeeOther);
+    }
+
+    /// <summary>
+    /// The page; the script fills it from the status. Each part shows its empty line until its data comes, and the attention section, the Copy
+    /// buttons and the waiting-lobbies line stay hidden until there is something for them. Only the headline and the network line are live
+    /// regions; the script changes a text only when it changed, so a screen reader hears what changed, once, and the focus stays where it is.
     /// </summary>
     private static string Body(string token) => $$"""
         <h1>Dashboard</h1>
-        <section id=status class=status aria-labelledby=status-title><h2 id=status-title>Status</h2>
-        <div aria-live=polite><p class=headline><span id=status-mark class=mark aria-hidden=true>…</span> <strong id=headline>Checking…</strong></p>
-        <p id=network-line></p></div>
-        <p id=address></p><p id=friend></p>
-        <p class=buttons><a class="button secondary" href={{PagePath}}/stop>Stop Amberline</a> <a class="button secondary" href={{PagePath}}/restart>Restart Amberline</a></p></section>
-        {{HostPlay.Button(token)}}
-        <noscript><p class=problem>This page needs JavaScript to show the status.</p></noscript>
-        <h2 id=online-title>Online now</h2><p id=online-empty>Checking…</p>
-        <table id=online-table hidden><thead><tr><th scope=col>Username</th><th scope=col>Doing</th><th scope=col>Since</th></tr></thead><tbody id=online></tbody></table>
-        <h2 id=games-title>Games</h2><p id=games-empty>Checking…</p><ul id=games></ul>
-        <h2>Network</h2><ul id=checks class=checks><li>Checking…</li></ul>
-        <h2>Needs your attention</h2><p id=attention-none>Checking…</p><ul id=attention class=cards></ul>
+        <section id=attention-section class=attention aria-labelledby=attention-title hidden><h2 id=attention-title>Needs your attention</h2><ul id=attention class=cards></ul>
         <form method=post action={{PagePath}}/firewall data-action=firewall hidden{{HostPages.Wait("Waiting for Windows. Choose Yes when Windows asks.")}}>{{token}}
         <button type=submit class=secondary>Allow through Windows Firewall</button>
         <p class=tip>Windows asks once, for Windows Command Processor: choose Yes.</p></form>
         <form method=post action={{PagePath}}/network data-action=network hidden{{HostPages.Wait("Testing your network. This takes up to a minute.")}}>{{token}}<button type=submit class=secondary>Test again</button></form>
-        {{HostAttention.Forms(token)}}{{HostSupport.Forms(token)}}
-        <p class=tip>Something not working? Send a <a href={{HostSupport.PagePath}}>support log</a> with your issue report.</p>
+        {{HostAttention.Forms(token)}}{{HostSupport.Forms(token)}}</section>
+        <div class=tiles><div class=tile id=tile-online><b id=tile-online-count>…</b><span>Online</span></div><div class=tile id=tile-games><b id=tile-games-count>…</b><span>Games running</span></div><div class=tile id=tile-signups><b id=tile-signups-state>…</b><span>Sign-ups</span></div></div>
+        <div class=buttons>{{HostPlay.Button(token)}}<button type=button data-copy=signup-link id=copy-signup hidden>Copy sign-up link</button> <button type=button data-copy=address-value id=copy-address hidden>Copy address</button> <a class="button secondary" href={{HostInvite.AddPath}}>Add a user</a><span id=signup-link class=vh></span><span id=address-value class=vh></span><span id=copy-status role=status class=tip></span></div>
+        <noscript><p class=problem>This page needs JavaScript to show its status, games and activity.</p></noscript>
+        <h2 id=cards-title>Games</h2>
+        <ul id=cards class=game-cards></ul>
+        <p id=cards-empty class=empty>Checking…</p>
+        <p id=lobbies class=empty hidden></p>
+        <template id=card-template><li class=game-card><div class=game-top><b class=game-title></b><span class=game-time></span></div><div class=teams><div><h3 class=team-blue>Blue</h3><ul class="seats seats-blue"></ul></div><div><h3 class=team-red>Red</h3><ul class="seats seats-red"></ul></div></div><div class=buttons><a class="button secondary small" href={{PagePath}}/games/end>End game<span class=vh></span></a></div></li></template>
+        <h2 id=feed-title>Activity</h2>
+        <ol id=feed class=feed></ol>
+        <p id=feed-empty class=empty>Checking…</p>
+        <template id=feed-template><li><time></time><span></span></li></template>
+        <details id=server-details open><summary>Server details</summary>
+        <section id=status class=status aria-labelledby=status-title><h2 id=status-title>Status</h2>
+        <div aria-live=polite><p class=headline><span id=status-mark class=status-mark aria-hidden=true>…</span> <strong id=headline>Checking…</strong></p>
+        <p id=network-line></p></div>
+        <p id=address></p><p id=friend></p>
+        <p class=buttons><a class="button secondary" href={{PagePath}}/stop>Stop Amberline</a> <a class="button secondary" href={{PagePath}}/restart>Restart Amberline</a></p></section>
+        <h2 id=online-title>Online now</h2><p id=online-empty>Checking…</p>
+        <table id=online-table hidden><thead><tr><th scope=col>Username</th><th scope=col>Doing</th><th scope=col>Since</th></tr></thead><tbody id=online></tbody></table>
+        <h2>Network</h2><ul id=checks class=checks><li>Checking…</li></ul>
         <section id=guide hidden aria-labelledby=guide-title><h2 id=guide-title>Open the ports on your router by hand</h2><ol id=guide-steps></ol></section>
+        </details>
+        <p class=tip>Something not working? Send a <a href={{HostSupport.PagePath}}>support log</a> with your issue report.</p>
         """;
 }

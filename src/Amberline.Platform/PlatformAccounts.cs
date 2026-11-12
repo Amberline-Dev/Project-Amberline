@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Amberline.Data;
+using Amberline.Host;
 using Amberline.Network.Sessions;
 using Amberline.Server;
 using Amberline.Core;
@@ -14,7 +15,19 @@ public sealed record PlatformAccount(long Id, long SummonerId, string Username, 
     PlatformEconomyData? Economy = null, DateTimeOffset? LeavesClearedAt = null, DateTimeOffset[]? Dodges = null,
     // Batch 646: written only when set, so a store without a removed friend stays as it was (an older build, which refuses an
     // unknown field, still reads it); missing means active.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? AccessRemovedAt = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? AccessRemovedAt = null,
+    // NOT RETAIL (batch 748, the host's Users page): LastSeen is no longer written here (it lives in last-seen.json, PlatformAccounts.Touch);
+    // it is only read, to move it out of a store an earlier build of this batch wrote, so it is always null in memory. SignedUp is written only
+    // when set, as above: the login was made on the sign-up page (the Users page's "Signed up" mark).
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? LastSeen = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool SignedUp = false);
+/// <summary>
+/// NOT RETAIL (batch 748; retail had no host-side delete): a login the host deleted (<see cref="PlatformAccounts.Delete"/>), with the names it had. History keeps them: past results, reports
+/// and reward codes still name it, while the login itself is gone and its username and summoner name can be taken again.
+/// </summary>
+public sealed record DeletedAccount(long Id, string Username, string Summoner, DateTimeOffset At);
+/// <summary>What <see cref="PlatformAccounts.Delete"/> did: deleted, no such login, or refused while a game holds it.</summary>
+public enum DeleteOutcome { Deleted, NotFound, InGame }
 public sealed record PlatformResult(long GameId, Guid HostGameId, long[] Accounts, JsonElement Result,
     DateTimeOffset CompletedAt = default, int QueueId = 0,
     Dictionary<long, PlatformReward>? Rewards = null, Dictionary<long, PlatformRating>? Ratings = null);
@@ -34,13 +47,20 @@ public sealed record PlatformRunePage(long PageId, string Name, bool IsCurrent,
 public sealed partial class PlatformAccounts : IDisposable
 {
     // Retired (25 October 2026): no invitation is issued or accepted; the field only lets an older store load.
+    // NOT RETAIL (batch 748; retail had no host-side delete): Deleted is written only once a login was deleted, so an older build still reads a store without one.
     public sealed record State(long NextId, PlatformAccount[] Accounts, string[] Invitations, PlatformResult[] Results,
-        int NextGameId = 1, PlatformRewardCode[]? RewardCodes = null, PlatformReport[]? Reports = null);
+        int NextGameId = 1, PlatformRewardCode[]? RewardCodes = null, PlatformReport[]? Reports = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DeletedAccount[]? Deleted = null);
     private readonly object _gate = new();
     private readonly string _path;
     private readonly FileStream _lease;
     private readonly TimeProvider _time;
     private State _state;
+    // NOT RETAIL (batch 748, the host's Users page): each login's Last seen (account id -> time), kept in last-seen.json beside the store, so
+    // its frequent writes never change accounts.json, which an older release must still read. Under _gate; the file is written in the
+    // background, one write after another (Touch).
+    private readonly Dictionary<long, DateTimeOffset> _lastSeen;
+    private Task _seenWrite = Task.CompletedTask;
     private readonly string _airRoot;
     private PlatformStoreCatalog? _storeCatalog;
     private static readonly JsonSerializerOptions Json = MatchRoster.JsonOptions;
@@ -73,6 +93,8 @@ public sealed partial class PlatformAccounts : IDisposable
             foreach (var account in _state.Accounts)
                 if (account.Economy is not null) ValidateEconomyData(account.Economy);
             ValidateRewardCodes(_state.RewardCodes);
+            _lastSeen = ReadLastSeen();
+            MoveLastSeen();
         }
         catch { _lease.Dispose(); throw; }
     }
@@ -114,7 +136,8 @@ public sealed partial class PlatformAccounts : IDisposable
     }
 
     /// <summary>Public self-service registration used by a host that is reachable by its configured endpoint.</summary>
-    public PlatformAccount RegisterPublic(string username, string password, string summoner, bool maxed = true)
+    /// <param name="signedUp">Batch 748: the person made it on the sign-up page (<see cref="HostSelfRegistration"/>), not the host.</param>
+    public PlatformAccount RegisterPublic(string username, string password, string summoner, bool maxed = true, bool signedUp = false)
     {
         var refused = Refusals(username, password, summoner);
         if ((refused.Username ?? refused.Password ?? refused.Summoner) is { } message) throw new ArgumentException(message);
@@ -134,11 +157,11 @@ public sealed partial class PlatformAccounts : IDisposable
                 SummonerSpell1: maxed ? SummonerLoadout.DefaultFirst : "SummonerHeal",
                 SummonerSpell2: maxed ? SummonerLoadout.DefaultSecond : "SummonerHaste",
                 SummonerLevel: maxed ? 30 : 1);
-            var account = new PlatformAccount(id, checked(1_000_000 + id), username, summoner,
+            var account = new PlatformAccount(id, SummonerIdFor(id), username, summoner,
                 Convert.ToHexString(salt), Convert.ToHexString(hash), loadout,
                 // Batch 706: a full account gets every rune page up to the host's cap; an economy account starts with two.
                 RunePages: SeedRunePages(loadout, maxed ? EconomyRules.MaximumRunePages : 2), Economy: maxed ? null :
-                    new PlatformEconomyData(false, 0, 0, 0, 1, [], [], new Dictionary<int, int>(), [], []));
+                    new PlatformEconomyData(false, 0, 0, 0, 1, [], [], new Dictionary<int, int>(), [], []), SignedUp: signedUp);
             Save(_state with { NextId = checked(id + 1), Accounts = [.. _state.Accounts, account] });
             return account;
         }
@@ -161,8 +184,8 @@ public sealed partial class PlatformAccounts : IDisposable
     public void SetPassword(long accountId, string password) => SetPassword(accountId, password, removedAt: null);
 
     /// <summary>
-    /// NOT RETAIL: host tool (Friends' Remove access, batch 646 keeps it on record). A password nobody is told (32 random bytes, only
-    /// its hash is kept) and the time, so the host's Friends page says "Access removed"; <see cref="SetPassword(long, string)"/> undoes it.
+    /// NOT RETAIL: host tool (the Users page's Disable, batch 646's Remove access, kept on record). A password nobody is told (32 random
+    /// bytes, only its hash is kept) and the time, so the Users page marks the user Disabled; <see cref="SetPassword(long, string)"/> undoes it.
     /// The caller ends the account's tunnel token and sessions; the account and its games stay.
     /// </summary>
     public void RemoveAccess(long accountId) =>
@@ -180,6 +203,147 @@ public sealed partial class PlatformAccounts : IDisposable
                 ? a with { Salt = Convert.ToHexString(salt), PasswordHash = Convert.ToHexString(hash), AccessRemovedAt = removedAt } : a).ToArray() });
         }
     }
+
+    /// <summary>
+    /// NOT RETAIL: the Users page's "Last seen" (batch 748; retail had no host page). Keeps a login's latest time at once, in memory, and writes
+    /// last-seen.json only when that time is in another hour than the one before, so the file changes at most once an hour per login. The
+    /// write runs in the background: no caller (a login, a logout under the sessions lock) waits for the disk, and a write refused just now (a
+    /// full disk, a scanner holding the file) is only logged, until the next hour's time writes the file again. A login that is gone, or a
+    /// time older than the kept one, is skipped.
+    /// </summary>
+    public void Touch(long accountId, DateTimeOffset at)
+    {
+        lock (_gate)
+        {
+            if (!_state.Accounts.Any(a => a.Id == accountId) || _lastSeen.TryGetValue(accountId, out var seen) && seen >= at) return;
+            _lastSeen[accountId] = at;
+            if (seen.UtcTicks / TimeSpan.TicksPerHour == at.UtcTicks / TimeSpan.TicksPerHour) return;
+            Dictionary<long, DateTimeOffset> snapshot = new(_lastSeen);
+            _seenWrite = _seenWrite.ContinueWith(_ => SaveLastSeen(snapshot), TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>NOT RETAIL (batch 748): a login's Last seen (<see cref="Touch"/>), or null when it was never seen here.</summary>
+    public DateTimeOffset? LastSeen(long accountId)
+    {
+        lock (_gate) return _lastSeen.TryGetValue(accountId, out var seen) ? seen : null;
+    }
+
+    private string LastSeenPath => Path.Combine(Path.GetDirectoryName(_path)!, "last-seen.json");
+
+    /// <summary>last-seen.json for the logins in the store; a missing file is nobody seen yet, and a damaged one is too (it is logged).</summary>
+    private Dictionary<long, DateTimeOffset> ReadLastSeen()
+    {
+        if (!File.Exists(LastSeenPath)) return [];
+        try
+        {
+            var live = _state.Accounts.Select(a => a.Id).ToHashSet();
+            return (JsonSerializer.Deserialize<Dictionary<long, DateTimeOffset>>(File.ReadAllText(LastSeenPath), HostFiles.Json) ?? [])
+                .Where(pair => live.Contains(pair.Key)).ToDictionary();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            Console.Error.WriteLine($"Amberline could not read the logins' last-seen times; they start empty: {ex.Message}");
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// A store an earlier build of batch 748 wrote keeps LastSeen inside accounts.json: it moves to last-seen.json (the later of the two times
+    /// wins) and accounts.json is written without it, so an older release reads it again. A refused write is logged; the next start tries again.
+    /// </summary>
+    private void MoveLastSeen()
+    {
+        if (!_state.Accounts.Any(a => a.LastSeen is not null)) return;
+        foreach (var account in _state.Accounts)
+            if (account.LastSeen is { } seen && _lastSeen.GetValueOrDefault(account.Id) < seen) _lastSeen[account.Id] = seen;
+        var moved = _state with { Accounts = [.. _state.Accounts.Select(a => a with { LastSeen = null })] };
+        try
+        {
+            HostFiles.Write(LastSeenPath, _lastSeen);
+            Save(moved);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Amberline could not move the logins' last-seen times out of accounts.json: {ex.Message}");
+        }
+    }
+
+    private void SaveLastSeen(Dictionary<long, DateTimeOffset> snapshot)
+    {
+        try { HostFiles.Write(LastSeenPath, snapshot); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Amberline could not save a login's last-seen time: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// NOT RETAIL: the host's Delete on the Users page (batch 748; retail's logins were closed by Riot's support). The login goes for good, so its
+    /// username and summoner name can be taken again; its names stay in <see cref="DeletedAccount"/>, and its results, reports and reward codes
+    /// stay as they are, so history still names it. Refused (<see cref="DeleteOutcome.InGame"/>) while a match handed to the match server names
+    /// the login and has no result yet (its <c>match-handoffs</c> file, from which the next start recovers a result) and
+    /// <paramref name="running"/> says that match may still run. Lobbies and the queue are <see cref="PlatformGames.DeleteAccount"/>'s to check;
+    /// the caller then ends the login's sessions, its remote token, its social rows and its cheat tick.
+    /// </summary>
+    /// <param name="running">
+    /// Whether the match server still runs a match, by its host game id; null counts every such match as running. An aborted match never gets a
+    /// result and its handoff is kept as evidence, so without this answer each of its players would stay undeletable.
+    /// </param>
+    public DeleteOutcome Delete(long accountId, Func<Guid, bool>? running = null)
+    {
+        lock (_gate)
+        {
+            if (_state.Accounts.FirstOrDefault(a => a.Id == accountId) is not { } account) return DeleteOutcome.NotFound;
+            if (PendingMatches(accountId).Any(match => running?.Invoke(match) ?? true)) return DeleteOutcome.InGame;
+            Save(_state with
+            {
+                Accounts = [.. _state.Accounts.Where(a => a.Id != accountId)],
+                Deleted = [.. _state.Deleted ?? [], new DeletedAccount(account.Id, account.Username, account.Summoner, _time.GetUtcNow())],
+            });
+            // Its Last seen goes too: the next write of last-seen.json leaves it out, and a start reads only live logins' times.
+            _lastSeen.Remove(accountId);
+            return DeleteOutcome.Deleted;
+        }
+    }
+
+    /// <summary>NOT RETAIL (batch 748): every login the host deleted, with the names it had (the support log hides them as it hides every login's).</summary>
+    public DeletedAccount[] ListDeleted()
+    {
+        lock (_gate) return [.. _state.Deleted ?? []];
+    }
+
+    /// <summary>NOT RETAIL (batch 748; retail had no host-side delete): the names a deleted login had, by its account id, for history (results, reports, reward codes); null for any other id.</summary>
+    public DeletedAccount? FindDeleted(long id)
+    {
+        lock (_gate) return _state.Deleted?.FirstOrDefault(deleted => deleted.Id == id);
+    }
+
+    /// <summary>NOT RETAIL (batch 748; retail had no host-side delete): as <see cref="FindDeleted"/>, by the summoner id the login had (<see cref="SummonerIdFor"/> its account id).</summary>
+    public DeletedAccount? FindDeletedSummoner(long summonerId)
+    {
+        lock (_gate) return _state.Deleted?.FirstOrDefault(deleted => SummonerIdFor(deleted.Id) == summonerId);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 748; retail had no host-side delete): what a profile read answers for a login the host deleted (a match history still names it): an empty record of level 1, no
+    /// games, runes or masteries, under the names and the summoner id it had, as <see cref="Unknown"/> answers the stats reads; null for an id
+    /// no login ever had. Never stored.
+    /// </summary>
+    public PlatformAccount? FormerAccount(long id) => FindDeleted(id) is { } gone ? EmptyRecord(gone) : null;
+
+    /// <summary>NOT RETAIL (batch 748; retail had no host-side delete): as <see cref="FormerAccount"/>, by the summoner id the deleted login had.</summary>
+    public PlatformAccount? FormerSummoner(long summonerId) => FindDeletedSummoner(summonerId) is { } gone ? EmptyRecord(gone) : null;
+
+    private static PlatformAccount EmptyRecord(DeletedAccount gone) => new(gone.Id, SummonerIdFor(gone.Id), gone.Username, gone.Summoner, "", "",
+        new MatchPlayer(gone.Summoner, "Annie", Team.Order, SummonerLevel: 1),
+        Economy: new PlatformEconomyData(false, 0, 0, 0, 1, [], [], new Dictionary<int, int>(), [], []));
+
+    /// <summary>
+    /// Every login's summoner id, given at registration (<see cref="RegisterPublic"/>, the store's one way to make a login); chat addresses a
+    /// deleted login by it (NOT RETAIL, batch 748: retail had no host-side delete).
+    /// </summary>
+    internal static long SummonerIdFor(long accountId) => checked(1_000_000 + accountId);
 
     public PlatformAccount? Authenticate(string username, string password)
     {
@@ -518,13 +682,14 @@ public sealed partial class PlatformAccounts : IDisposable
             ValidateResult(authoritative, result.Accounts);
             if (File.Exists(HandoffPath(result.GameId)))
                 ValidatePendingResult(ReadHandoff(HandoffPath(result.GameId)), result, authoritative);
-            var byAccount = result.Accounts.ToDictionary(id => id, RequireAccount);
+            var byAccount = result.Accounts.ToDictionary(id => id, Participant);
             var rewards = new Dictionary<long, PlatformReward>();
             var nextAccounts = _state.Accounts.ToArray();
             // IP, XP and receipts belong to the human accounts only; bot seats earn nothing.
             foreach (var player in authoritative.Players.Where(player => !player.IsBot))
             {
-                var account = byAccount.Values.Single(a => (ulong)a.SummonerId == player.PlayerId);
+                // NOT RETAIL (batch 748; retail had no host-side delete): a player the host deleted since the match was handed over earns nothing; everyone else is recorded as usual.
+                if (byAccount.Values.Single(a => (ulong)a.SummonerId == player.PlayerId).Account is not { } account) continue;
                 if (TryAward(account, authoritative, player, result.QueueId,
                     result.CompletedAt == default ? _time.GetUtcNow() : result.CompletedAt, out var updated, out var reward))
                 {
@@ -538,10 +703,12 @@ public sealed partial class PlatformAccounts : IDisposable
                 if (authoritative.MapId == GameMaps.Tutorial && player.Team.Equals(authoritative.Winner, StringComparison.Ordinal))
                     nextAccounts = nextAccounts.Select(a => a.Id == account.Id ? a with { TutorialFlag = true } : a).ToArray();
             }
-            // A ranked game's rating change is applied once, here, and kept with the receipt (batch 586).
+            // A ranked game's rating change is applied once, here, and kept with the receipt (batch 586). A deleted player's rating still
+            // counts in its team's average, as it did in the match, but the deleted player gets none (NOT RETAIL, batch 748: retail had no host-side delete).
             var ratings = PlatformGames.QueueOf(result.QueueId) is { Ranked: true } ranked
-                ? PlatformRatings.Rate(authoritative, byAccount.Values.ToDictionary(a => (ulong)a.SummonerId, a => a.Id), _state.Results, ranked.Type)
+                ? PlatformRatings.Rate(authoritative, byAccount.ToDictionary(pair => (ulong)pair.Value.SummonerId, pair => pair.Key), _state.Results, ranked.Type)
                 : null;
+            foreach (var gone in byAccount.Where(pair => pair.Value.Account is null)) ratings?.Remove(gone.Key);
             var stored = result with { Rewards = rewards.Count == 0 ? null : rewards, Ratings = ratings is { Count: > 0 } ? ratings : null };
             Save(_state with { Accounts = nextAccounts, Results = [.. _state.Results, stored] });
             return true;
@@ -569,7 +736,7 @@ public sealed partial class PlatformAccounts : IDisposable
             throw new InvalidDataException("Result duration must be finite and non-negative.");
         if (result.Winner is not ("Order" or "Chaos"))
             throw new InvalidDataException("Result winner is invalid.");
-        var accounts = accountIds.Select(RequireAccount).ToDictionary(account => (ulong)account.SummonerId);
+        var accounts = accountIds.Select(Participant).ToDictionary(account => (ulong)account.SummonerId);
         if (result.Players.Select(player => player.PlayerId).Distinct().Count() != result.Players.Count ||
             result.Players.Where(player => !player.IsBot).Any(player => !accounts.ContainsKey(player.PlayerId)) ||
             result.Players.Where(player => player.IsBot).Any(player => accounts.ContainsKey(player.PlayerId)))
@@ -582,6 +749,16 @@ public sealed partial class PlatformAccounts : IDisposable
                 throw new InvalidDataException("Result player identity or numeric fields are invalid.");
         }
     }
+
+    /// <summary>
+    /// A result's player by account id: the live login, or (NOT RETAIL, batch 748: retail had no host-side delete) a login the host deleted after the match was handed over, whose summoner
+    /// id and name the result is still checked against and which gets no reward and no rating (<see cref="RecordResult"/>). An id no login ever
+    /// had is refused, as before.
+    /// </summary>
+    private (long SummonerId, string Summoner, PlatformAccount? Account) Participant(long accountId) =>
+        Completed(_state.Accounts.FirstOrDefault(account => account.Id == accountId)) is { } live ? (live.SummonerId, live.Summoner, (PlatformAccount?)live)
+        : _state.Deleted?.FirstOrDefault(deleted => deleted.Id == accountId) is { } gone ? (SummonerIdFor(gone.Id), gone.Summoner, null)
+        : throw new ArgumentException("Account does not exist.", nameof(accountId));
 
     private bool TryAward(PlatformAccount account, MatchResult result, PlayerMatchResult player, int queueId, DateTimeOffset completedAt,
         out PlatformAccount updated, out PlatformReward reward)
@@ -1011,5 +1188,10 @@ public sealed partial class PlatformAccounts : IDisposable
 
     private static PlatformRunePage CopyPage(PlatformRunePage page) =>
         new(page.PageId, page.Name, page.IsCurrent, CopySlots(page.Slots), page.CreatedAt);
-    public void Dispose() => _lease.Dispose();
+    public void Dispose()
+    {
+        // The last Last seen write lands before the lease goes, so whoever opens the folder next reads it.
+        try { _seenWrite.Wait(TimeSpan.FromSeconds(5)); } catch (AggregateException) { }
+        _lease.Dispose();
+    }
 }

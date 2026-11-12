@@ -301,8 +301,8 @@ internal static class PlayerInstallWindow
             heading.Text = $"Welcome to {name}";
             var intro = Line("What setup does", "", width);
             intro.Text = existing is null
-                ? $"Setup puts your 1.0.0.126 AIR client and game client in one folder and adds \"{name}\" to your desktop."
-                : $"Your game is set up in {existing.Install}. Setup adds \"{name}\" to your desktop.";
+                ? $"Setup puts your 1.0.0.126 AIR client and game client in one folder, adds \"{name}\" to your desktop, with a copy in that folder."
+                : $"Your game is set up in {existing.Install}. Setup adds \"{name}\" to your desktop, with a copy in that folder.";
             intro.AccessibleDescription = intro.Text;
             airText = Line("AIR client folder", "", width);
             gameText = Line("Game client folder", "", width);
@@ -618,7 +618,8 @@ internal static class PlayerInstallWindow
             doneHeading.Text = $"{name} is ready";
             var notes = finished.Stayed.ToList();
             if (finished.Leftovers.Count > 0) notes.Add("Delete these old folders yourself: " + string.Join(", ", finished.Leftovers));
-            doneText.Text = $"\"{name}\" is on your desktop. Open it and log in with the login the host sent you." +
+            doneText.Text = $"\"{name}\" is on your desktop, and a copy of its shortcut is in {finished.Record.Install}, " +
+                "in case the desktop icon goes missing. Open it and log in with the login the host sent you." +
                 string.Concat(notes.Select(note => "\r\n\r\n" + note));
             doneHeading.AccessibleDescription = doneHeading.Text;
             doneText.AccessibleDescription = doneText.Text;
@@ -762,7 +763,7 @@ internal static class PlayerInstallWindow
         private void RemoveServer(PlayerUninstall.Server server)
         {
             if (!Confirm(this, Text, $"Remove {server.Name}?",
-                "Its desktop shortcut and connection are deleted. The game and your other servers stay.", $"Remove {server.Name}")) return;
+                "Its shortcuts and connection are deleted. The game and your other servers stay.", $"Remove {server.Name}")) return;
             try { PlayerUninstall.RemoveServer(profile, server); }
             catch (InstallRefusedException refused)
             {

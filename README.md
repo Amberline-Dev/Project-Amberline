@@ -1,9 +1,9 @@
 # Amberline
 
-A game server for patch 1.0.0.126 (October 2011) of a MOBA and its Adobe AIR client. Host your own server and play with your
-friends.
+A game server for patch 1.0.0.126 (October 2011) of a MOBA and its Adobe AIR client. Host your own server and play with the
+people you invite.
 
-**You need your own copy of the game.** Amberline includes no game or AIR client files. You and each friend need the game on
+**You need your own copy of the game.** Amberline includes no game or AIR client files. You and each player need the game on
 patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its folder holds `assets`), on Windows 10 or 11
 (64-bit). A host who may share their own copy can let their players download it from their server
 ([Game files](HOSTING.md#game-files)).
@@ -16,11 +16,11 @@ patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its f
    `C:\Amberline`). If Windows warns you, choose **More info**, then **Run anyway**.
 3. **Follow the page in your browser.** Name your server, check your game folders, make your login, then choose **Allow
    through Windows Firewall**.
-4. **Invite friends.** Choose **Invite a friend** and send them the Play file and the message it shows.
+4. **Add users.** Choose **Add a user** and send them the Play file and the message it shows.
 
 From then on, start Amberline from its desktop icon, and keep its window open while you play.
 
-## Join a friend's server
+## Join a server
 
 1. **Double-click the `Play.cmd`** your host sent you.
 2. **Check the two folders** it found (**Change…** picks others), then choose **Install**.
@@ -28,7 +28,7 @@ From then on, start Amberline from its desktop icon, and keep its window open wh
 
 ## Help
 
-- [HOSTING.md](HOSTING.md): every page and button, updates, friends who sign up themselves, a LAN party and a rented server.
+- [HOSTING.md](HOSTING.md): every page and button, updates, users who sign up themselves, a LAN party and a rented server.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): every error message, Windows warnings, router problems and help for players.
 - Found a bug? [Open an issue](CONTRIBUTING.md).
 
@@ -40,14 +40,14 @@ From then on, start Amberline from its desktop icon, and keep its window open wh
 
 An open-source server for the 1.0.0.126 build (October 2011) of the game and its Adobe AIR client: the match server, the AIR
 platform (sign-in, chat, lobbies, matchmaking, store and profiles), a setup page in your browser and a small player tool for your
-friends. Your PC can be the server, or a server you rent. Amberline reads your own copy of the game on your PC, and shares it with
+players. Your PC can be the server, or a server you rent. Amberline reads your own copy of the game on your PC, and shares it with
 your players only if you turn that on in Settings.
 
 ### Build it yourself instead
 
 Download this repository (**Code**, then **Download ZIP**), unzip it and double-click **`START-HERE.cmd`**. It is the release
 zip's guide, with two more steps: it asks where the server runs (this PC or a rented server), finds your game folders, installs
-any missing build tool after a yes, builds Amberline (several minutes) and installs it. [HOSTING.md](HOSTING.md#startherecmd-step-by-step) walks through each step.
+any missing build tool after a yes, builds Amberline (several minutes) and installs it. [HOSTING.md](HOSTING.md#start-herecmd-step-by-step) walks through each step.
 
 ### For developers
 

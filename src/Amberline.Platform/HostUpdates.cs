@@ -413,7 +413,7 @@ public static class HostUpdates
                 <h1>Installing Amberline {version}</h1>
                 <p class=notice role=status>A new Amberline window opened (look on the taskbar). It installs Amberline {version} now.</p>
                 <p>That window stops this Amberline, installs the new one and starts it, and its page opens in your browser. Your settings and
-                friends stay. If the new version does not start, the one you have comes back.</p>
+                users stay. If the new version does not start, the one you have comes back.</p>
                 """);
         var percent = Percent(job);
         return HostMode.Page($"""
@@ -439,7 +439,7 @@ public static class HostUpdates
         var update = state is { Zip: not null, Size: { } size }
             ? UpdateForm(token, state, 0, "Update now") + "</div></form>" +
               $"<p class=tip>Update now downloads Amberline {latest} ({HostUninstall.Size(size)}) from GitHub, checks it and installs it. " +
-              "Your settings and friends stay.</p><h3>Or update by hand</h3>"
+              "Your settings and users stay.</p><h3>Or update by hand</h3>"
             : "";
         // Version's operators order null first, so a development build (no version) is never "older" than a release.
         var news = latest is not null && running.Version is not null && latest > running.Version ? $"""
@@ -448,8 +448,8 @@ public static class HostUpdates
             {update}
             <p><a href="{WebUtility.HtmlEncode(state.Page ?? ReleasesPage)}" target=_blank rel="noopener noreferrer">Open the download page</a></p>
             <ol><li>Download the zip and open it.</li>
-            <li>Double-click Start Amberline. Your settings and friends stay.</li></ol>
-            <p>Your friends' games update by themselves.</p>
+            <li>Double-click Start Amberline. Your settings and users stay.</li></ol>
+            <p>Your players' games update by themselves.</p>
             """
             : latest is not null && running.Version is not null && state.LastCheckUtc is { } last
                 ? $"<p>This is the newest Amberline (checked on {last.UtcDateTime.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}).</p>"
@@ -488,7 +488,7 @@ public static class HostUpdates
                     var state = await CheckAsync(data, client, DateTimeOffset.UtcNow, cancel: stop);
                     if (state.Latest != before && running is not null && HostVersion.Parse(state.Latest) is { } latest && latest > running)
                         screen.WriteLine($"Amberline {state.Latest} is out. To update, choose Updates on Amberline's page, then Update now. " +
-                            "Your settings and friends stay.");
+                            "Your settings and users stay.");
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Console.Error.WriteLine($"Update check: {ex.Message}"); }
                 await Task.Delay(TimeSpan.FromHours(1), stop);

@@ -76,7 +76,7 @@ public static class HostSupportChecks
         TestAssert.Equal("friend1 and friend3 logged in, but their games could not connect to Amberline.", home2.Message, "two friends");
         TestAssert.True(home2.WhatToDo.Contains("home network", StringComparison.Ordinal) && !home2.WhatToDo.Contains("router", StringComparison.Ordinal),
             "the home network only needs no router: " + home2.WhatToDo);
-        TestAssert.Equal("a, b and 3 more friends logged in, but their games could not connect to Amberline.",
+        TestAssert.Equal("a, b and 3 more users logged in, but their games could not connect to Amberline.",
             support.SeatsCard(["a", "b", "c", "d", "e"], homeOnly: false).Message, "many friends");
 
         // The page: the element the script waits for, the cards' buttons and the support log's link.
@@ -161,10 +161,12 @@ public static class HostSupportChecks
             "token 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "the address planted-home.example.net:8391 and 203.0.113.77",
             "kept: game 1.0.0.126, release 0.0.0.51, loopback 127.0.0.1 and ::1 at 20:14:33",
+            // Batch 748: a login the host deleted is no login now, but the log still names it.
+            "planted_gone left; Planted Gone too",
         ]);
         var games = new List<RemoteGame>();
         var support = new HostSupport(home.Loop, settings, List(games), summoner => summoner == 104 ? ("planted_friend", true) : null,
-            () => [("planted_friend", "Planted Summoner"), ("host_planted", "Host Planted")])
+            () => [("planted_friend", "Planted Summoner"), ("host_planted", "Host Planted")], () => [("planted_gone", "Planted Gone")])
         {
             Every = TimeSpan.FromHours(1), FreeSpace = _ => 50_000_000_000, MachineName = "PLANTED-PC-77", UserName = "PlantedUser9",
         };
@@ -196,18 +198,18 @@ public static class HostSupportChecks
             "saved as amberline-support.txt: " + file.Content.Headers.ContentDisposition);
         TestAssert.Equal(Regex.Replace(report, "Made: .*\n", ""), Regex.Replace(download, "Made: .*\n", ""), "the download is the box's report");
 
-        foreach (var planted in new[] { "planted_friend", "Planted Summoner", "host_planted", "Host Planted", "PlantedUser9", "PLANTED-PC-77", "planted-home",
+        foreach (var planted in new[] { "planted_friend", "Planted Summoner", "host_planted", "Host Planted", "planted_gone", "Planted Gone", "PlantedUser9", "PLANTED-PC-77", "planted-home",
                      "198.51.100", "192.168.1.57", "100.64.3.4", "fe80::", "2001:db8", "planted.person", "Planted-Secret", "Another-Planted", "PLANTEDLAUNCHCODE",
                      "0123456789abcdef", "203.0.113" })
             TestAssert.False(report.Contains(planted, StringComparison.OrdinalIgnoreCase), $"the report hides {planted}: {Safe(report)}");
         foreach (var kept in new[]
                  {
-                     "Amberline support log", "Amberline: (development build)", "Logins: 2. Online now: 0. Games running: 0 of 4.",
+                     "Amberline support log", "Amberline: (development build)", "Logins: 2. Online now: 0. Games running: 0 of 4.", "<login> left; <login> too",
                      "(A-NET-10) <login> logged in, but their game could not connect", "(A-RUN-01) A game stopped unexpectedly", @"C:\Users\<Windows user>\",
                      "on <PC name>", "<login> joined; <login> too", "<e-mail>", "password=<hidden> and Password: <hidden>", "/open?c=<secret> now", "token <secret>",
                      "<public address>:8391 and <internet address>", "from <internet address>:50211", "home <home address>, a shared one <home address> and <home address>%12",
                      "friend <internet address> and a mapped one ::ffff:<internet address>", "game 1.0.0.126, release 0.0.0.51, loopback 127.0.0.1 and ::1 at 20:14:33",
-                     "The log's last 10 lines (amberline-2026-11-03.log)", "Network checks", "Game folder", "AIR client folder",
+                     "The log's last 11 lines (amberline-2026-11-03.log)", "Network checks", "Game folder", "AIR client folder",
                      $"Data folder: 50.0 GB free on {Drive(home)}\n",
                      "Games that stopped unexpectedly since the start",
                  })

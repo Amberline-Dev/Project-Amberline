@@ -132,6 +132,21 @@ public sealed class PlatformSocialStore : IDisposable
         }
     }
 
+    /// <summary>
+    /// NOT RETAIL: the host deleted the login (batch 748, the Users page): every contact row it holds or is named in, and every block either
+    /// way, leave the store; the file is written only when one left.
+    /// </summary>
+    public void RemoveAccount(long accountId)
+    {
+        lock (_gate)
+        {
+            var contacts = _state.Contacts.Where(x => x.OwnerId != accountId && x.ContactId != accountId).ToArray();
+            var blocks = _state.Blocks.Where(x => x.OwnerId != accountId && x.BlockedId != accountId).ToArray();
+            if (contacts.Length != _state.Contacts.Length || blocks.Length != _state.Blocks.Length)
+                Save(_state with { Contacts = contacts, Blocks = blocks });
+        }
+    }
+
     private void Save(State state)
     {
         Validate(state);

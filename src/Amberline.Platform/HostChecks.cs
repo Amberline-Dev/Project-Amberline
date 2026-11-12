@@ -79,7 +79,7 @@ public static class HostChecks
     /// <summary>A-FILES-06 for a part of Amberline that is gone, named by its place in the app folder (the derived match server).</summary>
     public static string MissingPart(string app, string file) =>
         $"Windows Security may have removed {Path.GetFileName(file)}, a part of Amberline (in {Path.GetRelativePath(app, Path.GetDirectoryName(file)!)}). " +
-        "Restore it in Windows Security (Protection history), or download Amberline again and start it; your settings and friends stay. (A-FILES-06)";
+        "Restore it in Windows Security (Protection history), or download Amberline again and start it; your settings and users stay. (A-FILES-06)";
 
     /// <summary>
     /// A-FILES-06: compares the app folder with its <c>BUILD.json</c> (each file's size and SHA-256) and names the first file that is
@@ -118,10 +118,10 @@ public static class HostChecks
         }
         if (missing.Count > 0)
             return new("A-FILES-06", $"Windows Security may have removed {Path.GetFileName(missing[0])}, a part of Amberline{More(missing.Count + changed.Count)}.",
-                "Restore it in Windows Security (Protection history), or download Amberline again; your settings and friends stay. Then press Restart.", null);
+                "Restore it in Windows Security (Protection history), or download Amberline again; your settings and users stay. Then press Restart.", null);
         return changed.Count == 0 ? null
             : new("A-FILES-06", $"A part of Amberline was changed: {Path.GetFileName(changed[0])}{More(changed.Count)}.",
-                "Download Amberline again and start it. Your settings and friends stay.", null);
+                "Download Amberline again and start it. Your settings and users stay.", null);
     }
 
     private static string More(int count) => count switch { 1 => "", 2 => " (and 1 more part)", _ => $" (and {count - 1} more parts)" };
@@ -130,9 +130,9 @@ public static class HostChecks
     public static DashboardCard? CertificateCard(DateTimeOffset notAfter, DateTimeOffset now) =>
         notAfter - now > CertificateWarning ? null
         : new("A-CERT-01", notAfter <= now
-                ? "Your friends' Play files stopped working: Amberline's certificate ran out."
-                : $"Your friends' Play files stop working on {notAfter.ToLocalTime().ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}. Make new ones.",
-            "Choose Make new Play files, then send every friend the new one.",
+                ? "Your users' Play files stopped working: Amberline's certificate ran out."
+                : $"Your users' Play files stop working on {notAfter.ToLocalTime().ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}. Make new ones.",
+            "Choose Make new Play files, then send every user the new one.",
             "certificate");
 
     /// <summary>
@@ -141,7 +141,7 @@ public static class HostChecks
     /// </summary>
     public static DashboardCard? VpnCard(IPAddress? computer, IPAddress? outbound) =>
         computer is null || outbound is null || computer.Equals(outbound) ? null
-        : new("A-NET-08", "A VPN is on, so friends may not reach you.",
+        : new("A-NET-08", "A VPN is on, so players may not reach you.",
             "Switch the VPN off while you host, then press Test again.", "network");
 
     /// <summary>A-NET-09, the address-change banner of design section 5.6.</summary>
@@ -150,8 +150,8 @@ public static class HostChecks
         var local = at.ToLocalTime();
         var when = local.Date == now.ToLocalTime().Date ? local.ToString("'at' HH:mm", CultureInfo.InvariantCulture)
             : local.ToString("'on' d MMMM 'at' HH:mm", CultureInfo.InvariantCulture);
-        return new("A-NET-09", $"Your address changed {when}. Friends need the new Play file to reach you.",
-            "Send every friend the new Play file, then choose Hide.", "address");
+        return new("A-NET-09", $"Your address changed {when}. Users need the new Play file to reach you.",
+            "Send every user the new Play file, then choose Hide.", "address");
     }
 
     /// <summary>
@@ -230,7 +230,7 @@ public sealed class HostAttention : IAsyncDisposable
             ? ("?from=settings", HostSettingsPage.PagePath) : ("", HostDashboard.PagePath);
         app.MapGet(CertificatePath, (HttpContext context, IAntiforgery antiforgery) => HostMode.Page($"""
             <h1>Make new Play files?</h1>
-            <p>Amberline restarts, and every friend's old Play file stops working at once. Send them the new one.</p>
+            <p>Amberline restarts, and every user's old Play file stops working at once. Send them the new one.</p>
             <form method=post action="{CertificatePath}{From(context).Query}"{HostPages.Wait("Making new Play files. Amberline restarts in a few seconds.")}>{Program.RegistrationToken(context, antiforgery)}<div class=buttons><button type=submit>Make new Play files</button>
             <a class="button secondary" href={From(context).Back}>Cancel</a></div></form>
             """));
@@ -286,7 +286,7 @@ public sealed class HostAttention : IAsyncDisposable
             }
         }
         if (WanAddress.Classify(answer) != WanAddressClass.Public || !steps.Follow(answer!.ToString())) return;
-        Console.WriteLine("The address the router reports changed; friends need the new Play file (A-NET-09).");
+        Console.WriteLine("The address the router reports changed; users need the new Play file (A-NET-09).");
         SetChanged(DateTimeOffset.Now);
         await _retest(stop);
     }

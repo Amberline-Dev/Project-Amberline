@@ -176,7 +176,7 @@ public static class HostUpnpChecks
         TestAssert.Equal(new UpnpProblem("A-NET-06", "Your router is behind another router (often your provider's box).",
             "Put the provider's box in bridge mode, or open the same ports on both routers, or set this router as the box's \"exposed host\"."),
             WanAddress.Problem(WanAddressClass.Private));
-        TestAssert.Equal(new UpnpProblem("A-NET-07", "Your internet provider shares one address among many homes, so friends cannot reach this PC.",
+        TestAssert.Equal(new UpnpProblem("A-NET-07", "Your internet provider shares one address among many homes, so players cannot reach this PC.",
             "Ask your provider for a public IPv4 address (some do it on request), or host on a rented server."),
             WanAddress.Problem(WanAddressClass.Shared));
         TestAssert.Equal("A-NET-03", WanAddress.Problem(WanAddressClass.None)!.Code);

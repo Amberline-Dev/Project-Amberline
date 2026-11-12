@@ -96,7 +96,8 @@ public static class PlatformManagement
     private static string RenderReports(PlatformAccounts accounts, string field, bool home = false)
     {
         static string Cell(string text) => $"<td>{WebUtility.HtmlEncode(text)}</td>";
-        string Name(PlatformAccount? account, long summonerId) => account?.Summoner ?? $"summoner {summonerId}";
+        // NOT RETAIL (batch 748; retail had no host-side delete): a login the host deleted keeps the name it had (DeletedAccount).
+        string Name(string? summoner, long summonerId) => summoner ?? $"summoner {summonerId}";
         var reports = accounts.ListReports();
         var open = reports.Count(report => report.Outcome is null);
         var intro = $"<h2{(home ? " id=reports-heading" : "")}>Player reports ({open} open)</h2><p>" +
@@ -107,9 +108,11 @@ public static class PlatformManagement
             (home ? $"<span class=vh> the report about {WebUtility.HtmlEncode(about)}</span>" : "") + "</button>";
         var rows = reports.Reverse().Take(ShownReports).Select(report =>
         {
-            var reported = Name(accounts.FindSummoner(report.ReportedSummonerId), report.ReportedSummonerId);
+            var reported = Name(accounts.FindSummoner(report.ReportedSummonerId)?.Summoner ??
+                accounts.FindDeletedSummoner(report.ReportedSummonerId)?.Summoner, report.ReportedSummonerId);
             return "<tr>" + Cell(report.At.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture)) +
-                Cell(Name(accounts.Find(report.ReporterAccountId), report.ReporterSummonerId)) + Cell(reported) +
+                Cell(Name(accounts.Find(report.ReporterAccountId)?.Summoner ?? accounts.FindDeleted(report.ReporterAccountId)?.Summoner,
+                    report.ReporterSummonerId)) + Cell(reported) +
                 Cell(report.Offense) + Cell(report.GameId.ToString(CultureInfo.InvariantCulture)) +
                 $"<td>{WebUtility.HtmlEncode(report.Comment).Replace("\n", "<br>", StringComparison.Ordinal)}</td>" +
                 (report.Outcome is { } outcome ? Cell(outcome)
@@ -182,8 +185,8 @@ public static class PlatformManagement
     /// <c>BroadcastNotification</c> (see <see cref="AirDtos.BroadcastNotification"/>).
     /// </param>
     /// <param name="invite">
-    /// The home host's Invite a friend page (<see cref="HostInvite"/>): the page becomes the dashboard's Advanced, and its friends
-    /// part points there instead of the friend launcher and local registration. Null (the operator's start) changes nothing.
+    /// The home host's Users page (<see cref="HostInvite"/>, batch 748): the page becomes the dashboard's Advanced, and its friends
+    /// part (the launcher download and local registration) is left out: Users takes its place. Null (the operator's start) changes nothing.
     /// </param>
     public static void Map(WebApplication app, PlatformAccounts accounts, int localPort, int remotePort,
         Action<long, object>? notify = null, string? publicRegistrationUrl = null, Func<OnlineRow[]>? online = null,
@@ -250,14 +253,14 @@ public static class PlatformManagement
                     $"{(severity == (Typed("notice", "severity") ?? "WARN") ? " selected" : "")}>{Kind(severity)}</option>")) + "</select>" +
                 Send("Send to players");
             var logout = remoteAccess is null ? "" :
-                "<h2>Make a friend log in again</h2><p>They log in again the next time their PC connects.</p>" +
+                "<h2>Make a user log in again</h2><p>They log in again the next time their PC connects.</p>" +
                 $"<form method=post action=/manage/remote-revoke novalidate>{field}{Logins("logout", "logout-login")}" +
                 Send("Make them log in again");
             var codes = accounts.ListRewardCodes().OrderByDescending(code => code.CreatedAt).ToArray();
             string CodeRow(PlatformRewardCode code)
             {
                 var made = code.CreatedAt.ToLocalTime().ToString("d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture);
-                var usedBy = code.RedeemedBy is long id ? accounts.Find(id)?.Summoner ?? "a removed login" : "";
+                var usedBy = code.RedeemedBy is long id ? accounts.Find(id)?.Summoner ?? accounts.FindDeleted(id)?.Summoner ?? "a removed login" : "";
                 var cancel = !code.Revoked && code.RedeemedAt is null
                     ? $"<form method=post action=/manage/reward-code/revoke>{field}<input type=hidden name=id value=\"{code.Id:D}\">" +
                       $"<button>Cancel code<span class=vh> made {made}</span></button></form>" : "";

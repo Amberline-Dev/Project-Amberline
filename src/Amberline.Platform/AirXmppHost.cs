@@ -80,6 +80,19 @@ public sealed class AirXmppHost : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// NOT RETAIL: the host deleted the login (batch 748, the Users page): its chat streams close at once (each tells its rooms and contacts
+    /// that it left), then its contact rows and blocks, both ways, leave the social store. An online contact's buddy list keeps the row until
+    /// that player logs in again (no roster push is sent).
+    /// </summary>
+    public void Forget(long accountId)
+    {
+        Connection[] open;
+        lock (_gate) open = [.. _connections.Where(connection => connection.AccountId == accountId)];
+        foreach (var connection in open) connection.Abort();
+        _store.RemoveAccount(accountId);
+    }
+
     public async Task RefreshGamePresenceAsync(long accountId)
     {
         Connection? source;
@@ -195,11 +208,15 @@ public sealed class AirXmppHost : IAsyncDisposable
                 if (room.Members.Count == 0) _rooms.Remove(room.Key);
             }
         }
-        foreach (var departedRoom in departedRooms)
-            foreach (var recipient in departedRoom.Recipients)
-                await recipient.SendAsync($"<presence from='{XmlEscape(RoomJid(departedRoom.Key, departedRoom.Nickname))}' to='{XmlEscape(recipient.FullJid)}' type='unavailable'><x xmlns='{MucUserNamespace}'><item affiliation='none' role='none'/></x></presence>").ConfigureAwait(false);
-        if (accountId is { } offlineId && wasOnline) await BroadcastPresenceAsync(offlineId, connection, true).ConfigureAwait(false);
-        connection.Dispose();
+        try
+        {
+            foreach (var departedRoom in departedRooms)
+                foreach (var recipient in departedRoom.Recipients)
+                    await recipient.SendAsync($"<presence from='{XmlEscape(RoomJid(departedRoom.Key, departedRoom.Nickname))}' to='{XmlEscape(recipient.FullJid)}' type='unavailable'><x xmlns='{MucUserNamespace}'><item affiliation='none' role='none'/></x></presence>").ConfigureAwait(false);
+            if (accountId is { } offlineId && wasOnline) await BroadcastPresenceAsync(offlineId, connection, true).ConfigureAwait(false);
+        }
+        // NOT RETAIL (batch 748; retail had no host-side delete): whatever the goodbyes meet, the connection is let go.
+        finally { connection.Dispose(); }
     }
 
     private void RegisterReady(Connection connection)
@@ -866,11 +883,11 @@ public sealed class AirXmppHost : IAsyncDisposable
         try { return _accounts.Get(id); } catch (ArgumentException) { return null; }
     }
 
-    private string JidFor(long accountId, string? resource = null)
-    {
-        var account = TryGetAccount(accountId) ?? throw new ArgumentException("Account does not exist.");
-        return "sum" + account.SummonerId + "@" + ChatDomain + (string.IsNullOrEmpty(resource) ? "" : "/" + resource);
-    }
+    // NOT RETAIL (batch 748; retail had no host-side delete): a login the host deleted keeps its address (its summoner id, by the store's one rule) while a stream or a stored row still
+    // names it, so writing to it or about it never fails, and never takes another member's stream down.
+    private string JidFor(long accountId, string? resource = null) =>
+        "sum" + (_accounts.Find(accountId)?.SummonerId ?? PlatformAccounts.SummonerIdFor(accountId)) + "@" + ChatDomain +
+        (string.IsNullOrEmpty(resource) ? "" : "/" + resource);
 
     private static string RoomJid(string roomKey, string nickname) => roomKey + "/" + nickname;
     private static string XmlEscape(string value) => SecurityElement.Escape(value) ?? "";

@@ -204,8 +204,8 @@ public static class HostFirewall
     public static FirewallProblem? Problem(FirewallState state) => state switch
     {
         FirewallState.Allowed => null,
-        FirewallState.SomeNetworks => new("A-NET-02", "Windows lets friends in on some network types only.",
-            "Choose Allow through Windows Firewall again: friends need every network type."),
+        FirewallState.SomeNetworks => new("A-NET-02", "Windows lets players in on some network types only.",
+            "Choose Allow through Windows Firewall again: players need every network type."),
         FirewallState.OtherFolder => new("A-NET-02", "Windows Firewall has Amberline's rule for another folder.",
             "Choose Allow through Windows Firewall again to point the rule at this folder."),
         FirewallState.OtherPorts => new("A-NET-02", "Windows Firewall's rule must be updated for the new game ports.",

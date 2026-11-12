@@ -41,6 +41,8 @@ public sealed class DominionScore
     private readonly Dictionary<Team, int> _sent = new();
     // Batch 505: each team's victory-point stage already announced (0 to 3, see AnnounceThreshold).
     private readonly Dictionary<Team, int> _stage = new();
+    // Batch 747: the music phase already sent, as a stage of the lower nexus (0 to 3, see PlayMusicPhase).
+    private int _musicStage;
 
     // Seconds of game time since the last drain application (see DrainIntervalSeconds); the epsilon absorbs the sum of the steps' float error.
     private double _drainClock;
@@ -141,7 +143,48 @@ public sealed class DominionScore
             _sink.SetGameScore(team, whole);
             AnnounceThreshold(team, whole);
         }
+        PlayMusicPhase();
     }
+
+    /// <summary>
+    /// Batch 747: the FMOD music cues of the Crystal Scar's phases 2, 3 and 4: Global_Phase2 15, Global_Phase3 16, Global_Phase4 17 in the
+    /// composition's cue list of DATA/Sounds/FMOD/LoL_Audio.fev (Global_Phase5 is 18). Its scene maps each to a concurrent theme (26 to 28)
+    /// whose cue the Map_CrystalScar theme's conditional links test to go on to that phase's loop. Phase 1 is Map_CrystalScar itself (cue 13,
+    /// the map's aud_FMODMusicCueID), which the client starts on StartGame (0x5F): Global_Phase1 (14) has no theme in the scene.
+    /// </summary>
+    public static readonly uint[] MusicPhaseCues = [15, 16, 17];
+
+    /// <summary>
+    /// Batch 747 (Reconstruction: the owner's memory, "dominion changes the background music when one Nexus reaches 250HP", and the shipped
+    /// cues): as the lower nexus passes 375, 250 and 125 (<see cref="VictoryPointThresholds"/>) every client gets one 0xE5 Begin of
+    /// <see cref="MusicPhaseCues"/>, the deepest phase when several pass in one step. No shipped script or tree prompts a music cue, and 0xE5
+    /// is the stock client's only way to begin one (its handler is the one call of BeginMusicCue through the audio singleton). The phase
+    /// only moves forward and no cue is ended: at the end of the match the client's own StopMusic resets its music system, then it plays its
+    /// victory or defeat cue itself (the 0xCE path, so a fallen nexus sends nothing here). The header names a hero, as the client routes 0xE5
+    /// to one; every client holds every hero, and the handler ignores which.
+    /// </summary>
+    private void PlayMusicPhase()
+    {
+        var lower = _sent.Values.Min();
+        var stage = VictoryPointThresholds.Count(threshold => lower <= threshold);
+        if (lower <= 0 || stage <= _musicStage) return;
+        _musicStage = stage;
+        if (_context.World.Heroes().FirstOrDefault() is not { } hero)
+        {
+            _context.Note("score:music-hero", "no champion to address 0xE5 to: the music phase is not sent");
+            return;
+        }
+        if (_context.Capture?.Send is not { } send)
+        {
+            _context.Note("score:music-send", "this context has no packet sender: the music phase is not sent");
+            return;
+        }
+        send(MusicPhaseCue(hero.NetId)!);
+    }
+
+    /// <summary>Batch 747: the current music phase's 0xE5 addressed to a hero, or null in phase 1 (the client's own theme).</summary>
+    internal PlaintextPacket? MusicPhaseCue(uint heroNetId) => _musicStage == 0 ? null
+        : CombatPackets.MusicCueCommand(heroNetId, MusicCueAction.Begin, MusicPhaseCues[_musicStage - 1]);
 
     /// <summary>
     /// Batch 505: the nexus health of the victory-point announcements 1 to 3: 75 %, 50 % and 25 % of 500 (fontconfig_en_US.txt:709-720,

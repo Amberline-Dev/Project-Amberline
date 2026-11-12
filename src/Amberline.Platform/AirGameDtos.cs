@@ -22,6 +22,8 @@ public static class AirGameDtos
     public const int NormalQueueId = 2;
     /// <summary>The champions the server plays: the playable ones of <see cref="ChampionCatalog"/>, in roster order.</summary>
     public static IReadOnlyDictionary<int, string> ChampionNames => PlayableNames.Value;
+    /// <summary>DIAGNOSTICS: whether <see cref="ChampionNames"/> is loaded already; the demo data reads them only then, so it never loads the AIR client.</summary>
+    public static bool ChampionNamesLoaded => PlayableNames.IsValueCreated;
     // Batch 657: loaded on first use, never in the type's initializer, whose failure the runtime keeps for the process's life (every
     // login answered 500); a failed load is tried again.
     private static readonly Lazy<IReadOnlyDictionary<int, string>> PlayableNames = new(() =>

@@ -33,7 +33,7 @@ public static class AirManagementChecks
     public static void HomeAdvancedUpdatesItsTableInPlaceAndTheOperatorPageStays() => AdvancedRefreshAsync().GetAwaiter().GetResult();
 
     /// <summary>
-    /// Batch 646: the home host's Advanced (<c>/manage</c> with Invite a friend) never reloads itself, so nothing typed in its forms is
+    /// Batch 646: the home host's Advanced (<c>/manage</c> with the Users page) never reloads itself, so nothing typed in its forms is
     /// lost: <c>page.js</c> refills the Online now table from <c>/manage/online.json</c> while it is live and says the count in a live
     /// line. The operator's page (no <c>--home</c>) keeps its 5-second reload, its words and no script, and has no such route.
     /// </summary>
@@ -53,7 +53,7 @@ public static class AirManagementChecks
                 web.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, port));
                 web.Services.AddAntiforgery();
                 await using var app = web.Build();
-                PlatformManagement.Map(app, accounts, port, FreePort(), online: () => rows, invite: home ? HostInvite.InvitePath : null);
+                PlatformManagement.Map(app, accounts, port, FreePort(), online: () => rows, invite: home ? HostInvite.UsersPath : null);
                 await app.StartAsync();
                 try
                 {

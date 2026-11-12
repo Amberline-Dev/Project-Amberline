@@ -59,7 +59,7 @@ public static class HostSelfRegistrationChecks
             TestAssert.True(settings.Contains($"href=\"{HostPages.StyleHref}\"", StringComparison.Ordinal), "the host pages keep the host stylesheet");
             TestAssert.True(settings.Contains("Let people register themselves", StringComparison.Ordinal) &&
                 !settings.Contains("name=on value=on checked", StringComparison.Ordinal) && !settings.Contains(link, StringComparison.Ordinal), settings);
-            TestAssert.False((await browser.GetStringAsync(HostInvite.InvitePath)).Contains(link, StringComparison.Ordinal), "Invite has no link while it is off");
+            TestAssert.False((await browser.GetStringAsync(HostInvite.AddPath)).Contains(link, StringComparison.Ordinal), "Invite has no link while it is off");
 
             // On: saved in platform.json; Settings and Invite show the link, its Copy and the line on the browser's warning.
             await PostAsync(browser, Switch, Token(settings), HttpStatusCode.Redirect, ("on", "on"));
@@ -67,8 +67,12 @@ public static class HostSelfRegistrationChecks
             TestAssert.True(settings.Contains("<p class=notice role=status>Saved.", StringComparison.Ordinal) &&
                 settings.Contains("name=on value=on checked", StringComparison.Ordinal) && settings.Contains($">{link}</pre>", StringComparison.Ordinal) &&
                 settings.Contains("data-copy=register-link>Copy</button>", StringComparison.Ordinal) && settings.Contains(Warning, StringComparison.Ordinal), settings);
-            var invite = await browser.GetStringAsync(HostInvite.InvitePath);
+            var invite = await browser.GetStringAsync(HostInvite.AddPath);
             TestAssert.True(invite.Contains($">{link}</pre>", StringComparison.Ordinal) && invite.Contains(Warning, StringComparison.Ordinal), invite);
+            // Batch 748: the Users page's Copy sign-up link copies the same link (the script shows the button).
+            var users = await browser.GetStringAsync(HostInvite.UsersPath);
+            TestAssert.True(users.Contains("<button type=button class=secondary data-copy=signup-link data-needs-script hidden>Copy sign-up link</button>" +
+                $"<span id=signup-link class=vh>{link}</span>", StringComparison.Ordinal), "the Users page offers the link: " + users);
             using (var file = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings)))
                 TestAssert.True(file.RootElement.GetProperty("selfRegistration").GetBoolean(), "the switch is saved in platform.json");
 
@@ -125,7 +129,9 @@ public static class HostSelfRegistrationChecks
             Public(ready, "POST /register (ready)", HostPages.Policy);
             using (var login = JsonDocument.Parse(await LoginAsync(browser, "self1", Password, HttpStatusCode.OK)))
                 TestAssert.Equal("Self1", login.RootElement.GetProperty("summoner").GetString(), "an empty summoner name is the username as typed");
-            TestAssert.True((await browser.GetStringAsync(HostInvite.FriendsPath)).Contains("<b>self1</b>", StringComparison.Ordinal), "the new login is in Friends");
+            // Batch 748: Users lists it with the Signed up mark, and the feed names the sign-up.
+            TestAssert.True((await browser.GetStringAsync(HostInvite.UsersPath)).Contains("<b>self1</b> <span class=mark>Signed up</span>", StringComparison.Ordinal),
+                "the new login is in Users, marked as signed up");
 
             // The Play file is Invite's own for this server.
             byte[] play;
@@ -166,7 +172,7 @@ public static class HostSelfRegistrationChecks
             // Off again: the friends' port forgets the sign-up at once, without a restart.
             await PostAsync(browser, Switch, Token(await browser.GetStringAsync(HostSettingsPage.PagePath)), HttpStatusCode.Redirect);
             await NotFoundAsync(person, "with the switch off again");
-            TestAssert.False((await browser.GetStringAsync(HostInvite.InvitePath)).Contains(link, StringComparison.Ordinal), "Invite drops the link");
+            TestAssert.False((await browser.GetStringAsync(HostInvite.AddPath)).Contains(link, StringComparison.Ordinal), "Invite drops the link");
         }
         finally
         {
@@ -245,7 +251,7 @@ public static class HostSelfRegistrationChecks
                 TooMany(await SignUpAsync(fourth), "a new address once the hour's 30 are made");
 
             // The host's own Invite is not held to the friends' port's caps.
-            await PostAsync(browser, HostInvite.InvitePath, Token(await browser.GetStringAsync(HostInvite.InvitePath)), HttpStatusCode.OK,
+            await PostAsync(browser, HostInvite.AddPath, Token(await browser.GetStringAsync(HostInvite.AddPath)), HttpStatusCode.OK,
                 ("username", "friend1"), ("mode", "maxed"));
         }
         finally

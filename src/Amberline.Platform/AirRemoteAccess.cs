@@ -52,23 +52,31 @@ public sealed class AirRemoteAccess
         }
     }
 
+    /// <summary>
+    /// NOT RETAIL (batch 748): whether a token's account may still sign in. The token alone is not trusted: a revoke whose file write failed, or
+    /// a crash between the account's change and that write, would bring the token back at the next start, so the Platform passes the account
+    /// store's rule here (the login exists and is not disabled). Every account by default.
+    /// </summary>
+    public Func<long, bool> Allowed { get; init; } = _ => true;
+
     /// <summary>True when the token is a live token of some account. Digests are compared in constant time.</summary>
     public bool Authorize(string token) => AccountFor(token) is not null;
 
-    /// <summary>The account whose live token this is, or null. Digests are compared in constant time.</summary>
+    /// <summary>The account whose live token this is and which may still sign in (<see cref="Allowed"/>), or null. Digests are compared in constant time.</summary>
     public long? AccountFor(string token)
     {
         if (token.Length != 64 || token.Any(c => !char.IsAsciiHexDigit(c))) return null;
         var digest = Encoding.ASCII.GetBytes(HostFiles.Hash(token));
+        long? account = null;
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
-            long? account = null;
             foreach (var entry in _entries)
                 if (CryptographicOperations.FixedTimeEquals(digest, Encoding.ASCII.GetBytes(entry.TokenHash)) && entry.Expires > now)
                     account = entry.AccountId;
-            return account;
         }
+        // Asked outside the lock: the rule reads the account store.
+        return account is { } id && Allowed(id) ? id : null;
     }
 
     /// <summary>Ends the account's token. Tunnels already open stay up until their companion disconnects.</summary>

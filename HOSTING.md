@@ -1,6 +1,6 @@
 # Hosting an Amberline server
 
-This guide walks you through every step: installing Amberline, the setup page in your browser, the dashboard, inviting friends
+This guide walks you through every step: installing Amberline, the setup page in your browser, the dashboard, adding users
 and keeping Amberline up to date. Words in **bold** are what you see on the screen. If something goes wrong, the error has a
 short code such as `(A-NET-02)`: look it up in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -12,8 +12,8 @@ short code such as `(A-NET-02)`: look it up in [TROUBLESHOOTING.md](TROUBLESHOOT
 - [The Amberline window](#the-amberline-window)
 - [The setup page](#the-setup-page)
 - [The dashboard](#the-dashboard)
-- [Invite a friend](#invite-a-friend)
-- [Friends](#friends)
+- [Add a user](#add-a-user)
+- [Users](#users)
 - [Advanced](#advanced)
 - [Settings and Uninstall](#settings-and-uninstall)
 - [Updates](#updates)
@@ -31,10 +31,10 @@ short code such as `(A-NET-02)`: look it up in [TROUBLESHOOTING.md](TROUBLESHOOT
 - The AIR client that goes with it. Its folder holds `assets`.
 - Enough free disk space for Amberline's own copy of the game and the AIR client, and a few hundred MB for the program.
   `START-HERE.cmd` tells you how much before it copies anything.
-- For friends outside your home: a router that lets them in. Amberline asks your router for this itself (with UPnP, a router
+- For players outside your home: a router that lets them in. Amberline asks your router for this itself (with UPnP, a router
   feature). If your router does not allow it, the dashboard shows you how to do it by hand.
 
-Each friend needs their own copy of the same game and AIR client, unless you share yours with them ([Game files](#game-files)).
+Each player needs their own copy of the same game and AIR client, unless you share yours with them ([Game files](#game-files)).
 
 ## Two ways to install
 
@@ -81,7 +81,7 @@ also works (**Looking inside that folder**). It asks for the game folder first, 
   refuses a whole drive, Program Files, a OneDrive folder, a folder inside the download or inside your game or AIR client folder,
   and a folder that holds other files.
 - If Amberline is installed already, the guide skips steps 1 and 2 (**Steps 1 and 2 of 6: not needed.**), names your version
-  and this download's and asks **Update this Amberline now?** Updating also repairs it; settings, logins, friends and the
+  and this download's and asks **Update this Amberline now?** Updating also repairs it; settings, logins, users and the
   install's game and AIR client stay. `N` changes nothing. `R` builds a package for a rented server instead (step 1 answered
   **On a rented server**; the release zip says that this package is built from the code download). To install elsewhere,
   uninstall first (`Uninstall Amberline.cmd` in its folder). If yours is a release (or newer), the guide asks **Build a package
@@ -141,7 +141,7 @@ Everything Amberline keeps is in the install folder (`C:\Amberline` unless you c
 |---|---|
 | `app` | the Amberline program |
 | `app.previous` | the version you had before the last update; it comes back by itself if an update does not start |
-| `data` | your settings, your friends' logins, the server's certificate and the logs |
+| `data` | your settings, your users' logins, the server's certificate and the logs |
 | `game` | your copy of the game, when Amberline copied it in |
 | `air` | your copy of the AIR client, when Amberline copied it in |
 | `READ ME.txt` | what the folder is, and how to remove Amberline |
@@ -156,7 +156,7 @@ An Amberline installed by an earlier version, in your user folder (`%LOCALAPPDAT
 
 While Amberline runs, its window says **Amberline is running - close this window to stop.**
 
-- You can minimise the window. **Closing it stops Amberline and ends any game in progress.** Keep it open while your friends play.
+- You can minimise the window. **Closing it stops Amberline and ends any game in progress.** Keep it open while your players play.
 - Start Amberline from the **Amberline** icon on your desktop. If it is running already, the icon just opens its page again.
 - If your browser did not open, start Amberline again from the icon, or copy the link the window shows into your browser within
   2 minutes.
@@ -175,7 +175,7 @@ A button that takes a while (for example **Play**, or the copy of your game file
 
 ### Step 1 of 4: Name your server
 
-**Welcome to Amberline.** Type a **Server name**. Your friends see it on the desktop icon that starts their game. Use 1 to 40
+**Welcome to Amberline.** Type a **Server name**. Your users see it on the desktop icon that starts their game. Use 1 to 40
 letters, digits, spaces, dots, `-` or `_`, starting and ending with a letter or digit.
 
 ### Step 2 of 4: Your game folders
@@ -213,7 +213,7 @@ Choose **Continue**. If more than one thing needs changing, the page lists every
 
 ### Step 4 of 4: Your address
 
-Your friends' computers find yours by its address. **How do your friends find this PC?**
+Your players' computers find yours by its address. **How do your players find this PC?**
 
 - **The address your router reports**: shown when your router tells Amberline its internet address. This is the easiest
   choice, and Amberline notices when the address changes.
@@ -233,28 +233,42 @@ the dashboard opens.
 
 ## The dashboard
 
-The menu at the top has **Dashboard**, **Invite a friend**, **Friends**, **Settings**, **Advanced** and **Updates**. The bottom
-of each page shows Amberline's version.
+The menu on the left has **Dashboard**, **Users**, **Settings**, **Advanced** and **Updates**; **Updates** shows a badge when a new
+version is out. On a narrow screen the menu becomes a row of tabs above the page. The bottom of each page shows Amberline's version.
 
-**Status** shows what Amberline is doing, for example **Running since 18:02. Friends can join.**, your address, and when a friend
+**Needs your attention** comes first and lists every problem, with its code and what to do; it is hidden when nothing needs you. Three
+tiles show how many users are **Online**, how many **Games running**, and whether **Sign-ups** are open. **Play** opens your own game
+client (see [below](#play-on-this-pc)). **Add a user** starts a new login. **Copy sign-up link** appears while sign-ups are on, and
+**Copy address** once your address is known.
+
+**Games** has a card for each game that is running: its map and mode, how long it has run, and each team's players with their champions.
+**End game** on a card asks first, then stops that game for everyone in it. Lobbies that are still waiting are listed in one line under
+the cards.
+
+**Activity** lists the newest events first: logins and logouts, sign-ups, games that start and end, and the users you add, disable, enable
+or delete. It is kept while Amberline runs and starts empty after a restart. It never shows chat, passwords or addresses.
+
+**Server details** is an open section below them, which you can fold; it holds **Status**, **Online now**, **Network** and the router guide.
+
+**Status** shows what Amberline is doing, for example **Running since 18:02. Players can join.**, your address, and when a player
 last connected. Until the first status comes in, the page says **Checking…**. **Stop Amberline** and **Restart Amberline** ask
 first, and say how many games are running: stopping or restarting ends them for everyone; **Cancel** keeps Amberline running.
 After a restart the page comes back by itself; after a stop, start Amberline again from its desktop icon.
 
 **Play** opens your own game client (see [below](#play-on-this-pc)).
 
-**Online now** lists who is logged in, and **Games** the games that are running.
+**Online now** lists who is logged in.
 
 **Network** lists five checks, each with its light:
 
 1. **Amberline is listening on this PC**.
-2. **Windows Firewall lets friends in**.
+2. **Windows Firewall lets players in**.
 3. **Found your router; it opened the ports for this PC** (the sign-in and game ports).
 4. **Your router has a public internet address** (no second router, no shared provider address).
-5. **A friend reached Amberline from the internet**. Until then: **Waiting for the first friend to start the Play file.**
+5. **A player reached Amberline from the internet**. Until then: **Waiting for the first player to start the Play file.**
 
-A line that is not green says what is wrong, and the same problem is listed under **Needs your attention**. Friends can join when
-Windows Firewall lets them in, and either your router opened the ports and has a public address, or a friend from the internet
+A line that is not green says what is wrong, and the same problem is listed under **Needs your attention**. Players can join when
+Windows Firewall lets them in, and either your router opened the ports and has a public address, or a player from the internet
 already reached Amberline (for example because you opened the ports by hand).
 
 **Needs your attention** lists every problem, with its code and what to do. A button appears beside a problem only while it
@@ -283,46 +297,54 @@ on your router by hand**:
 
 The dashboard fills in your router's address, this PC's address, your router's model and the game ports where it knows them.
 
-## Invite a friend
+## Add a user
 
-1. Choose **Invite a friend**.
+1. Choose **Add a user** on the dashboard, or on the **Users** page.
 2. Fill in **Their username** (3 to 24 letters a to z, digits or `_`), and if you like a **Summoner name** (empty means the
    username). Choose **Start them at** level 30 or level 1.
 3. Leave **Password** empty and Amberline makes one (four common words and two digits), or type one of at least 10 characters.
 4. Choose **Create their login**. If more than one thing needs changing, the page lists every problem at once, each beside its
-   field. When it works, the page says **friend1 is ready** and shows two things to send:
-   - **Download the Play file for** your server: the file `Play.cmd`. It is the same file for every friend. It sets up their game
+   field. When it works, the page says **user1 is ready** and shows two things to send:
+   - **Download the Play file for** your server: the file `Play.cmd`. It is the same file for every user. It sets up their game
      and puts your server's name on their desktop.
    - A message with their username and password. **Copy** copies it. Send it privately.
 
-The password is shown only now. If your friend loses it, use [Friends](#friends), **New password**.
+The password is shown only now. If the user loses it, use [Users](#users), **New password**.
 
-Until the address step is done, Invite says **Your address first** and links back to the setup page.
+Until the address step is done, Add a user says **Your address first** and links back to the setup page.
 
-While [Sign-ups](#sign-ups) is on, Invite also shows the sign-up link, with **Copy**: a friend can make their own login there instead.
+While [Sign-ups](#sign-ups) is on, Add a user also shows the sign-up link, with **Copy**: a person can make their own login there
+instead.
 
-## Friends
+## Users
 
-**Friends** lists every login you made, whether they are online now, and the date of their last game.
+**Users** lists every login, made by you or by sign-up, with its status: **In game** (with how long the match has been running), **In lobby** (waiting in a queue, a lobby or champion select), **Online**, **Last seen**
+(when it last logged in or out: for example "less than an hour ago" or "3 days ago"), or **Never seen here**. A user who made their own login
+on the sign-up page is marked **Signed up**, and a user whose access you turned off is marked **Disabled**. The title counts the users.
+Your own login is not in the list: it is the one you play with, and [Advanced](#advanced) sets its password.
 
-- **New password**: for a friend who lost theirs. The old password stops working at once, and the friend is logged out. The new
-  one is shown once, in a message to send.
-- **Remove access**: the friend can no longer log in. Their row then says **Access removed** and the date.
-- **Give access again** (on a friend whose access you removed): a new password, shown once in a message to send, as **New
-  password** does. **Back** returns to the list.
+Above the list are **Add a user**, **Get the Play file** (once your address is known) and **Copy sign-up link** (while sign-ups are on).
+Type in **Search users** to filter the list as you type.
 
-No button deletes the friend's games.
+- **New password**: for a user who lost theirs. The old password stops working at once, and the user is logged out. The new one is
+  shown once, in a message to send.
+- **Disable** (for an active user): the user can no longer log in, and is logged out at once. Their games stay. The row then says
+  **Disabled**.
+- **Enable** (for a disabled user): a new password, shown once in a message to send. The user can log in again.
+- **Delete**: removes the login for good. A page asks **Delete {user}?** and says that this cannot be undone. The username and the
+  summoner name become free to use again, and past games and results keep the old names. Delete is refused, with the reason on the
+  page, while the user is queued, in a lobby, or in a game that has not ended: wait until it ends, then try again.
 
 ## Advanced
 
-**Advanced** is the server's full management page. Its friend parts point to **Invite a friend** and **Friends**. Its **Online
+**Advanced** is the server's full management page. Logins are managed on [Users](#users). Its **Online
 now** table updates by itself every 5 seconds without reloading the page, so you can type in its forms at any time; **Pause
 updates** stops it. Its other parts:
 
 - **Send a notice to players**: a line at the top of every logged-in game client until you clear it (send it empty) or
   Amberline restarts.
 - **Give RP**: RP for a login, to buy champions and skins in the store. Nobody pays.
-- **Make a friend log in again**: the next time their PC connects, they log in again with their username and password.
+- **Make a user log in again**: the next time their PC connects, they log in again with their username and password.
 - **Set a new password**: for any login, yours too. The player is logged out and logs in again with the new password.
 - **Set a new password**: choose **Save**; the page then says **Saved.**
 - **Make a reward code**: a code that gives IP and RP once, typed in the store's **Redeem a code** page. The next page shows it
@@ -338,9 +360,9 @@ When a form has a problem, the page comes back with **There is a problem** at th
 leaves it without saving; after **Save** Settings says **Saved.**
 
 - **Server name**: **Change the server name** has the same rule as the first step. After **Save** the page offers **Download the
-  Play file**. Your friends' desktop icon shows the name their Play file holds, so send them the new one.
+  Play file**. Your users' desktop icons show the name their Play file holds, so send them the new one.
 - **Your address**: **Change your address** has the same choices as the address step (for example to switch the LAN party on
-  or off). After **Save**, send your friends the new Play file: the one they have still looks for this PC at the old address.
+  or off). After **Save**, send your users the new Play file: the one they have still looks for this PC at the old address.
 - **Your game folders**: **Change the folders** works like the folder step. Amberline restarts to use new folders, so it refuses
   while a game is running. In an installed Amberline it offers to copy folders from elsewhere into the install folder. The page is
   headed **Change the folders**; after **Save** Amberline restarts and comes back here, where **Saved.** says so.
@@ -351,29 +373,29 @@ leaves it without saving; after **Save** Settings says **Saved.**
   **Allow through Windows Firewall** there and press **Yes**. Fewer games need nothing. Play files stay as they are.
 - **Updates**: whether the daily check is on; **Change the update check** opens the [Updates](#updates) page.
 - **Play file**: **Download the Play file**, and **Make new Play files**, which makes a new certificate and restarts: every
-  friend's Play file stops working, so send them all the new one. It asks first; **Cancel** comes back to Settings.
+  user's Play file stops working, so send them all the new one. It asks first; **Cancel** comes back to Settings.
 - **Sign-ups**: see below.
 - **Game files**: see below.
 - **Cheat commands**: every login on your server, yours included (marked **(you)**), with a box each. A ticked login can use the
   testing commands in every game it plays here, from the next game that starts; nobody is ticked at first, and bots never can.
-  Tick or untick the boxes and choose **Save**. Only you can change the list, on this page; your friends cannot. If you had
+  Tick or untick the boxes and choose **Save**. Only you can change the list, on this page; your users cannot. If you had
   turned on the old **Allow cheat commands in my games**, your own login starts ticked.
 - **Uninstall Amberline**: see below.
 
 ### Sign-ups
 
 **Let people register themselves** is off at first. Tick it and choose **Save**: anyone with the link can then make their own
-login, and Settings shows the link, `https://<your address>:<the friends' port>/register`, with **Copy**. Send it to whoever you
-like; Invite shows it too.
+login, and Settings shows the link, `https://<your address>:<the public port>/register`, with **Copy**. Send it to whoever you
+like; Add a user shows it too.
 
 - The page asks for a username, a summoner name (empty means the username), a password of at least 10 characters and the start
-  level. It lists every problem at once. When it works, it offers **Download the Play file**, the same file Invite gives. Under **Already have a login?** it offers that file too.
+  level. It lists every problem at once. When it works, it offers **Download the Play file**, the same file Add a user gives. Under **Already have a login?** it offers that file too.
 - Their browser warns that the connection is not private: Amberline's own certificate is not one the browser knows. They choose
   **Advanced**, then the button that goes on (Chrome: **Proceed to ... (unsafe)**, Edge: **Continue to ... (unsafe)**, Firefox:
   **Accept the Risk and Continue**). Another PC or browser warns again; it is the same certificate the Play file checks.
-- Each address can make 12 logins an hour, and the page makes 30 an hour in all. After that it says **Too many sign-ups. Try again
+- Each address can make 12 sign-up attempts an hour (every submit counts, refused ones too), and the page takes 30 new logins an hour in all. After that it says **Too many sign-ups. Try again
   in an hour.**
-- New logins appear in [Friends](#friends), where **Remove access** stops one. Untick the box and **Save** to close the page at
+- New logins appear in [Users](#users), where **Disable** stops one. Untick the box and **Save** to close the page at
   once; nothing else of Amberline is ever on that port.
 
 ### Game files
@@ -402,7 +424,7 @@ player's own copy would go. A player who has their own copy uses it as before.
 **Uninstall Amberline** in Settings names Amberline's folder and its size, and what goes: the program, the desktop icon, the
 small file that tells a later Amberline where its folder is, the two Windows Firewall rules (if you let Amberline through,
 Windows asks once, for **Windows Command Processor**: press **Yes**), and the ports Amberline opened on your router. Two tick
-boxes, both off: **Also delete the game and AIR client copies** and **Also delete your logins and settings** (your friends'
+boxes, both off: **Also delete the game and AIR client copies** and **Also delete your logins and settings** (your users'
 logins and Play files then stop working for good). What you keep stays in the folder, and its `READ ME.txt` says how to use it
 again (install Amberline into the same folder). Type `uninstall` and choose **Uninstall Amberline**; **Cancel** leaves the page.
 While a game runs, the page says so and offers no button.
@@ -427,7 +449,7 @@ When a new version is out, the page shows **Amberline 1.2.3 is out** (with the n
    size and SHA-256, and that it holds that version. Then it opens a new Amberline window (look on the taskbar). That window
    works as if you had double-clicked the new zip's `Start Amberline.cmd`, without asking you again: it names both versions and
    says **You chose Update now on Amberline's page, so the update goes on.** It stops the running Amberline, installs the new
-   one and starts it, and its page opens in your browser. Your settings and friends stay. If the new version does not start,
+   one and starts it, and its page opens in your browser. Your settings and users stay. If the new version does not start,
    the version you had comes back by itself.
 4. If any check fails, the page says why in one sentence and **The Amberline you have keeps running.** Nothing was installed,
    and the download is deleted.
@@ -439,12 +461,12 @@ You can still update by hand. Under **Or update by hand**, the page has **Open t
 1. Download the new zip from this repository's Releases page and unzip it.
 2. Double-click its `START-HERE.cmd` (`Start Amberline.cmd` opens it too) and answer `Y` to **Update this Amberline now?**.
    The new window names your version and the zip's, says that updating ends any game in progress and that closing the window
-   keeps the one you have, then **Press Enter to continue.** Your settings and friends stay.
+   keeps the one you have, then **Press Enter to continue.** Your settings and users stay.
 3. If the new version does not start, the version you had comes back by itself.
 
 A zip with an older version than yours changes nothing. If you installed with `START-HERE.cmd`, you can also download the
 newest code and double-click `START-HERE.cmd` again; it names your version and this download's and offers to update. If yours
-is a release, a build made there changes nothing. Your friends' player tool updates itself the next time they start the game.
+is a release, a build made there changes nothing. Your players' tool updates itself the next time they start the game.
 
 ## Play on this PC
 
@@ -454,16 +476,16 @@ makes its own copy of your AIR client (your AIR client folder is only read).
 
 ## Only your home network (LAN party)
 
-If all your friends are in your home (on the same router or Wi-Fi), choose **Only people on my home network (LAN party)** at
+If all your players are in your home (on the same router or Wi-Fi), choose **Only people on my home network (LAN party)** at
 the address step.
 
 - Amberline fills in this PC's address on your home network (for example `192.168.1.20`); you can type it yourself.
-- Amberline then leaves your router alone. Only Windows Firewall needs to let your friends in.
-- Friends outside your home cannot join. The dashboard, Invite and the message you send say so.
-- The network checks leave the router out, and a friend from your home network turns the friend light green.
+- Amberline then leaves your router alone. Only Windows Firewall needs to let your players in.
+- Players outside your home cannot join. The dashboard, Add a user and the message you send say so.
+- The network checks leave the router out, and a player from your home network shows as having reached Amberline.
 - A router problem the address step finds (a second router, a shared provider address) shows there as a tip, not a problem: it
-  matters only for friends outside your home.
-- To switch it on or off later: **Settings**, **Change your address**. Then send your friends the new Play file.
+  matters only for players outside your home.
+- To switch it on or off later: **Settings**, **Change your address**. Then send your users the new Play file.
 
 ## When your address changes
 
@@ -471,7 +493,7 @@ Most home internet addresses change now and then, often when the router restarts
 
 - If you chose **Use the address your router reports**, Amberline asks the router again every 5 minutes. When the address
   changes, Amberline uses the new one at once and the dashboard says **Your address changed** (code A-NET-09). Choose **Get the
-  new Play file** and send it to every friend: their old icons cannot reach you until they run it. Then choose **Hide this
+  new Play file** and send it to every user: their old icons cannot reach you until they run it. Then choose **Hide this
   message**.
 - A name for your address (a dynamic DNS name) avoids this: the name follows your address.
 - To type a new address or name yourself: **Settings**, **Change your address**.
@@ -493,7 +515,7 @@ The `READ ME.txt` in the install folder lists the same steps, with your folder's
 
 ## A rented server
 
-A rented server is a computer in a data centre that is always on and has its own internet address. Your friends then do not
+A rented server is a computer in a data centre that is always on and has its own internet address. Your players then do not
 depend on your PC or your router.
 
 ### With START-HERE.cmd
@@ -503,7 +525,7 @@ It asks:
 
 - **Type the address**: a name or a number address with dots, as your hosting company shows it, without `https://` and without
   a port.
-- **Type a server name, or press Enter for Amberline**: your friends see it on their desktop icon.
+- **Type a server name, or press Enter for Amberline**: your users see it on their desktop icon.
 - **Which system does your server run?** `1` for Windows, `2` for Linux.
 
 At step 2 choose the game and AIR client folders on your PC: the build checks them. At step 3 choose where the server package
@@ -526,15 +548,15 @@ goes (press Enter for `C:\Amberline\server-package`). Nothing is copied or delet
    ./Amberline.Platform
    ```
 
-6. Make a login for each friend on the management page (see below).
-7. Give each friend their login and the Play file, the package's `Play.cmd`. It is the only file they need.
+6. Make a login for each user on the management page (see below).
+7. Give each user their login and the Play file, the package's `Play.cmd`. It is the only file they need.
 
 File Explorer opens the package folder, and the guide ends with a **Summary** that names it. Building into the same package
 folder again keeps its certificate, so the `Play.cmd` files you gave out keep working.
 
 ### By hand
 
-Install the [developer requirements](README.md#requirements) on a PC, then build the package with your server's address:
+Install the [developer requirements](README.md#for-developers) on a PC, then build the package with your server's address:
 
 ```powershell
 pwsh -NoProfile -File ./tools/build-server.ps1 -GameRoot <game release folder> -AirRoot <AIR client folder> -Runtime win-x64 -PublicHost <your server's address>
@@ -542,7 +564,7 @@ pwsh -NoProfile -File ./tools/build-server.ps1 -GameRoot <game release folder> -
 
 - `-Runtime linux-x64` builds for a Linux server.
 - `-RemotePort` (default 8391) and `-FirstGamePort` (default 5219) change the ports; `-ServerName` (default `Amberline`) is the
-  name of the players' desktop icon.
+  name of the users' desktop icon.
 - The output folder holds `server/`, `platform/` (with the settings, the server's certificate and the player tool), `Play.cmd`
   and `README-DEPLOY.txt`, which explains every file.
 - Keep `platform/platform-data/remote/host.pfx` private: it is the server's TLS key, and every `Play.cmd` checks it. A rebuild
@@ -558,8 +580,8 @@ SSH tunnel from your own PC:
 ssh -L 8390:127.0.0.1:8390 <user>@<your server's address>
 ```
 
-then open `http://127.0.0.1:8390/manage` in a browser on your PC and create each friend's login there. Keep TCP 8390, 2099 and
-5222 closed to the internet: only TCP 8391 and UDP 5219 to 5222 are for your friends.
+then open `http://127.0.0.1:8390/manage` in a browser on your PC and create each user's login there. Keep TCP 8390, 2099 and
+5222 closed to the internet: only TCP 8391 and UDP 5219 to 5222 are for your players.
 
 ### Updating a rented server
 

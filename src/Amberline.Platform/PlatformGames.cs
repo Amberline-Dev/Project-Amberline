@@ -8,7 +8,8 @@ using RtmpSharp.IO;
 
 namespace Amberline.Platform;
 
-public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager manager, string advertisedHost, TimeProvider? clock = null)
+public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager manager, string advertisedHost, TimeProvider? clock = null,
+    HostActivity? activity = null)
 {
     /// <summary>
     /// DIAGNOSTICS: whether a human seat (by account id) may use the playtest cheat commands, asked as each game starts; bot seats never
@@ -290,6 +291,95 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             _ => $"{game.State}, {what}",
         };
     }
+
+    /// <summary>
+    /// NOT RETAIL: the host page's game cards and waiting-lobbies line (the owner's design, 11 November 2026; retail had no host page). A card is
+    /// a match in progress (START_REQUESTED or IN_PROGRESS, its result not yet read): its map and mode under neutral names, when it started,
+    /// each team's seats (a human by username, a bot as "Bot") with the champion's name, and whether the host can end it, which needs its
+    /// match server still running. The line counts the lobbies still in team selection. Names and counts only: no chat, passwords or addresses.
+    /// </summary>
+    public DashboardBoard HostBoard()
+    {
+        lock (_gate)
+        {
+            var running = manager.List(new HostGuest("", "", "", Admin: true));
+            var cards = _lobbies.Values.Where(game => game.Result is null && game.State is ("START_REQUESTED" or "IN_PROGRESS"))
+                .OrderBy(game => game.Id).Select(game => CardOf(game, game.HostId is Guid id ? running.FirstOrDefault(remote => remote.Id == id) : null))
+                .ToArray();
+            var waiting = _lobbies.Values.Where(game => game.State == "TEAM_SELECT").OrderBy(game => game.Id)
+                .Select(game => $"{HostActivity.MapName(game.MapId)}, {game.Members.Count + game.Bots.Count}/{game.Capacity}").ToArray();
+            return new DashboardBoard(cards, waiting.Length == 0 ? null : $"Lobbies: {waiting.Length} waiting ({string.Join("; ", waiting)})");
+        }
+    }
+
+    /// <summary>
+    /// NOT RETAIL: the host's Delete on the Users page (batch 748). Under the games lock, so no lobby or queue takes the login while it goes:
+    /// refused while it waits in a queue or sits in a lobby, champion select or a match whose result is not read yet (a finished match waiting
+    /// on its results screen holds nobody, see <see cref="Tick"/>); then <see cref="PlatformAccounts.Delete"/>, which also refuses while a match
+    /// handed to the match server names it and that server still runs the match (its lobby may have ended on a fault while it plays on).
+    /// </summary>
+    public DeleteOutcome DeleteAccount(long accountId)
+    {
+        lock (_gate)
+        {
+            if (Holds(accountId)) return DeleteOutcome.InGame;
+            var running = manager.List(new HostGuest("", "", "", Admin: true))
+                .Where(match => match.State is not ("Stopped" or "Failed" or "Interrupted")).Select(match => match.Id).ToHashSet();
+            return accounts.Delete(accountId, running.Contains);
+        }
+    }
+
+    /// <summary>
+    /// NOT RETAIL: the Users page's status (batch 748): each login a game holds (as <see cref="DeleteAccount"/> counts them), with when its match
+    /// started launching or playing, or null while it waits in a queue, a lobby or champion select.
+    /// </summary>
+    public Dictionary<long, DateTimeOffset?> Playing()
+    {
+        lock (_gate)
+        {
+            var playing = new Dictionary<long, DateTimeOffset?>();
+            foreach (var entry in _queue) playing[entry.AccountId] = null;
+            foreach (var game in _lobbies.Values.Where(Unfinished))
+            {
+                DateTimeOffset? since = game.State is "START_REQUESTED" or "IN_PROGRESS" ? (game.StateSince == default ? game.Created : game.StateSince) : null;
+                foreach (var account in game.Members.Select(member => member.Account.Id).Append(game.Owner)) playing[account] = since;
+            }
+            return playing;
+        }
+    }
+
+    private bool Holds(long accountId) => _queue.Any(entry => entry.AccountId == accountId) ||
+        _lobbies.Values.Any(game => Unfinished(game) && (game.Owner == accountId || game.Members.Any(member => member.Account.Id == accountId)));
+
+    /// <summary>A lobby, champion select or match whose result is not read yet.</summary>
+    private static bool Unfinished(Lobby game) => !IsTerminal(game) && game.Result is null;
+
+    /// <summary>
+    /// NOT RETAIL: one lobby as a game card (see <see cref="HostBoard"/>). <paramref name="server"/> is the match server's record of the lobby's
+    /// game, or null when there is none; the card can be ended only while that record says the game still runs and can be stopped.
+    /// </summary>
+    public static DashboardGameCard CardOf(Lobby game, RemoteGame? server) => new(game.HostId ?? Guid.Empty, HostActivity.MapName(game.MapId),
+        ModeName(game.GameMode), game.StateSince == default ? game.Created : game.StateSince, Seats(game, Team.Order), Seats(game, Team.Chaos),
+        server is { CanStop: true, State: "Starting" or "Waiting for players" or "Playing" });
+
+    /// <summary>
+    /// The mode's name on a card, in neutral words (the neutral-name rule): Summoner's Rift and Twisted Treeline are "Classic", the Crystal Scar's
+    /// mode ODIN is "Capture", and the Basic Tutorial's TUTORIAL is "Tutorial".
+    /// </summary>
+    private static string ModeName(string mode) => mode switch
+    {
+        GameMaps.DominionMode => "Capture",
+        GameMaps.TutorialMode => "Tutorial",
+        _ => "Classic",
+    };
+
+    private static DashboardSeat[] Seats(Lobby game, Team team) =>
+    [
+        .. game.Members.Where(member => member.Team == team).Select(member => new DashboardSeat(member.Account.Username, ChampionName(member.Champion))),
+        .. game.Bots.Where(bot => bot.Team == team).Select(bot => new DashboardSeat("Bot", ChampionName(bot.Champion))),
+    ];
+
+    private static string ChampionName(int champion) => AirGameDtos.ChampionNames.GetValueOrDefault(champion) ?? "No pick";
 
     public static HostGuest Guest(PlatformAccount a) => new($"air:{a.Id}", a.Summoner, "");
 
@@ -1105,6 +1195,9 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                     }
                     if (game.State == "POST_CHAMP_SELECT" && _clock.GetUtcNow() >= game.Deadline) Launch(game);
                     if (game.HostId is not Guid hostId) continue;
+                    // NOT RETAIL (batch 748; retail had no host-side delete): a finished match (its result read) only waits for its players to leave the results; nothing more is read for
+                    // it, so an owner the host deleted meanwhile (DeleteAccount lets a finished match's players go) never faults it.
+                    if (game.Result is not null) continue;
                     var owner = Guest(accounts.Get(game.Owner));
                     var remote = manager.List(owner).FirstOrDefault(g => g.Id == hostId);
                     if (game.Result is null && manager.ReadCompletedResult(owner, hostId) is { } saved)
@@ -1137,6 +1230,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                             // not boost inventory. Replace remaining win counts.
                             Push(member.Account.Id, AirDtos.ActiveBoostsNotification(member.Account));
                         }
+                        // NOT RETAIL: the host page's activity feed names a finished game by its map and the side that won (Order is Blue,
+                        // Chaos is Red). It comes last in the block: a fault earlier in the block aborts the game, which names it ended early.
+                        var side = result.Winner switch { "Order" => " · Blue won", "Chaos" => " · Red won", _ => "" };
+                        activity?.Add($"Game ended · {HostActivity.MapName(game.MapId)}{side}");
                     }
                     if (game.Result is not null) continue;
                     if (remote is null || remote.State is "Failed" or "Interrupted" or "Stopped")
@@ -1154,7 +1251,7 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                         game.CredentialsSent = true;
                         foreach (var member in game.Members) Push(member.Account.Id, Credentials(game, member));
                     }
-                    if (remote.State == "Playing" && game.State != "IN_PROGRESS") { game.State = "IN_PROGRESS"; Changed(game); }
+                    if (remote.State == "Playing" && game.State != "IN_PROGRESS") StartPlaying(game);
                 }
                 catch (Exception error) when (error is ArgumentException or RemoteFault or IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
                 {
@@ -1170,6 +1267,15 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             // ponytail: bounded recent lobby cache; durable results remain in the account store.
             foreach (var old in _lobbies.Values.Where(g => IsTerminal(g) || g.Result is not null).OrderByDescending(g => g.Id).Skip(100).ToArray()) _lobbies.Remove(old.Id);
         }
+    }
+
+    /// <summary>
+    /// DIAGNOSTICS: test seam for the activity feed check. Moves a lobby to IN_PROGRESS as <see cref="Tick"/> does once its match reports
+    /// Playing; the stock match server reports that only after its clients have loaded, which no check can supply.
+    /// </summary>
+    public void StartPlayingForTest(int lobbyId)
+    {
+        lock (_gate) StartPlaying(Find(lobbyId));
     }
 
     /// <summary>
@@ -1466,6 +1572,17 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         game.State = game.HostId is null ? "TERMINATED" :
             game.CredentialsSent ? "TERMINATED_IN_ERROR" : "FAILED_TO_START";
         Changed(game);
+        // NOT RETAIL: the host page's activity feed names a game that ended before its result (a failed, stopped or lost match).
+        activity?.Add($"Game ended early · {HostActivity.MapName(game.MapId)}");
+    }
+
+    private void StartPlaying(Lobby game)
+    {
+        game.State = "IN_PROGRESS";
+        Changed(game);
+        // NOT RETAIL: the host page's activity feed names a game that starts playing: its map, and its seats (humans and bots).
+        var seats = game.Members.Count + game.Bots.Count;
+        activity?.Add($"Game started · {HostActivity.MapName(game.MapId)} · {seats} {(seats == 1 ? "player" : "players")}");
     }
 
     private void Changed(Lobby game)

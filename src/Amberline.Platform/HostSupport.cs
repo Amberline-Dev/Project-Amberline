@@ -57,6 +57,7 @@ public sealed class HostSupport : IAsyncDisposable
     private readonly Func<IReadOnlyList<RemoteGame>> _games;
     private readonly Func<long, (string Username, bool ThroughTunnel)?> _seat;
     private readonly Func<IReadOnlyList<(string Username, string Summoner)>> _logins;
+    private readonly Func<IReadOnlyList<(string Username, string Summoner)>> _deleted;
     private readonly HashSet<Guid> _before;
     private readonly Lock _gate = new();
     private readonly Dictionary<(Guid Game, int Seat), Seat> _seats = [];
@@ -70,14 +71,17 @@ public sealed class HostSupport : IAsyncDisposable
     /// <param name="games">Every match the manager lists; the ones listed now are from before this start and never raise a card.</param>
     /// <param name="seat">The login behind a seat's summoner id: its username and whether it came through the friends' tunnel.</param>
     /// <param name="logins">Every login, whose usernames and summoner names the support log hides.</param>
+    /// <param name="deleted">Batch 748: every login the host deleted, whose names the support log hides too (they are not counted).</param>
     public HostSupport(HostLoop loop, PlatformSettings settings, Func<IReadOnlyList<RemoteGame>> games,
-        Func<long, (string Username, bool ThroughTunnel)?> seat, Func<IReadOnlyList<(string Username, string Summoner)>> logins)
+        Func<long, (string Username, bool ThroughTunnel)?> seat, Func<IReadOnlyList<(string Username, string Summoner)>> logins,
+        Func<IReadOnlyList<(string Username, string Summoner)>>? deleted = null)
     {
         _loop = loop;
         _settings = settings;
         _games = games;
         _seat = seat;
         _logins = logins;
+        _deleted = deleted ?? (() => []);
         _before = [.. games().Select(game => game.Id)];
     }
 
@@ -85,7 +89,8 @@ public sealed class HostSupport : IAsyncDisposable
     public static HostSupport For(HostLoop loop, PlatformSettings settings, GameManager manager, PlatformAccounts accounts, PlatformSessions sessions) =>
         new(loop, settings, () => manager.List(Admin),
             summoner => accounts.FindSummoner(summoner) is { } account ? (account.Username, sessions.ThroughTunnel(account.Id)) : null,
-            () => [.. accounts.ListAccounts().Select(account => (account.Username, account.Summoner))]);
+            () => [.. accounts.ListAccounts().Select(account => (account.Username, account.Summoner))],
+            () => [.. accounts.ListDeleted().Select(gone => (gone.Username, gone.Summoner))]);
 
     public TimeSpan Every { get; init; } = TimeSpan.FromSeconds(5);
 
@@ -204,7 +209,7 @@ public sealed class HostSupport : IAsyncDisposable
             1 => usernames[0],
             2 => $"{usernames[0]} and {usernames[1]}",
             3 => $"{usernames[0]}, {usernames[1]} and {usernames[2]}",
-            _ => $"{usernames[0]}, {usernames[1]} and {usernames.Count - 2} more friends",
+            _ => $"{usernames[0]}, {usernames[1]} and {usernames.Count - 2} more users",
         };
         var one = usernames.Count == 1;
         // The dashboard's are the ports of the games that may run now (batch 684: Settings changes them while Amberline runs).
@@ -290,7 +295,8 @@ public sealed class HostSupport : IAsyncDisposable
         if (_steps?.ServerName is { } server) names.Add((server, "<server name>"));
         var address = (_steps is null ? _settings.PublicHost : _steps.PublicHost) ?? "";
         names.Add((address, AddressMark(address)));
-        names.AddRange(logins.SelectMany(login => new[] { (login.Username, "<login>"), (login.Summoner, "<login>") }));
+        // NOT RETAIL (batch 748): a login the host deleted is hidden too; the log, the cards and the games still name it.
+        names.AddRange(logins.Concat(_deleted()).SelectMany(login => new[] { (login.Username, "<login>"), (login.Summoner, "<login>") }));
         return Mask(text.ToString(), names);
     }
 

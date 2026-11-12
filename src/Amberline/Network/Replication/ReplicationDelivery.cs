@@ -67,6 +67,24 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         RevealsStealth = revealsStealth ?? throw new ArgumentNullException(nameof(revealsStealth));
         SimulationTime = simulationTime ?? (() => World.Clock.Now());
         NextSyncId = nextSyncId ?? (_ => checked((uint)World.Clock.SyncId()));
+        // Batch 743 (owner report, 11 November 2026: a Crest of the Ancient Golem with no particle at 45:36): the missile range wraps about
+        // 40 minutes in. A live persistent effect keeps its id (the wrap passes over it), and an id handed out again names a new object, so every
+        // view forgets the old one: a fire-and-forget effect stays in View.Effects for good (only a destroy takes it out), and the new effect
+        // under its id was taken for it, its create and the late-sight replay both skipped, the holder's own client included.
+        // ponytail: only the persistent effects count as live; a camp monster's buff particle (NeutralWire, a raw packet) and a fallback buff
+        // row (BuffEffectService) can still be passed by the wrap if they outlive it. Hold them here too if one ever does.
+        World.Allocator.InUse = _persistentEffects.ContainsKey;
+        World.Allocator.Recycled += ForgetRecycledId;
+    }
+
+    private void ForgetRecycledId(uint netId)
+    {
+        foreach (var observer in _observers)
+        {
+            observer.View.Effects.Remove(netId);
+            observer.View.LateCopies.Remove(netId);
+            observer.View.Known.Remove(netId);
+        }
     }
 
     public WorldState World { get; }

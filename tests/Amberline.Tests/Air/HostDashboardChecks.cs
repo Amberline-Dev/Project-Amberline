@@ -1,13 +1,20 @@
+using System.Globalization;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Amberline.Core;
+using Amberline.Data;
+using Amberline.Host;
 using Amberline.Platform;
+using Amberline.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using RtmpSharp.IO;
 using static Amberline.Tests.Air.HostModeChecks;
 
 namespace Amberline.Tests.Air;
@@ -19,6 +26,8 @@ namespace Amberline.Tests.Air;
 /// </summary>
 public static class HostDashboardChecks
 {
+    private const string Password = "Synthetic-dashboard-Pw-7";
+
     [Check("server.host-dashboard-status-json", TimeoutSeconds = 180)]
     public static void TheStatusJsonShowsTheNetworkPeopleAndGames() => StatusJsonAsync().GetAwaiter().GetResult();
 
@@ -59,10 +68,13 @@ public static class HostDashboardChecks
             TestAssert.Equal("waiting", Check(status, "friend").State);
             TestAssert.Equal(new (string, string?)[] { ("A-NET-02", "firewall") }, Cards(status), "one card, with the firewall button");
             TestAssert.Equal("Address: 198.51.100.20 (from your router)", status.GetProperty("address").GetString());
+            // Final fix 5: Copy address (and the sign-up link) give the saved address, the one Users, Settings, Add a user and the Play file
+            // give, not the router's public one.
+            TestAssert.Equal("127.0.0.1", status.GetProperty("publicHost").GetString(), "Copy address copies the saved address");
             TestAssert.Equal("Network: 1 thing needs your attention", status.GetProperty("network").GetString());
-            TestAssert.True(Regex.IsMatch(status.GetProperty("headline").GetString()!, @"^Running since \d\d:\d\d\. Friends may not be able to join: see Needs your attention\.$"),
+            TestAssert.True(Regex.IsMatch(status.GetProperty("headline").GetString()!, @"^Running since \d\d:\d\d\. Players may not be able to join: see Needs your attention\.$"),
                 status.GetProperty("headline").GetString());
-            TestAssert.Equal("No friend has connected yet", status.GetProperty("friend").GetString());
+            TestAssert.Equal("No player has connected yet", status.GetProperty("friend").GetString());
             TestAssert.Equal(0, status.GetProperty("online").GetArrayLength(), "nobody signed in");
             TestAssert.Equal((0, 4, 0), (status.GetProperty("gamesRunning").GetInt32(), status.GetProperty("gamesMax").GetInt32(),
                 status.GetProperty("games").GetArrayLength()), "no game of 4");
@@ -125,9 +137,9 @@ public static class HostDashboardChecks
             {
                 TestAssert.Equal(1, firewall.Commands.Count, "one Windows prompt");
                 TestAssert.Equal(HostFirewall.Command(rules, [], Environment.SystemDirectory), firewall.Commands[0], "the command H4 builds, for both rules");
-                TestAssert.Equal(("ok", "Windows Firewall lets friends in"), Check(status, "firewall"));
+                TestAssert.Equal(("ok", "Windows Firewall lets players in"), Check(status, "firewall"));
                 TestAssert.Equal("Network: all checks passed", status.GetProperty("network").GetString());
-                TestAssert.True(status.GetProperty("headline").GetString()!.EndsWith(". Friends can join.", StringComparison.Ordinal), status.GetProperty("headline").GetString());
+                TestAssert.True(status.GetProperty("headline").GetString()!.EndsWith(". Players can join.", StringComparison.Ordinal), status.GetProperty("headline").GetString());
                 TestAssert.Equal(0, status.GetProperty("attention").GetArrayLength());
             }
             using (var expired = await browser.PostAsync("/host/firewall", Form(new("x", "y"))))
@@ -140,7 +152,7 @@ public static class HostDashboardChecks
                 TestAssert.Equal(HttpStatusCode.Redirect, again.StatusCode);
             status = await StatusAsync(browser);
             TestAssert.Equal(("bad", "Your router does not allow programs to open ports."), Check(status, "router"));
-            TestAssert.Equal(("bad", "Your internet provider shares one address among many homes, so friends cannot reach this PC."), Check(status, "address"));
+            TestAssert.Equal(("bad", "Your internet provider shares one address among many homes, so players cannot reach this PC."), Check(status, "address"));
             TestAssert.True(Cards(status).Contains(("A-NET-04", "network")) && Cards(status).Contains(("A-NET-07", null)),
                 "the router card with Test again, the shared-address card with no button");
             TestAssert.Equal("Address: 127.0.0.1 (from your settings)", status.GetProperty("address").GetString(), "a shared address is not the friends' address");
@@ -155,7 +167,7 @@ public static class HostDashboardChecks
             {
                 var question = await stop.Content.ReadAsStringAsync();
                 TestAssert.True(question.Contains("<h1>Stop Amberline?</h1>", StringComparison.Ordinal) &&
-                    question.Contains("Friends cannot log in until you start Amberline again.", StringComparison.Ordinal), question);
+                    question.Contains("Users cannot log in until you start Amberline again.", StringComparison.Ordinal), question);
             }
             TestAssert.False(run.IsCompleted, "asking about Stop stops nothing");
         }
@@ -214,10 +226,10 @@ public static class HostDashboardChecks
             TestAssert.Equal(("ok", "Home network only: the router is not needed"), Check(status, "router"));
             TestAssert.Equal(("bad", "Windows Firewall blocks Amberline."), Check(status, "firewall"), "the firewall step still runs");
             TestAssert.Equal(new (string, string?)[] { ("A-NET-02", "firewall") }, Cards(status), "the firewall card only: no router, CGNAT or second-router card");
-            TestAssert.Equal("Address: 192.168.1.20 (home network only). Friends must be on the same home network as this PC.",
+            TestAssert.Equal("Address: 192.168.1.20 (home network only). Players must be on the same home network as this PC.",
                 status.GetProperty("address").GetString());
             TestAssert.Equal(JsonValueKind.Null, status.GetProperty("guide").ValueKind, "no router guide");
-            TestAssert.Equal(("waiting", "Waiting for the first friend to start the Play file."), Check(status, "friend"));
+            TestAssert.Equal(("waiting", "Waiting for the first player to start the Play file."), Check(status, "friend"));
 
             // Several 5-minute periods (200 ms here): the router is never asked for its address, so no A-NET-09 either.
             await Task.Delay(1200);
@@ -231,12 +243,12 @@ public static class HostDashboardChecks
             using (var allow = await browser.PostAsync("/host/firewall", Form(Token(page))))
                 TestAssert.Equal(HttpStatusCode.Redirect, allow.StatusCode, "back to the dashboard");
             status = await StatusAsync(browser);
-            TestAssert.Equal(("ok", "A friend on your home network reached Amberline just now"), Check(status, "friend"));
+            TestAssert.Equal(("ok", "A player on your home network reached Amberline just now"), Check(status, "friend"));
             if (HostFirewall.Refusal(firewall.Allowed) is null)
             {
                 TestAssert.Equal(1, firewall.Commands.Count, "one Windows prompt, as on the internet choices");
                 TestAssert.Equal("Network: all checks passed", status.GetProperty("network").GetString());
-                TestAssert.True(status.GetProperty("headline").GetString()!.EndsWith(". Friends can join.", StringComparison.Ordinal), status.GetProperty("headline").GetString());
+                TestAssert.True(status.GetProperty("headline").GetString()!.EndsWith(". Players can join.", StringComparison.Ordinal), status.GetProperty("headline").GetString());
             }
 
             // Leaving the choice for an internet address asks the router again: it maps the ports and its shared address is A-NET-07.
@@ -246,7 +258,7 @@ public static class HostDashboardChecks
             TestAssert.True(Check(status, "router").Text.StartsWith("Found your router", StringComparison.Ordinal), Check(status, "router").Text);
             TestAssert.True(Cards(status).Contains(("A-NET-07", null)), "the shared-address card is back on the internet choices");
             TestAssert.Equal(5, router.Table().Count, "the sign-in port and the four game ports");
-            TestAssert.Equal(("waiting", "A friend on your home network reached Amberline just now. Waiting for a friend from the internet."), Check(status, "friend"));
+            TestAssert.Equal(("waiting", "A player on your home network reached Amberline just now. Waiting for a player from the internet."), Check(status, "friend"));
 
             // Back to the home network only: the router's ports are removed, and its address no longer matters.
             using (var lan = await browser.PostAsync("/host/setup/address", Form(Token(page), ("choice", "lan"), ("lan", "192.168.1.20"))))
@@ -343,7 +355,7 @@ public static class HostDashboardChecks
             await WaitForHealthAsync(browser, "ready", run);
             await home.SignInAsync(browser);
             var status = await StatusAsync(browser);
-            TestAssert.Equal(("waiting", "Waiting for the first friend to start the Play file."), Check(status, "friend"));
+            TestAssert.Equal(("waiting", "Waiting for the first player to start the Play file."), Check(status, "friend"));
             using (var own = await browser.GetAsync($"https://127.0.0.1:{home.RemotePort}/bootstrap/client.json"))
                 TestAssert.Equal(HttpStatusCode.OK, own.StatusCode, "the public port answers the Play file's manifest");
             TestAssert.Equal<DateTimeOffset?>(null, home.Loop.Friend.FromInternet, "a request from this PC is not a friend");
@@ -351,8 +363,8 @@ public static class HostDashboardChecks
             // The check cannot listen on a public interface, so the request a friend's Play file makes is handed to the light directly.
             home.Loop.Friend.Observe(IPAddress.Parse("203.0.113.9"), "/bootstrap/client.json", DateTimeOffset.UtcNow);
             status = await StatusAsync(browser);
-            TestAssert.Equal(("ok", "A friend reached Amberline from the internet just now"), Check(status, "friend"));
-            TestAssert.Equal("Last friend connected just now", status.GetProperty("friend").GetString());
+            TestAssert.Equal(("ok", "A player reached Amberline from the internet just now"), Check(status, "friend"));
+            TestAssert.Equal("Last player connected just now", status.GetProperty("friend").GetString());
             TestAssert.False(status.GetRawText().Contains("203.0.113", StringComparison.Ordinal), "the page never shows a friend's address");
         }
         finally
@@ -431,7 +443,7 @@ public static class HostDashboardChecks
         run = Task.Run(() => RunPageAsync(home, settings, Running));
         await WaitForStartAsync(home.Loop, 2, run);
         page = await PageAsync(client, "/host/stop");
-        TestAssert.True(page.Contains("Friends cannot log in until you start Amberline again.", StringComparison.Ordinal) &&
+        TestAssert.True(page.Contains("Users cannot log in until you start Amberline again.", StringComparison.Ordinal) &&
             !page.Contains("running (", StringComparison.Ordinal) && page.Contains(">Stop Amberline</button>", StringComparison.Ordinal),
             "no game, no game warning (the restart kept the host signed in): " + page);
         using (var stop = await client.PostAsync("/host/stop", Form(Token(page), ("games", "0"))))
@@ -475,7 +487,7 @@ public static class HostDashboardChecks
             await WaitForHealthAsync(browser, "ready", run);
             await home.SignInAsync(browser);
             var status = await WaitForStatusAsync(browser, now => Check(now, "firewall").State != "checking" && Check(now, "router").State != "checking");
-            TestAssert.Equal(("ok", "Windows Firewall lets friends in"), Check(status, "firewall"));
+            TestAssert.Equal(("ok", "Windows Firewall lets players in"), Check(status, "firewall"));
             TestAssert.Equal(4, status.GetProperty("gamesMax").GetInt32(), "four games by default");
             TestAssert.Equal(5, router.Table().Count, "the sign-in port and four game ports");
 
@@ -516,7 +528,7 @@ public static class HostDashboardChecks
                 TestAssert.Equal(1, firewall.Commands.Count, "one Windows prompt");
                 TestAssert.Equal(HostFirewall.Command(Rules(6), [HostFirewall.SignInRule, HostFirewall.GamesRule], Environment.SystemDirectory),
                     firewall.Commands[0], "the new range, over the old rules");
-                TestAssert.Equal(("ok", "Windows Firewall lets friends in"), Check(await StatusAsync(browser), "firewall"));
+                TestAssert.Equal(("ok", "Windows Firewall lets players in"), Check(await StatusAsync(browser), "firewall"));
             }
 
             // Two: the router's ports above it go at once; the wider firewall rule still lets both games in, so nothing is asked.
@@ -527,7 +539,7 @@ public static class HostDashboardChecks
             status = await WaitForStatusAsync(browser, now => now.GetProperty("gamesMax").GetInt32() == 2 && Check(now, "firewall").State != "checking");
             if (HostFirewall.Refusal(Rules(6)) is null)
             {
-                TestAssert.Equal(("ok", "Windows Firewall lets friends in"), Check(status, "firewall"));
+                TestAssert.Equal(("ok", "Windows Firewall lets players in"), Check(status, "firewall"));
                 TestAssert.Equal(1, firewall.Commands.Count, "fewer games ask Windows nothing");
             }
 
@@ -558,14 +570,363 @@ public static class HostDashboardChecks
         Delete(home.Root);
     }
 
+    [Check("server.host-dashboard-layout", TimeoutSeconds = 180)]
+    public static void TheDashboardLeadsWithAttentionTilesActionsGamesAndActivity() => LayoutAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// The Dashboard's parts in the owner's order: Needs your attention first (hidden while it is empty), the three tiles, the actions, the
+    /// game cards and the activity feed, the server details last. Each list has its template for the script; nothing is inline.
+    /// </summary>
+    private static async Task LayoutAsync()
+    {
+        var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        var home = Home.Create("league-host-dashboard-layout");
+        home.ChooseFolders();
+        var run = Task.Run(() => HostMode.RunAsync(home.Loop));
+        try
+        {
+            using var browser = Browser(home);
+            await WaitForHealthAsync(browser, "ready", run);
+            await home.SignInAsync(browser);
+            var page = await PageAsync(browser, HostDashboard.PagePath);
+            TestAssert.True(Regex.IsMatch(page, @"<main[^>]*>\s*<h1>Dashboard</h1>\s*<section id=attention-section"), "Needs your attention is the first part of main");
+            string[] order =
+            [
+                "<section id=attention-section class=attention aria-labelledby=attention-title hidden>", "<div class=tile id=tile-online>",
+                "<div class=tile id=tile-games>", "<div class=tile id=tile-signups>", "<button type=button data-copy=address-value id=copy-address hidden>",
+                $"<a class=\"button secondary\" href={HostInvite.AddPath}>Add a user</a>", "<ul id=cards class=game-cards></ul>",
+                "<template id=card-template>", "<ol id=feed class=feed></ol>", "<template id=feed-template>", "<section id=status class=status",
+                "<h2 id=online-title>Online now</h2>", "<h2>Network</h2>",
+            ];
+            var at = order.Select(part => page.IndexOf(part, StringComparison.Ordinal)).ToArray();
+            TestAssert.True(at.All(index => index >= 0) && at.Zip(at.Skip(1)).All(pair => pair.First < pair.Second),
+                "the parts come in the design's order: " + string.Join(" | ", order.Zip(at, (part, index) => $"{index} {part}")));
+            foreach (var number in new[] { "<b id=tile-online-count>", "<b id=tile-games-count>", "<b id=tile-signups-state>" })
+                TestAssert.True(page.Contains(number, StringComparison.Ordinal), "a tile's number: " + number);
+            TestAssert.True(page.Contains("<button type=button data-copy=signup-link id=copy-signup hidden>Copy sign-up link</button>", StringComparison.Ordinal),
+                "Copy sign-up link waits for the script to show it, while sign-ups are on");
+            // Without the script each part says Checking…, never an empty state nobody has checked; the script fills in the empty lines.
+            TestAssert.True(page.Contains("<p id=cards-empty class=empty>Checking…</p>", StringComparison.Ordinal) &&
+                page.Contains("<p id=feed-empty class=empty>Checking…</p>", StringComparison.Ordinal) &&
+                page.Contains("<p id=lobbies class=empty hidden></p>", StringComparison.Ordinal),
+                "the parts say Checking… until the script fills them; the waiting-lobbies line stays hidden until a lobby waits");
+            // The script's notice sits by the games, outside the folded server details.
+            var notice = page.IndexOf("<noscript><p class=problem>This page needs JavaScript", StringComparison.Ordinal);
+            TestAssert.True(notice > page.IndexOf("id=copy-address", StringComparison.Ordinal) && notice < page.IndexOf("<h2 id=cards-title>", StringComparison.Ordinal) &&
+                notice < page.IndexOf("<details id=server-details", StringComparison.Ordinal), "the no-script notice sits by the games, before Server details");
+            TestAssert.True(page.Contains("<details id=server-details open><summary>Server details</summary>", StringComparison.Ordinal) &&
+                page.Contains("<table id=online-table hidden>", StringComparison.Ordinal), "the status, the online table and the network checks fold under Server details");
+            TestAssert.False(Regex.IsMatch(page, @"\sstyle\s*="), "no inline style on the Dashboard");
+            TestAssert.Equal(1, Regex.Count(page, "<script"), "one script element");
+        }
+        finally
+        {
+            await home.StopAsync(run);
+            foreach (var pair in saved) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+        }
+        Delete(home.Root);
+    }
+
+    [Check("server.host-dashboard-empty-states", TimeoutSeconds = 180)]
+    public static void AnEmptyDashboardSaysSoInEachPart() => EmptyStatesAsync().GetAwaiter().GetResult();
+
+    /// <summary>With no game and no activity yet, each part says so: no card, no lobby line, an empty feed, nobody online and sign-ups off.</summary>
+    private static async Task EmptyStatesAsync()
+    {
+        var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        var home = Home.Create("league-host-dashboard-empty");
+        home.ChooseFolders();
+        var run = Task.Run(() => HostMode.RunAsync(home.Loop));
+        try
+        {
+            using var browser = Browser(home);
+            await WaitForHealthAsync(browser, "ready", run);
+            await home.SignInAsync(browser);
+            var status = await StatusAsync(browser);
+            TestAssert.Equal(0, status.GetProperty("cards").GetArrayLength(), "no game card while no game runs");
+            TestAssert.Equal(JsonValueKind.Null, status.GetProperty("lobbies").ValueKind, "no waiting-lobbies line");
+            TestAssert.Equal(0, status.GetProperty("activity").GetArrayLength(), "an empty feed: nothing has happened since the start");
+            TestAssert.Equal(0, status.GetProperty("onlineCount").GetInt32(), "nobody online");
+            TestAssert.False(status.GetProperty("signUpsOpen").GetBoolean(), "sign-ups are off");
+            TestAssert.Equal(JsonValueKind.Null, status.GetProperty("signUpLink").ValueKind, "no sign-up link while sign-ups are off");
+            var page = await PageAsync(browser, HostDashboard.PagePath);
+            // Without the script each part says Checking…, never an empty state nobody has checked; the script sets the empty lines from the status above.
+            TestAssert.True(page.Contains("<p id=cards-empty class=empty>Checking…</p>", StringComparison.Ordinal) &&
+                page.Contains("<p id=feed-empty class=empty>Checking…</p>", StringComparison.Ordinal), "the static default is Checking…, not an empty state");
+            var script = await browser.GetStringAsync(HostPages.ScriptPath);
+            TestAssert.True(script.Contains("text('cards-empty', 'No games running.')", StringComparison.Ordinal) &&
+                script.Contains("text('feed-empty', 'Nothing yet.')", StringComparison.Ordinal), "the script sets the empty lines once the status has no game and no activity");
+            TestAssert.True(page.Contains("id=attention-section class=attention aria-labelledby=attention-title hidden>", StringComparison.Ordinal),
+                "no attention, so the section is hidden");
+        }
+        finally
+        {
+            await home.StopAsync(run);
+            foreach (var pair in saved) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+        }
+        Delete(home.Root);
+    }
+
+    [Check("server.host-dashboard-status-cards", TimeoutSeconds = 180)]
+    public static void GameCardsAndTheLobbyLineComeFromTheLobbies() => StatusCardsAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// The game cards and the waiting-lobbies line come from the platform's lobbies (a match in progress with its seats and champions, a lobby
+    /// still in team selection), the sign-up link and the address come with the status, and the feed's text arrives as JSON text that the
+    /// page sets as text and never as markup. The lobbies are made with the platform's own calls; no match server runs.
+    /// </summary>
+    private static async Task StatusCardsAsync()
+    {
+        var home = Home.Create("league-host-dashboard-cards");
+        using var accounts = new PlatformAccounts(Path.Combine(home.Root, "accounts"));
+        using var probe = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var port = ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
+        probe.Close();
+        await using var manager = new GameManager(new HostSettings(GameData.Default.Paths.Root, home.Loop.Paths.ServerExecutable,
+            FirstGamePort: port, MaxGames: 1, BindAddress: "127.0.0.1"), Path.Combine(home.Root, "games"));
+        var clock = new Clock { Now = DateTimeOffset.UtcNow.AddSeconds(-90) };
+        var games = new PlatformGames(accounts, manager, "127.0.0.1", clock) { Push = (_, _) => { } };
+        var trees = accounts.RegisterPublic("cardtrees", Password, "Card Trees");
+        var second = accounts.RegisterPublic("cardsecond", Password, "Card Second");
+        var created = (AsObject)games.Create(trees, "Trees", "", 4, 6, AirGameDtos.BlindPickConfigId, "CLASSIC", "NONE");
+        var lobby = Convert.ToInt32(created["id"]);
+        var joined = (AsObject)games.Join(second, lobby, "");
+        games.Start(trees.Id, lobby, Convert.ToInt64(joined["optimisticLock"]));
+        games.Pick(trees.Id, 1);
+        games.Pick(second.Id, 2);
+        games.StartPlayingForTest(lobby);
+        var waiter = accounts.RegisterPublic("cardwaiter", Password, "Card Waiter");
+        games.Create(waiter, "Waiting", "", 4, 6, AirGameDtos.BlindPickConfigId, "CLASSIC", "NONE");
+
+        var settings = new PlatformSettings(home.Game, home.Loop.Paths.ServerExecutable, HttpPort: home.Port, RemotePort: home.RemotePort,
+            AirRoot: home.Air, PublicHost: "amberline.example.test");
+        using var signUp = new HostSelfRegistration(home.Loop, accounts, home.RemotePort, "0123456789ab", on: true);
+        var run = Task.Run(() => RunPageAsync(home, settings, () => [], games.HostBoard, signUp: signUp));
+        try
+        {
+            using var client = home.Client();
+            await WaitForStartAsync(home.Loop, 1, run);
+            await home.SignInAsync(client);
+            home.Loop.Activity.Add("<b>x</b> logged in");
+            var status = await StatusAsync(client);
+            var card = status.GetProperty("cards").EnumerateArray().Single();
+            TestAssert.Equal("3v3 map", card.GetProperty("map").GetString(), "the map's neutral name");
+            TestAssert.Equal("Classic", card.GetProperty("mode").GetString(), "the mode's name");
+            TestAssert.Equal(clock.Now, card.GetProperty("since").GetDateTimeOffset(), "since the game started playing (the lobby's StateSince)");
+            TestAssert.True(card.GetProperty("elapsedSeconds").GetInt32() is >= 90 and < 600,
+                "the whole seconds the status counted since the start (the page shows mm:ss): " + card.GetRawText());
+            TestAssert.False(card.GetProperty("canEnd").GetBoolean(), "a seeded game has no match server to end");
+            TestAssert.Equal($"cardtrees · {AirGameDtos.ChampionNames[1]}", Seats(card, "blue").Single(), "the blue seat: username and champion");
+            TestAssert.Equal($"cardsecond · {AirGameDtos.ChampionNames[2]}", Seats(card, "red").Single(), "the red seat: username and champion");
+            TestAssert.Equal("Lobbies: 1 waiting (3v3 map, 1/6)", status.GetProperty("lobbies").GetString(), "the waiting lobby, as one line");
+            TestAssert.Equal("<b>x</b> logged in", status.GetProperty("activity")[0].GetProperty("text").GetString(),
+                "the feed's text arrives as JSON text; the page sets it as text, never as markup");
+            TestAssert.Equal(home.Loop.Activity.Recent()[0].At.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture),
+                status.GetProperty("activity")[0].GetProperty("time").GetString(), "the feed line's clock time, as the server formats it");
+            TestAssert.True(status.GetProperty("signUpsOpen").GetBoolean(), "sign-ups are on");
+            TestAssert.Equal($"https://amberline.example.test:{home.RemotePort}/register", status.GetProperty("signUpLink").GetString(), "the sign-up link on the friends' port");
+            TestAssert.Equal("amberline.example.test", status.GetProperty("publicHost").GetString(), "the address Copy address copies");
+            var page = await PageAsync(client, HostDashboard.PagePath);
+            TestAssert.True(page.Contains("<template id=card-template>", StringComparison.Ordinal) && page.Contains("<template id=feed-template>", StringComparison.Ordinal),
+                "the page holds the templates the script fills");
+            TestAssert.False(page.Contains("cardtrees", StringComparison.Ordinal) || page.Contains("Card Trees", StringComparison.Ordinal) ||
+                page.Contains("<b>x</b>", StringComparison.Ordinal) || page.Contains("Lobbies: 1", StringComparison.Ordinal),
+                "the page's own markup holds none of the games' names or the feed's text");
+        }
+        finally { await EndPageAsync(home, run); }
+        Delete(home.Root);
+    }
+
+    [Check("server.host-end-game", TimeoutSeconds = 180)]
+    public static void EndGameAsksOnceAndAnswersAGameThatAlreadyEnded() => EndGameAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// End game on a page-only dashboard: a board with two running games and a recording stop. The confirm page names a running game, any
+    /// other id gets "This game has already ended.", an unsigned POST is refused, a signed POST stops the game once and goes back to the
+    /// dashboard (303), and a stop that finds its game gone (RemoteFault 404) answers with the same page, not a failure.
+    /// </summary>
+    private static async Task EndGameAsync()
+    {
+        var home = Home.Create("league-host-end-game");
+        var running = Guid.NewGuid();
+        var vanished = Guid.NewGuid();
+        var cards = new List<DashboardGameCard>
+        {
+            new(running, "3v3 map", "Classic", new DateTimeOffset(2026, 11, 11, 14, 32, 0, TimeSpan.Zero), [new("cardtrees", "Annie")],
+                [new("cardsecond", "Olaf")], true),
+            new(vanished, "5v5 map", "Classic", new DateTimeOffset(2026, 11, 11, 14, 40, 0, TimeSpan.Zero), [new("cardthird", "Ashe")],
+                [new("cardfourth", "Garen")], true),
+        };
+        var ended = new List<Guid>();
+        DashboardBoard Board() { lock (cards) return new([.. cards], null); }
+        Task Stop(Guid id)
+        {
+            lock (cards) cards.RemoveAll(card => card.Id == id);
+            lock (ended) ended.Add(id);
+            if (id == vanished) throw new RemoteFault(404, "Game not found on this host.");
+            return Task.CompletedTask;
+        }
+        var settings = new PlatformSettings(home.Game, home.Loop.Paths.ServerExecutable, HttpPort: home.Port, RemotePort: home.RemotePort, AirRoot: home.Air);
+        var run = Task.Run(() => RunPageAsync(home, settings, () => [], Board, Stop));
+        try
+        {
+            using var client = home.Client();
+            await WaitForStartAsync(home.Loop, 1, run);
+            await home.SignInAsync(client);
+            var end = $"{HostDashboard.PagePath}/games/end";
+
+            using (var unknown = await client.GetAsync($"{end}?id={Guid.NewGuid():D}"))
+            {
+                var answer = await unknown.Content.ReadAsStringAsync();
+                TestAssert.Equal(HttpStatusCode.NotFound, unknown.StatusCode, answer);
+                TestAssert.True(answer.Contains("This game has already ended.", StringComparison.Ordinal), answer);
+            }
+            string confirm;
+            using (var question = await client.GetAsync($"{end}?id={running:D}"))
+            {
+                confirm = await question.Content.ReadAsStringAsync();
+                TestAssert.Equal(HttpStatusCode.OK, question.StatusCode, confirm);
+            }
+            TestAssert.True(confirm.Contains("<h1>End this game?</h1>", StringComparison.Ordinal) &&
+                confirm.Contains("The 3v3 map game (Classic, 2 players) ends for everyone in it.", StringComparison.Ordinal) &&
+                confirm.Contains($"<form method=post action={end} data-wait=", StringComparison.Ordinal) &&
+                confirm.Contains($"name=id value={running:D}", StringComparison.Ordinal), "the confirm page: " + confirm);
+            var token = Token(confirm);
+
+            using (var unsigned = await client.PostAsync(end, new FormUrlEncodedContent([new("id", running.ToString("D"))])))
+            {
+                TestAssert.Equal(HttpStatusCode.BadRequest, unsigned.StatusCode, "a form without its token");
+                TestAssert.True((await unsigned.Content.ReadAsStringAsync()).Contains("The page expired", StringComparison.Ordinal), "the expired page");
+            }
+            TestAssert.Equal(0, ended.Count, "nothing ended without a signed answer");
+
+            using (var answer = await client.PostAsync(end, Form(token, ("id", running.ToString("D")))))
+            {
+                TestAssert.Equal(HttpStatusCode.SeeOther, answer.StatusCode, await answer.Content.ReadAsStringAsync());
+                TestAssert.Equal(HostDashboard.PagePath, answer.Headers.Location?.OriginalString, "back to the dashboard");
+            }
+            TestAssert.Equal(1, ended.Count, "the stop was asked once");
+            TestAssert.Equal(running, ended[0], "for the running game");
+
+            using (var again = await client.PostAsync(end, Form(token, ("id", running.ToString("D")))))
+            {
+                var answer = await again.Content.ReadAsStringAsync();
+                TestAssert.Equal(HttpStatusCode.NotFound, again.StatusCode, answer);
+                TestAssert.True(answer.Contains("This game has already ended.", StringComparison.Ordinal), answer);
+            }
+            TestAssert.Equal(1, ended.Count, "an answer for a game that ended stops nothing");
+
+            using (var gone = await client.PostAsync(end, Form(token, ("id", vanished.ToString("D")))))
+            {
+                var answer = await gone.Content.ReadAsStringAsync();
+                TestAssert.Equal(HttpStatusCode.NotFound, gone.StatusCode, answer);
+                TestAssert.True(answer.Contains("This game has already ended.", StringComparison.Ordinal), "the match server's 404 is the same page: " + answer);
+            }
+            TestAssert.Equal(2, ended.Count, "the stop reached the game that was already gone");
+        }
+        finally { await EndPageAsync(home, run); }
+        Delete(home.Root);
+    }
+
+    [Check("server.host-mode-labels", TimeoutSeconds = 180)]
+    public static void AnOdinGameIsCaptureOnItsCardAndItsConfirmPage() => ModeLabelsAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// The Crystal Scar's mode (ODIN) reads Capture on the host page, never Dominion: a Crystal Scar lobby seeded through the platform's own calls
+    /// reads Capture in status.json, and a running Crystal Scar game (its card made by PlatformGames.CardOf from its lobby, with the match server's
+    /// record that it runs) reads Capture in status.json and on its End game confirm page. No match server runs.
+    /// </summary>
+    private static async Task ModeLabelsAsync()
+    {
+        var home = Home.Create("league-host-mode-labels");
+        using var accounts = new PlatformAccounts(Path.Combine(home.Root, "accounts"));
+        using var probe = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var port = ((IPEndPoint)probe.Client.LocalEndPoint!).Port;
+        probe.Close();
+        await using var manager = new GameManager(new HostSettings(GameData.Default.Paths.Root, home.Loop.Paths.ServerExecutable,
+            FirstGamePort: port, MaxGames: 1, BindAddress: "127.0.0.1"), Path.Combine(home.Root, "games"));
+        var clock = new Clock { Now = DateTimeOffset.UtcNow.AddMinutes(-3) };
+        var games = new PlatformGames(accounts, manager, "127.0.0.1", clock) { Push = (_, _) => { } };
+        var owner = accounts.RegisterPublic("crystalowner", Password, "Crystal Owner");
+        var second = accounts.RegisterPublic("crystalsecond", Password, "Crystal Second");
+        var created = (AsObject)games.Create(owner, "Crystal", "", GameMaps.CrystalScar, 10, AirGameDtos.BlindPickConfigId, GameMaps.DominionMode, "NONE");
+        var lobby = Convert.ToInt32(created["id"]);
+        var joined = (AsObject)games.Join(second, lobby, "");
+        games.Start(owner.Id, lobby, Convert.ToInt64(joined["optimisticLock"]));
+        games.Pick(owner.Id, 1);
+        games.Pick(second.Id, 2);
+        games.StartPlayingForTest(lobby);
+
+        // A Crystal Scar game that runs: its lobby's card, with the match server's record of the game (a stand-in; no process runs here).
+        var running = Guid.NewGuid();
+        var live = PlatformGames.CardOf(new PlatformGames.Lobby(lobby + 1000, "Crystal Live", "", owner.Id, 10)
+        {
+            MapId = GameMaps.CrystalScar, State = "IN_PROGRESS", HostId = running, StateSince = clock.Now,
+            Members = [new PlatformGames.Member(owner, Team.Order) { Champion = 1 }, new PlatformGames.Member(second, Team.Chaos) { Champion = 2 }],
+        }, new RemoteGame(running, "crystalowner", "Playing", port, [], CanStop: true, Error: null));
+
+        var settings = new PlatformSettings(home.Game, home.Loop.Paths.ServerExecutable, HttpPort: home.Port, RemotePort: home.RemotePort, AirRoot: home.Air);
+        var run = Task.Run(() => RunPageAsync(home, settings, () => [], () =>
+        {
+            var board = games.HostBoard();
+            return new DashboardBoard([.. board.Cards, live], board.Lobbies);
+        }));
+        try
+        {
+            using var client = home.Client();
+            await WaitForStartAsync(home.Loop, 1, run);
+            await home.SignInAsync(client);
+            var status = await StatusAsync(client);
+            var cards = status.GetProperty("cards").EnumerateArray().ToArray();
+            var seeded = cards.Single(card => card.GetProperty("id").GetString() == Guid.Empty.ToString());
+            TestAssert.Equal("Capture map", seeded.GetProperty("map").GetString(), "the Crystal Scar's neutral map name");
+            TestAssert.Equal("Capture", seeded.GetProperty("mode").GetString(), "the Crystal Scar's mode ODIN reads Capture");
+            var endable = cards.Single(card => card.GetProperty("id").GetString() == running.ToString());
+            TestAssert.Equal("Capture", endable.GetProperty("mode").GetString(), "a running Crystal Scar game reads Capture too");
+            TestAssert.True(endable.GetProperty("canEnd").GetBoolean(), "the running game can be ended");
+            TestAssert.False(status.GetRawText().Contains("Dominion", StringComparison.Ordinal), "no card says Dominion: " + status.GetRawText());
+
+            using var question = await client.GetAsync($"{HostDashboard.PagePath}/games/end?id={running:D}");
+            var confirm = await question.Content.ReadAsStringAsync();
+            TestAssert.Equal(HttpStatusCode.OK, question.StatusCode, confirm);
+            TestAssert.True(confirm.Contains("The Capture map game (Capture, 2 players) ends for everyone in it.", StringComparison.Ordinal) &&
+                !confirm.Contains("Dominion", StringComparison.Ordinal), "the End game confirm page reads Capture: " + confirm);
+        }
+        finally { await EndPageAsync(home, run); }
+        Delete(home.Root);
+    }
+
+    /// <summary>The seats of one team of a game card, as "username · champion" lines.</summary>
+    private static string[] Seats(JsonElement card, string team) =>
+        [.. card.GetProperty(team).EnumerateArray().Select(seat => $"{seat.GetProperty("player").GetString()} · {seat.GetProperty("champion").GetString()}")];
+
+    /// <summary>A page-only start's end: the loop stops as Stop does, and the run is left once it has finished.</summary>
+    private static async Task EndPageAsync(Home home, Task run)
+    {
+        home.Loop.Stop();
+        try { await run.WaitAsync(TimeSpan.FromSeconds(60)); }
+        catch (TimeoutException) { }
+    }
+
+    private sealed class Clock : TimeProvider
+    {
+        public DateTimeOffset Now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
     private static int MaxGames(Home home)
     {
         using var settings = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings));
         return settings.RootElement.GetProperty("maxGames").GetInt32();
     }
 
-    /// <summary>A page-only start: the gate and the dashboard on the home's page port, run by the home's loop until Stop or Restart.</summary>
-    private static async Task<bool> RunPageAsync(Home home, PlatformSettings settings, Func<IReadOnlyList<DashboardGame>> games)
+    /// <summary>
+    /// A page-only start: the gate and the dashboard on the home's page port, run by the home's loop until Stop or Restart. The game cards,
+    /// the end-game stop and the sign-up switch are the dashboard's own seams (<paramref name="board"/> and <paramref name="endGame"/> default
+    /// to none).
+    /// </summary>
+    private static async Task<bool> RunPageAsync(Home home, PlatformSettings settings, Func<IReadOnlyList<DashboardGame>> games,
+        Func<DashboardBoard>? board = null, Func<Guid, Task>? endGame = null, HostSelfRegistration? signUp = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
         builder.Logging.ClearProviders();
@@ -574,7 +935,7 @@ public static class HostDashboardChecks
         builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(home.Loop.Paths.Keys));
         await using var app = builder.Build();
         HostGate.Use(app, home.Port, home.Loop.Sessions, HostDashboard.PagePath);
-        await using var dashboard = new HostDashboard(home.Loop, settings, () => [], games);
+        await using var dashboard = new HostDashboard(home.Loop, settings, () => [], games, signUp: signUp, board: board, endGame: endGame);
         dashboard.Map(app);
         return await home.Loop.RunAsync(app, home.Port);
     }

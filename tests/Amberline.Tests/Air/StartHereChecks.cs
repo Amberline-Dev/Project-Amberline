@@ -77,7 +77,7 @@ public static class StartHereChecks
                 $"--install-to \"{installFolder}\" --game \"{game}\" --air \"{air}\" --delete-originals",
                 $"Summary Install folder: {installFolder} Now: a new window named Amberline copies the program, the game and the AIR client into that folder.",
                 "Once the copies are checked, it deletes the originals. Then its page opens in your web browser.",
-                "On that page: set up your server, then choose Invite a friend for each friend.", "From now on: start Amberline from its desktop icon.",
+                "On that page: set up your server, then choose Users and Add a user.", "From now on: start Amberline from its desktop icon.",
                 "double-click START-HERE.cmd again. Log:", "DRY RUN finished");
             AssertPlain(home.Output, root);
             foreach (var gone in new[] { "Git:", "needs Git,", "LLVM", "Build Tools" })
@@ -121,9 +121,9 @@ public static class StartHereChecks
                 "Nothing is copied or deleted on this PC.", $"-Output '{package}'",
                 $"Step 6 of 6: Putting it on your server Do these in order: 1. Copy this folder to your server: {package}",
                 "2. Copy your game and AIR client folders to the server too.", "3. On the server, edit", "4. In your hosting company's firewall", "5. On the server",
-                "6. Make each friend a login", $"7. Give each friend their login and this Play file: {Path.Combine(package, "Play.cmd")}",
+                "6. Make each user a login", $"7. Give each user their login and this Play file: {Path.Combine(package, "Play.cmd")}",
                 "four numbers with dots", $"Summary Server package folder: {package} Built. File Explorer shows the folder now. Next: the checklist above.",
-                "The same folder keeps your friends' Play files working. Log:");
+                "The same folder keeps your users' Play files working. Log:");
             AssertPlain(rented.Output, root);
             TestAssert.False(rented.Output.Contains("Delete the originals", StringComparison.Ordinal), "a rented server deletes nothing:\n" + rented.Output);
             TestAssert.False(rented.Output.Contains("would install it with", StringComparison.Ordinal), "a no installs nothing:\n" + rented.Output);
@@ -157,7 +157,7 @@ public static class StartHereChecks
             TestAssert.Equal(0, update.ExitCode, update.Output);
             // Batch 645: the installed version (none here) and this download's, the update that also repairs, no second install.
             AssertHas(update.Output, "the update", $"Your Amberline without a version number is in: {existing}",
-                "This download builds 0.0.", "Updating also repairs it; your settings, logins and friends stay.", "uninstall this one first",
+                "This download builds 0.0.", "Updating also repairs it; your settings, logins and users stay.", "uninstall this one first",
                 "Update this Amberline now? Type Y to update, N to keep it, or R to build a rented server package. Y", "Steps 1 and 2 of 6: not needed. This PC has Amberline already.",
                 $"-GameRoot '{game}'", $"-AirRoot '{air}'", $"--install-to \"{existing}\" in a new window",
                 $"Summary Install folder: {existing} Now: a new window named Amberline asks you to press Enter, then updates to 0.0.");
@@ -508,7 +508,7 @@ public static class StartHereChecks
                 "Steps 4 and 5 of 6: not needed. This download is Amberline 1.4.0, built already.", "Step 6 of 6: Installing and starting Amberline",
                 $"DRY RUN: would start {starter} --install-to \"{installFolder}\" --game \"{release}\" --air \"{air}\" --delete-originals in a new window.",
                 $"Summary Install folder: {installFolder} Now: a new window named Amberline copies the program, the game and the AIR client into that folder.",
-                "On that page: set up your server, then choose Invite a friend for each friend.",
+                "On that page: set up your server, then choose Users and Add a user.",
                 "To update: choose Update now on its page, or unzip the newest release and double-click its START-HERE.cmd.", "DRY RUN finished");
             foreach (var gone in new[] { "Step 4 of 6", "Step 5 of 6", "Build tools", "would build", "would install it with", "unpack", "-Layout" })
                 TestAssert.False(home.Output.Contains(gone, StringComparison.Ordinal), $"the zip's run shows <{gone}>:\n{home.Output}");

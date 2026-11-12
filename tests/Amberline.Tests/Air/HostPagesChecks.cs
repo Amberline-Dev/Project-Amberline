@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Amberline.Data;
 using Amberline.Platform;
@@ -9,14 +10,108 @@ namespace Amberline.Tests.Air;
 /// <summary>
 /// The home host's pages as a keyboard and a screen reader meet them (batch 638): every page <c>--home</c> serves, rendered by the
 /// real Platform in setup mode and in the full Platform. Temporary folders, free loopback ports, made-up logins (<c>host_pages</c>,
-/// <c>friend1</c>); no browser, so what a page looks like (contrast, 360 px, 200% zoom) stays the owner's to see.
+/// <c>user1</c>); no browser, so what a page looks like (contrast, 360 px, 200% zoom) stays the owner's to see.
 /// </summary>
 public static class HostPagesChecks
 {
     private const string Password = "Synthetic-pages-Pw-12";
 
+    /// <summary>The pages the walk renders while server.host-pages-say-users runs it (null for every other check).</summary>
+    private static readonly AsyncLocal<List<(string What, string Text)>?> Walked = new();
+
     [Check("server.host-pages-accessible", TimeoutSeconds = 240)]
     public static void EveryHostPageIsLabelledLandmarkedAndStyledFromItsOwnFile() => PagesAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Layout C and the /register look (batch 748): the Dashboard has the wordmark, the gold frame and the sidebar with the server's
+    /// name and Dashboard marked; Updates shows its badge only once the update check knows a newer release; a first-run step has the frame and
+    /// no sidebar; the sheet is dark only; no page has an inline style.
+    /// </summary>
+    [Check("server.host-shell-layout-c", TimeoutSeconds = 180)]
+    public static void ShellIsLayoutCInTheRegisterLook() => ShellAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Host pages redesign, task 5: no host page says "friend", since the server serves the general public. It walks the pages of
+    /// <see cref="EveryHostPageIsLabelledLandmarkedAndStyledFromItsOwnFile"/> and searches what a person reads on each: the text outside
+    /// the tags, the values of alt, title, aria-label, placeholder and data-wait, the value of each button, and the status the Dashboard's
+    /// script fills in (its string values; JSON names and check ids are not words on the page).
+    /// </summary>
+    [Check("server.host-pages-say-users", TimeoutSeconds = 240)]
+    public static void NoHostPageSaysFriend() => Task.Run(SayUsersAsync).GetAwaiter().GetResult();
+
+    private static async Task SayUsersAsync()
+    {
+        // Set inside Task.Run's own flow, so only this check's walk hands its pages over.
+        var walked = new List<(string What, string Text)>();
+        Walked.Value = walked;
+        await PagesAsync();
+        var failures = new List<string>();
+        foreach (var (what, page) in walked)
+        {
+            var words = what == "status.json" ? JsonWords(page) : VisibleText(page);
+            foreach (Match match in Regex.Matches(words, "friend", RegexOptions.IgnoreCase))
+                failures.Add($"{what}: ...{words[Math.Max(0, match.Index - 60)..Math.Min(words.Length, match.Index + 60)]}...");
+        }
+        TestAssert.True(walked.Count > 0 && failures.Count == 0,
+            $"the walk rendered {walked.Count} pages; visible text says friend {failures.Count} times:\n" + string.Join("\n", failures));
+    }
+
+    private static async Task ShellAsync()
+    {
+        var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        // A new login takes its first champion from the champion list: read it the suite's way first (see HostInviteChecks).
+        var champions = ChampionCatalog.All.Count;
+        var home = Home.Create("league-host-shell");
+        long hostId;
+        using (var store = new PlatformAccounts(home.Loop.Paths.Data)) hostId = store.RegisterPublic("host_shell", Password, "Host Shell").Id;
+        HostInviteChecks.WriteSettings(home, new { serverName = "Test Server", publicHost = "amberline.example.test", addressSource = HostAddress.Typed, hostAccount = hostId });
+        // The running build's version (BUILD.json beside its app folder), which the Platform reads once when it starts.
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(home.Loop.Paths.App)!, "BUILD.json"), "{\"version\":\"1.0.0\"}");
+        var run = Task.Run(() => HostMode.RunAsync(home.Loop));
+        try
+        {
+            using var browser = home.Client();
+            await WaitForHealthAsync(browser, "ready", run);
+            await home.SignInAsync(browser);
+
+            var dashboard = await browser.GetStringAsync(HostDashboard.PagePath);
+            TestAssert.True(dashboard.Contains("<header><p class=wordmark>Amberline</p></header>", StringComparison.Ordinal) &&
+                dashboard.Contains("<div class=frame><nav class=side aria-label=\"Amberline\"><p class=server><span class=light aria-hidden=true></span>Test Server</p>", StringComparison.Ordinal) &&
+                dashboard.Contains("<a href=/host aria-current=page>Dashboard</a>", StringComparison.Ordinal) &&
+                dashboard.Contains("<main id=main tabindex=-1 class=page>", StringComparison.Ordinal), "the Dashboard's shell is layout C: " + dashboard);
+            TestAssert.True(dashboard.Contains("<a href=/host/updates>Updates</a>", StringComparison.Ordinal), "no newer release, no badge: " + dashboard);
+
+            // The update check knows a newer release (updates.json, read on each page; the file is all it reads, nothing asks GitHub): the badge shows.
+            Directory.CreateDirectory(Path.GetDirectoryName(HostUpdates.StateFile(home.Loop.Paths.Data))!);
+            File.WriteAllText(HostUpdates.StateFile(home.Loop.Paths.Data), "{\"latest\":\"9.9.9\"}");
+            var badged = await browser.GetStringAsync(HostDashboard.PagePath);
+            TestAssert.True(badged.Contains("<a href=/host/updates>Updates <span class=badge>1<span class=vh> update available</span></span></a>", StringComparison.Ordinal),
+                "a newer release shows the badge on Updates: " + badged);
+
+            // A first-run step (step 4, the address): the frame without a sidebar, and the step's indicator inside it.
+            var address = await browser.GetStringAsync("/host/setup/address");
+            TestAssert.True(address.Contains("<div class=frame><main id=main tabindex=-1 class=page><p class=step>Step 4 of 4: Your address</p>", StringComparison.Ordinal) &&
+                !address.Contains("class=side", StringComparison.Ordinal), "a first-run step has the frame and no sidebar: " + address);
+            foreach (var page in new[] { dashboard, badged, address })
+                TestAssert.False(page.Contains(" style=", StringComparison.Ordinal), "no inline style: " + page);
+
+            var css = await browser.GetStringAsync(HostPages.StylePath);
+            TestAssert.True(css.Contains("--gold:#c9ab6f", StringComparison.Ordinal) && css.Contains(".side", StringComparison.Ordinal) &&
+                css.Contains("color-scheme:dark", StringComparison.Ordinal) && !css.Contains("prefers-color-scheme", StringComparison.Ordinal),
+                "the host sheet is the register look, dark only");
+            // Batch 748: the sign-up sheet keeps its bytes (the hash of batch 706's text), so its versioned address has not changed.
+            TestAssert.Equal("/register/style.css?v=927f2fbdd95e", HostPages.PublicStyleHref, "the sign-up sheet's bytes changed");
+            // Final fix 4: the version line spans the footer, so it stands centred under the frame (the sheet's paragraphs stop at 65ch).
+            TestAssert.True(css.Contains("footer p{max-width:none;margin:0}", StringComparison.Ordinal), "the footer's line is not held to 65ch");
+        }
+        finally
+        {
+            await home.StopAsync(run);
+            foreach (var pair in saved) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+        }
+        TestAssert.Equal(champions, ChampionCatalog.All.Count, "the champion list stays as it was");
+        Delete(home.Root);
+    }
 
     private static async Task PagesAsync()
     {
@@ -33,7 +128,7 @@ public static class HostPagesChecks
 
             // A browser without the host's session: the gate's page is bare (no server name, no nav), and the stylesheet is refused.
             var refused = await PageAsync(stranger, HttpMethod.Get, HostSteps.NamePath, HttpStatusCode.Forbidden, HostPages.Policy);
-            TestAssert.True(refused.Contains("<p class=brand>Amberline</p>", StringComparison.Ordinal) && !refused.Contains("<nav", StringComparison.Ordinal),
+            TestAssert.True(refused.Contains("<p class=wordmark>Amberline</p>", StringComparison.Ordinal) && !refused.Contains("<nav", StringComparison.Ordinal),
                 "the refusal page names no server and has no nav: " + refused);
             using (var sheet = await stranger.GetAsync(HostPages.StylePath))
                 TestAssert.Equal(HttpStatusCode.Forbidden, sheet.StatusCode, "the stylesheet is a host route");
@@ -48,7 +143,7 @@ public static class HostPagesChecks
                 TestAssert.Equal(HttpStatusCode.Redirect, named.StatusCode, "the name is saved");
             var folders = await FolderPageAsync(browser);
             Step(folders, 2);
-            TestAssert.True(folders.Contains("<strong>Friday League</strong> · Amberline", StringComparison.Ordinal), "the header names the server: " + folders);
+            TestAssert.True(folders.Contains("<p class=server>Friday League</p>", StringComparison.Ordinal), "the header names the server: " + folders);
             TestAssert.True(folders.Contains("<a href=/host/setup/name>Back</a><button>Continue</button>", StringComparison.Ordinal),
                 "Back and Continue side by side, at the end of the step: " + folders);
             Errors(Step(await FormAsync(browser, "/setup", HttpStatusCode.BadRequest, HostPages.Policy,
@@ -81,10 +176,18 @@ public static class HostPagesChecks
             var dashboard = Nav(await PageAsync(browser, HttpMethod.Get, HostDashboard.PagePath, HttpStatusCode.OK, HostDashboard.Policy), "Dashboard");
             TestAssert.True(Regex.IsMatch(dashboard, "<div aria-live=polite><p class=headline>") && dashboard.Contains("<th scope=col>Username</th>", StringComparison.Ordinal),
                 "the status is a live region and the online table has header cells: " + dashboard);
-            Nav(await PageAsync(browser, HttpMethod.Get, HostInvite.InvitePath, HttpStatusCode.OK, HostDashboard.Policy), "Invite a friend");
-            Errors(await FormAsync(browser, HostInvite.InvitePath, HttpStatusCode.BadRequest, HostDashboard.Policy, ("username", "x!"), ("mode", "maxed")),
-                "username");
-            var ready = await FormAsync(browser, HostInvite.InvitePath, HttpStatusCode.OK, HostDashboard.Policy, ("username", "friend1"), ("mode", "maxed"));
+            // The script fills the status card from /host/status.json, so its words are on the page too (server.host-pages-say-users reads them).
+            var dashboardStatus = await browser.GetStringAsync(HostDashboard.PagePath + "/status.json");
+            Walked.Value?.Add(("status.json", dashboardStatus));
+            // Batch 748: Add a user (Invite a friend) is part of Users.
+            Nav(await PageAsync(browser, HttpMethod.Get, HostInvite.AddPath, HttpStatusCode.OK, HostDashboard.Policy), "Users");
+            var badName = await FormAsync(browser, HostInvite.AddPath, HttpStatusCode.BadRequest, HostDashboard.Policy, ("username", "x!"), ("mode", "maxed"));
+            Errors(badName, "username");
+            // Batch 748: the problem stands beside its field, above the input, where the host's sheet shows it (see StylesheetAsync).
+            TestAssert.True(badName.Contains("<p class=field-error id=username-error>", StringComparison.Ordinal) &&
+                badName.IndexOf("<p class=field-error id=username-error>", StringComparison.Ordinal) < badName.IndexOf("<input id=username ", StringComparison.Ordinal),
+                "the username's problem stands beside its field: " + badName);
+            var ready = await FormAsync(browser, HostInvite.AddPath, HttpStatusCode.OK, HostDashboard.Policy, ("username", "user1"), ("mode", "maxed"));
             TestAssert.True(ready.Contains("<button type=button data-copy=message>Copy</button> <span id=copy-status role=status></span>", StringComparison.Ordinal),
                 "Copy says Copied in a live region: " + ready);
             // Batch 643: when the browser cannot copy, the script selects the text, so Ctrl+C copies it.
@@ -103,17 +206,25 @@ public static class HostPagesChecks
                 script.Contains("if (byId('online-table')?.hasAttribute('data-live')) setInterval(online, 5000);", StringComparison.Ordinal) &&
                 script.Contains("'Nobody is logged in.' : rows.length === 1 ? '1 person is logged in.' : `${rows.length} people are logged in.`", StringComparison.Ordinal),
                 "page.js updates Advanced's table: " + script);
-            var friends = Nav(await PageAsync(browser, HttpMethod.Get, HostInvite.FriendsPath, HttpStatusCode.OK, HostDashboard.Policy), "Friends");
+            // Batch 748: Users (Friends): New password, Disable (Remove access) and Enable (Give access again), each its own route, and Delete
+            // behind its confirm page.
+            const string Users = HostInvite.UsersPath;
+            var friends = Nav(await PageAsync(browser, HttpMethod.Get, Users, HttpStatusCode.OK, HostDashboard.Policy), "Users");
             var friend = Regex.Match(friends, "name=accountId value=(\\d+)>").Groups[1].Value;
-            TestAssert.True(friends.Contains("New password<span class=vh> for friend1</span>", StringComparison.Ordinal), "each button names its friend: " + friends);
-            await FormAsync(browser, HostInvite.FriendsPath + "/password", HttpStatusCode.OK, HostDashboard.Policy, HostInvite.FriendsPath, ("accountId", friend));
-            // Batch 646: a removed friend's row says so and has one button, named for the friend; the short words of Last seen never break.
-            var removed = await FormAsync(browser, HostInvite.FriendsPath + "/remove", HttpStatusCode.OK, HostDashboard.Policy, HostInvite.FriendsPath, ("accountId", friend));
-            TestAssert.True(removed.Contains("<td class=words><b>Access removed</b> on ", StringComparison.Ordinal) &&
-                removed.Contains("Give access again<span class=vh> for friend1</span>", StringComparison.Ordinal), "the removed friend's row: " + removed);
-            await FormAsync(browser, HostInvite.FriendsPath + "/password", HttpStatusCode.OK, HostDashboard.Policy, HostInvite.FriendsPath, ("accountId", friend));
-            await FormAsync(browser, HostInvite.FriendsPath + "/remove", HttpStatusCode.OK, HostDashboard.Policy, HostInvite.FriendsPath, ("accountId", friend));
-            await FormAsync(browser, HostInvite.FriendsPath + "/remove", HttpStatusCode.BadRequest, HostDashboard.Policy, HostInvite.FriendsPath, ("accountId", "0"));
+            TestAssert.True(friends.Contains("New password<span class=vh> for user1</span>", StringComparison.Ordinal), "each button names its user: " + friends);
+            await FormAsync(browser, Users + "/password", HttpStatusCode.OK, HostDashboard.Policy, Users, ("accountId", friend));
+            // Batch 646: a disabled user's row says so, and its buttons are named for the user; the short words of the status never break.
+            var removed = await FormAsync(browser, Users + "/disable", HttpStatusCode.OK, HostDashboard.Policy, Users, ("accountId", friend));
+            TestAssert.True(removed.Contains("<span class=mark>Disabled</span></td><td class=words>Never seen here</td>", StringComparison.Ordinal) &&
+                removed.Contains("Enable<span class=vh> user1</span>", StringComparison.Ordinal), "the disabled user's row: " + removed);
+            await FormAsync(browser, Users + "/enable", HttpStatusCode.OK, HostDashboard.Policy, Users, ("accountId", friend));
+            await FormAsync(browser, Users + "/disable", HttpStatusCode.OK, HostDashboard.Policy, Users, ("accountId", friend));
+            await FormAsync(browser, Users + "/disable", HttpStatusCode.NotFound, HostDashboard.Policy, Users, ("accountId", "0"));
+            var hostLogin = Regex.Match(File.ReadAllText(home.Loop.Paths.Settings), "\"hostAccount\":\\s*(\\d+)").Groups[1].Value;
+            await PageAsync(browser, HttpMethod.Get, $"{Users}/delete?id={hostLogin}", HttpStatusCode.BadRequest, HostDashboard.Policy);
+            Nav(await PageAsync(browser, HttpMethod.Get, $"{Users}/delete?id={friend}", HttpStatusCode.OK, HostDashboard.Policy), "Users");
+            TestAssert.True(Nav(await FormAsync(browser, Users + "/delete", HttpStatusCode.OK, HostDashboard.Policy, $"{Users}/delete?id={friend}", ("accountId", friend)), "Users")
+                .Contains("<p class=empty>No users yet. Add one or turn on sign-ups.</p>", StringComparison.Ordinal), "user1 is deleted");
             await PageAsync(browser, HttpMethod.Get, "/host/play", HttpStatusCode.OK, HostDashboard.Policy);
             await PageAsync(browser, HttpMethod.Post, "/host/play", HttpStatusCode.BadRequest, HostDashboard.Policy);
             Nav(await PageAsync(browser, HttpMethod.Get, "/host/updates", HttpStatusCode.OK, HostDashboard.Policy), "Updates");
@@ -284,7 +395,7 @@ public static class HostPagesChecks
 
     private const string CopyPath = "/setup/copy";
 
-    /// <summary>The stylesheet: its own type, a host route's policy, both themes and a visible focus.</summary>
+    /// <summary>The stylesheet: its own type, a host route's policy, dark only and a visible focus.</summary>
     private static async Task StylesheetAsync(HttpClient browser, string policy)
     {
         using var sheet = await browser.GetAsync(HostPages.StyleHref);
@@ -296,16 +407,33 @@ public static class HostPagesChecks
         TestAssert.Equal(policy, string.Join(";", sheet.Headers.GetValues("Content-Security-Policy")), "the stylesheet's policy");
         TestAssert.Equal("nosniff", string.Join(";", sheet.Headers.GetValues("X-Content-Type-Options")), "nosniff");
         var css = await sheet.Content.ReadAsStringAsync();
-        TestAssert.True(css.Contains("@media (prefers-color-scheme:dark)", StringComparison.Ordinal) && css.Contains(":focus-visible{outline:3px", StringComparison.Ordinal) &&
-            !css.Contains("@import", StringComparison.Ordinal) && !css.Contains("url(", StringComparison.Ordinal), "both themes, a visible focus, nothing fetched: " + css);
+        TestAssert.True(css.Contains("color-scheme:dark", StringComparison.Ordinal) && !css.Contains("prefers-color-scheme", StringComparison.Ordinal) &&
+            css.Contains(":focus-visible{outline:3px", StringComparison.Ordinal) && !css.Contains("@import", StringComparison.Ordinal) &&
+            !css.Contains("url(", StringComparison.Ordinal), "dark only, a visible focus, nothing fetched: " + css);
+        // Batch 748: a field's problem is visible beside its field (the sign-up sheet's clipped rule is not in this sheet), the sheen stops for
+        // reduced motion, and forced colours keep the borders and the sidebar's current page as an outline (a colour alone would vanish).
+        TestAssert.True(css.Contains(".field-error{margin:0 0 6px;color:var(--bad);font-weight:600}", StringComparison.Ordinal) &&
+            !css.Contains(".field-error{position:absolute", StringComparison.Ordinal), "the host's field problem is visible: " + css);
+        TestAssert.True(css.Contains("@media (prefers-reduced-motion:reduce){.wordmark{animation:none}}", StringComparison.Ordinal), "the sheen stops for reduced motion");
+        TestAssert.True(css.Contains("@media (forced-colors:active){.frame,.side,.tile,.game-card,.folder,.status,.mark,.badge,.warn,.actions a:not(.button){border-color:CanvasText}",
+            StringComparison.Ordinal) && css.Contains(".side a[aria-current=page]{outline:2px solid;outline-offset:-2px}", StringComparison.Ordinal) &&
+            css.Contains(".side a[aria-current=page]:focus-visible{outline:3px solid;outline-offset:2px}", StringComparison.Ordinal),
+            "forced colours keep the borders, the current page's outline and the focus ring over it");
+        // Batch 748: a focused field or select keeps the host's 3 px ring: the sign-up's shared field rule hides the outline (outline:none, 0,3,1).
+        TestAssert.True(css.Contains("input:not([type=radio]):not([type=checkbox]):focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}",
+            StringComparison.Ordinal), "a focused field keeps the 3 px focus ring");
+        // Batch 748: Back and Cancel in an action row keep the 44 px secondary button, and the host's borders are the 3:1 tokens (see HostRules).
+        TestAssert.True(css.Contains(".actions a:not(.button){display:inline-flex;align-items:center;justify-content:center;min-height:44px;", StringComparison.Ordinal) &&
+            css.Contains(":root{--line:#8593a8;--gold-dim:#806a3a;", StringComparison.Ordinal), "the action links are 44 px buttons; the host's borders reach 3:1");
         // Batch 643, seen in a browser: a field with a problem gets the red border (its rule outranks the fields' own), the nav is not
         // held to the text's 65ch, and a table's headers and buttons never break inside a word on a narrow screen.
         // Batch 646: Friends' Last seen words never break (td.words), and notices and cards fill the column like the other boxes.
         // Batch 648: a long folder path (the copy offer, the uninstall page) wraps instead of scrolling the page sideways at 400 px, and
         // Advanced's wide tables scroll in their own region (hidden with an empty Online now table).
-        foreach (var rule in new[] { "input[aria-invalid=true]:not([type=radio]):not([type=checkbox]){border-color:var(--bad)}", "nav ul{display:flex;flex-wrap:wrap;gap:4px 6px;max-width:none;",
+        foreach (var rule in new[] { "input[aria-invalid=true]:not([type=radio]):not([type=checkbox]){border-color:var(--bad)", ".side ul{display:flex;flex-wrap:wrap;gap:4px;max-width:none;",
                      "th{font-weight:600;overflow-wrap:normal}", "td button{min-height:36px;padding:4px 12px;overflow-wrap:normal}", "td.words{overflow-wrap:normal}",
-                     ".problem,.warn,.notice{max-width:none;", ".cards{max-width:none}", "main{padding-top:24px;padding-bottom:40px;overflow-wrap:anywhere}",
+                     ".notice,.problem,.error-summary{position:relative;max-width:none;", ".warn{position:relative;max-width:none;", ".cards{max-width:none}",
+                     ".page{min-width:0;padding:20px 16px 24px;overflow-wrap:anywhere}",
                      ".wide{overflow-x:auto;margin:0 0 16px}", ".wide:has(>table[hidden]){display:none}",
                      "@media (max-width:23rem){.wide th,.wide td{padding-right:8px}.wide td button{padding-left:8px;padding-right:8px}}" })
             TestAssert.True(css.Contains(rule, StringComparison.Ordinal), "the stylesheet has " + rule);
@@ -356,6 +484,7 @@ public static class HostPagesChecks
     private static async Task<string> CheckedAsync(HttpResponseMessage answer, string what, HttpStatusCode status, string policy)
     {
         var page = await answer.Content.ReadAsStringAsync();
+        Walked.Value?.Add((what, page));
         TestAssert.Equal(status, answer.StatusCode, $"{what}: {page}");
         TestAssert.Equal("text/html", answer.Content.Headers.ContentType?.MediaType, what);
         var csp = string.Join(";", answer.Headers.GetValues("Content-Security-Policy"));
@@ -389,7 +518,7 @@ public static class HostPagesChecks
         Is(style is null
             ? Count("header") == 1 && Count("main") == 1 && Count("footer") == 1 && Count("nav") <= 1
             : Count("header") == 1 && Count("main") == 1 && Count("footer") == 0 && Count("nav") == 0, "header, main, footer once each (sign-up: no footer)");
-        Is(tags.First(tag => tag.Name == "a").Attributes == " class=skip href=#main" && page.Contains("<main id=main tabindex=-1>", StringComparison.Ordinal),
+        Is(tags.First(tag => tag.Name == "a").Attributes == " class=skip href=#main" && page.Contains("<main id=main tabindex=-1", StringComparison.Ordinal),
             "a skip link to the main content comes first");
         Is(page.Contains($"<link rel=stylesheet href=\"{style ?? HostPages.StyleHref}\">", StringComparison.Ordinal), "the stylesheet file, at its versioned address");
 
@@ -469,13 +598,16 @@ public static class HostPagesChecks
         ["Copy the game files"] = "folder step's offer: copies the game and the AIR client into the install folder (not text: verb and object)",
         ["Use them where they are"] = "folder step's offer: the other answer to the offer's question",
         ["Try again"] = "a copy that failed: back to the offer",
-        ["Create their login"] = "Invite a friend: makes the friend's login (verb and object)",
+        ["Create their login"] = "Add a user: makes the user's login (verb and object)",
         ["Create your login"] = "the friends' port's sign-up page (batch 656): makes the person's own login (verb and object)",
-        ["Invite a friend"] = "Friends: the nav's page of that name",
-        ["Invite another friend"] = "a friend's ready page: Invite a friend again",
-        ["Give your address"] = "Invite before the address step: goes to it",
-        ["New password"] = "Friends: a new password for that friend",
-        ["Give access again"] = "Friends: a new password for a friend whose access was removed",
+        ["Add another user"] = "a user's ready page: Add a user again (batch 748; it was Invite another friend)",
+        ["Give your address"] = "Add a user before the address step: goes to it",
+        ["New password"] = "Users: a new password for that user",
+        ["Disable"] = "Users (batch 748; it was Remove access): a password nobody knows, the user logged out; Enable undoes it",
+        ["Enable"] = "Users (batch 748; it was Give access again): a new password for a disabled user, shown once",
+        ["Delete"] = "Users (batch 748): opens the confirm page that deletes the user; nothing is deleted yet",
+        ["Delete user"] = "the Delete confirm page (batch 748): deletes the login for good (verb and object)",
+        ["Get the Play file"] = "Users (batch 748): downloads the server's Play file to send (verb and object)",
         ["Download the Play file"] = "the address-change card: H8's download; the sign-up page's done page (batch 656)",
         ["Hide"] = "a card's own button: hides that card",
         ["Make new Play files"] = "the certificate card and its page: cannot be undone (verb and object)",
@@ -485,6 +617,10 @@ public static class HostPagesChecks
         ["Test again"] = "the network cards: runs the network test again",
         ["Stop Amberline"] = "the dashboard and the Stop page: ends games (verb and object)",
         ["Restart Amberline"] = "the dashboard and the Restart page: ends games (verb and object)",
+        ["Copy sign-up link"] = "the dashboard: copies the sign-up link while sign-ups are on (verb and object)",
+        ["Copy address"] = "the dashboard: copies the address friends type (verb and object)",
+        ["Add a user"] = "the dashboard: opens the form that makes a user's login (verb and object)",
+        ["End game"] = "the dashboard's game cards and their confirm page: ends a running game (verb and object)",
         ["Check now"] = "Updates: asks GitHub once",
         ["Update now"] = "Updates and its confirm (batch 666): downloads the newer release, checks it and starts its installer",
         ["Send to players"] = "Advanced: sends the notice",
@@ -501,8 +637,8 @@ public static class HostPagesChecks
     private static readonly string[] Slow =
     [
         "^/host/play$", "^/host/firewall$", "^/host/network$", "^/host/stop$", "^/host/restart$", "^/host/certificate", "^/host/updates$", "^/host/updates/install$",
-        "^/host/settings/uninstall$", "^/host/friends/password$", "^/manage/reward-code/create$", "^/host/setup/address$", "^/host/settings/address$",
-        "^/setup$", "^/setup/copy$", "^/host/settings/folders$", "^/host/settings/folders/copy$",
+        "^/host/settings/uninstall$", "^/host/users/password$", "^/host/users/enable$", "^/manage/reward-code/create$", "^/host/setup/address$", "^/host/settings/address$",
+        "^/setup$", "^/setup/copy$", "^/host/settings/folders$", "^/host/settings/folders/copy$", "^/host/games/end$",
     ];
 
     /// <summary>A first-run step: its indicator, Back and Continue at its end, and no nav.</summary>
@@ -526,10 +662,46 @@ public static class HostPagesChecks
         TestAssert.True(page.IndexOf("class=error-summary", StringComparison.Ordinal) < page.IndexOf("<form", StringComparison.Ordinal), "the summary comes before the form");
     }
 
+    /// <summary>
+    /// A page's visible text: its text outside the tags (comments, scripts and styles left out), then the values a person reads, which are the
+    /// values of alt, title, aria-label, placeholder and data-wait, and each button's value.
+    /// </summary>
+    private static string VisibleText(string page)
+    {
+        var markup = Regex.Replace(page, "<!--.*?-->|<(script|style)\\b.*?</\\1>", " ", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        var values = Regex.Matches(markup, "\\s(?:alt|title|aria-label|placeholder|data-wait)=(?:\"([^\"]*)\"|([^\\s>\"]+))", RegexOptions.IgnoreCase)
+            .Select(match => match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value);
+        var buttons = Regex.Matches(markup, "<(button|input)(\\s[^>]*)?>", RegexOptions.IgnoreCase)
+            .Where(tag => tag.Groups[1].Value.Equals("button", StringComparison.OrdinalIgnoreCase) ||
+                Regex.IsMatch(tag.Groups[2].Value, "\\stype=(?:submit|button|reset)\\b", RegexOptions.IgnoreCase))
+            .Select(tag => Regex.Match(tag.Groups[2].Value, "\\svalue=(?:\"([^\"]*)\"|([^\\s>\"]+))") is { Success: true } value
+                ? (value.Groups[1].Success ? value.Groups[1].Value : value.Groups[2].Value) : "");
+        var text = Regex.Replace(markup, "<[^>]+>", " ");
+        return WebUtility.HtmlDecode(string.Join(" ", text, string.Join(" ", values), string.Join(" ", buttons)));
+    }
+
+    /// <summary>The status JSON's words: every string value except a check's id (an identifier); the property names are not values.</summary>
+    private static string JsonWords(string json)
+    {
+        var words = new List<string>();
+        void Walk(JsonElement element, string name)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.String when name != "id": words.Add(element.GetString()!); break;
+                case JsonValueKind.Array: foreach (var item in element.EnumerateArray()) Walk(item, ""); break;
+                case JsonValueKind.Object: foreach (var property in element.EnumerateObject()) Walk(property.Value, property.Name); break;
+            }
+        }
+        using var document = JsonDocument.Parse(json);
+        Walk(document.RootElement, "");
+        return string.Join(" ", words);
+    }
+
     /// <summary>A full-Platform page: the nav names it as the current page, once.</summary>
     private static string Nav(string page, string current)
     {
-        TestAssert.True(page.Contains("<nav aria-label=\"Amberline\">", StringComparison.Ordinal) && Regex.Count(page, "aria-current=page") == 1 &&
+        TestAssert.True(page.Contains("<nav class=side aria-label=\"Amberline\">", StringComparison.Ordinal) && Regex.Count(page, "aria-current=page") == 1 &&
             Regex.IsMatch(page, $"aria-current=page>{current}</a>"), $"the nav marks {current}: {page}");
         return page;
     }

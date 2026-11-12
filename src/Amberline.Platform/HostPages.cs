@@ -7,8 +7,9 @@ namespace Amberline.Platform;
 
 /// <summary>
 /// NOT RETAIL: the home host's page shell and its one stylesheet (batch 638; retail had no host page). Every host page
-/// (<see cref="HostMode.Page"/>) gets the same frame: a skip link, a header with the server's name and Amberline, in the full
-/// Platform a small nav, the step indicator on the first-run steps, the page in <c>main</c> and a footer with the version. The
+/// (<see cref="HostMode.Page"/>) gets the same frame: a skip link, the wordmark above a gold frame that holds, in the full Platform,
+/// the sidebar (the server's name and the menu) beside the page; the first-run steps and the pages without links have the frame alone,
+/// with the step indicator. The page is in <c>main</c>, and a footer with the version sits under the frame. The
 /// stylesheet is <see cref="StylePath"/>, a host route behind <see cref="HostGate"/>; nothing on a host page is an inline style
 /// or an inline script, so the pages' policy allows only <c>style-src 'self'</c>. System fonts only: Amberline works offline.
 /// </summary>
@@ -34,14 +35,22 @@ public static class HostPages
     /// <summary>The first-run steps (<see cref="HostSteps"/> and <see cref="HostFolders"/>), in order.</summary>
     public static readonly string[] Steps = ["Name your server", "Your game folders", "Your own login", "Your address"];
 
+    /// <summary>Updates' address: the sidebar's Updates link.</summary>
+    private const string UpdatesPath = HostDashboard.PagePath + "/updates";
+
+    /// <summary>The count on Updates' link once the update check knows a newer release: a gold badge, with the words a screen reader says. The
+    /// space keeps "Updates" and the count apart in the link's name.</summary>
+    private const string UpdateBadge = " <span class=badge>1<span class=vh> update available</span></span>";
+
+    // Batch 748: Users (and its Add a user) replaces Invite a friend and Friends.
     private static readonly (string Path, string Text)[] Menu =
-        [(HostDashboard.PagePath, "Dashboard"), (HostInvite.InvitePath, "Invite a friend"), (HostInvite.FriendsPath, "Friends"),
-         (HostSettingsPage.PagePath, "Settings"), ("/manage", "Advanced"), (HostDashboard.PagePath + "/updates", "Updates")];
+        [(HostDashboard.PagePath, "Dashboard"), (HostInvite.UsersPath, "Users"), (HostSettingsPage.PagePath, "Settings"), ("/manage", "Advanced"),
+         (UpdatesPath, "Updates")];
 
     /// <summary>An error code such as (A-NET-01) in a page's text, never inside a tag or an attribute.</summary>
     private static readonly Regex Code = new(@"(?<=>[^<]*)\(A-[A-Z]+-\d{2}\)");
 
-    private sealed record Shell(Func<string?> Name, string Version, bool Nav);
+    private sealed record Shell(Func<string?> Name, string Version, bool Nav, Func<bool> UpdateOut);
 
     /// <summary>
     /// The stylesheet's route, and the shell for every later page: the server's name, the version and, with <paramref name="nav"/>
@@ -51,7 +60,9 @@ public static class HostPages
     public static void Use(WebApplication app, HostLoop loop, Func<string?> name, bool nav)
     {
         var version = HostVersion.Read(Path.GetFullPath(Path.Combine(loop.Paths.App, ".."))).Version;
-        var shell = new Shell(name, version?.ToString() ?? "(development build)", nav);
+        // The Updates badge reads what the daily update check already found (updates.json); no request is made for it.
+        var shell = new Shell(name, version?.ToString() ?? "(development build)", nav,
+            () => HostVersion.Parse(HostUpdates.Read(loop.Paths.Data).Latest) is { } latest && version is not null && latest > version);
         app.Use(async (context, next) =>
         {
             context.Items[typeof(Shell)] = shell;
@@ -128,21 +139,33 @@ public static class HostPages
             var heading = Regex.Match(Content, "<h1[^>]*>(.*?)</h1>", RegexOptions.Singleline);
             var title = (Content.Contains("class=error-summary", StringComparison.Ordinal) ? "Error: " : "") +
                 (heading.Success ? Regex.Replace(heading.Groups[1].Value, "<[^>]+>", "") + " · " : "") + "Amberline";
-            var name = shell?.Name() is { Length: > 0 } server ? $"<strong>{WebUtility.HtmlEncode(server)}</strong> · " : "";
-            var menu = shell is { Nav: true } && Nav && Step == 0
-                ? "<nav aria-label=\"Amberline\"><ul>" + string.Concat(Menu.Select(item =>
-                    $"<li><a href={item.Path}{(Current(path, item.Path) ? " aria-current=page" : "")}>{item.Text}</a></li>")) + "</ul></nav>"
-                : "";
+            var name = shell?.Name() is { Length: > 0 } server ? WebUtility.HtmlEncode(server) : null;
+            // Layout C: the sidebar only on the full Platform's own pages, whose links answer. The first-run steps and the pages without
+            // links have the frame alone; their header names the server instead.
+            var side = shell is { Nav: true } && Nav && Step == 0 ? Sidebar(shell, path, name) : "";
             var step = Step > 0 ? $"<p class=step>Step {Step} of {Steps.Length}: {Steps[Step - 1]}</p>" : "";
+            var head = Public ? "<header><p class=wordmark>Amberline</p></header>"
+                : "<header><p class=wordmark>Amberline</p>" + (side.Length == 0 && name is not null ? $"<p class=server>{name}</p>" : "") + "</header>";
+            var main = Public ? "<main id=main tabindex=-1>" : $"<div class=frame>{side}<main id=main tabindex=-1 class=page>";
+            var close = Public ? "" : "</div>";
+            var footer = Public ? "" : $"<footer><p>Amberline {shell?.Version}</p></footer>";
             // Every page loads page.js (batch 652) but the gate's refusals (403): a browser without the host's session cannot load it.
             return $$"""
                 <!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
                 {{(Refresh is null ? "" : $"<meta http-equiv=refresh content=\"5;url={Refresh}\">")}}<title>{{title}}</title><link rel=stylesheet href="{{(Public ? PublicStyleHref : StyleHref)}}"></head>
                 <body><a class=skip href=#main>Skip to the main content</a>
-                {{(Public ? "<header><p class=wordmark>Amberline</p></header>" : $"<header><p class=brand>{name}Amberline</p>{menu}</header>")}}
-                <main id=main tabindex=-1>{{step}}{{Code.Replace(Content, "<span class=code>$0</span>")}}</main>
-                {{(Public ? "" : $"<footer><p>Amberline {shell?.Version}</p></footer>")}}{{(Public || Status == StatusCodes.Status403Forbidden ? "" : $"<script src={ScriptPath} defer></script>")}}</body></html>
+                {{head}}
+                {{main}}{{step}}{{Code.Replace(Content, "<span class=code>$0</span>")}}</main>{{close}}
+                {{footer}}{{(Public || Status == StatusCodes.Status403Forbidden ? "" : $"<script src={ScriptPath} defer></script>")}}</body></html>
                 """;
+        }
+
+        /// <summary>Layout C's sidebar: the server's name with a running light, then the menu; Updates carries its badge once a newer release is known.</summary>
+        private string Sidebar(Shell shell, PathString path, string? name)
+        {
+            var items = string.Concat(Menu.Select(item => $"<li><a href={item.Path}{(Current(path, item.Path) ? " aria-current=page" : "")}>{item.Text}" +
+                (item.Path == UpdatesPath && shell.UpdateOut() ? UpdateBadge : "") + "</a></li>"));
+            return $"<nav class=side aria-label=\"Amberline\"><p class=server><span class=light aria-hidden=true></span>{name ?? "Amberline"}</p><ul>{items}</ul></nav>";
         }
 
         private static bool Current(PathString path, string item) =>
@@ -198,11 +221,10 @@ public static class HostPages
     };
 
     /// <summary>
-    /// The one stylesheet. Light and dark through <c>prefers-color-scheme</c>; every text colour is at least 4.5:1 on its background
-    /// (borders and focus at least 3:1); buttons are at least 44 px high; one column that fits 360 px and 200% zoom.
+    /// The look both sheets share, as batch 706's sign-up pages have it: dark only, the AIR client's navy frame and gold trim as tokens, the
+    /// page's background and its type. Every text colour is at least 4.5:1 on its background; system fonts only.
     /// </summary>
-    /// <summary>Batch 706: the sign-up pages' stylesheet (CSS only): the AIR client's dark navy frame and gold trim, system fonts.</summary>
-    private const string PublicCss = """
+    private const string Look = """
         :root{color-scheme:dark;--top:#13233a;--bottom:#03060c;--panel:#0b1728;--inner:#060e1a;--gold:#c9ab6f;--gold-dim:#6f5a31;
         --gold-hi:#f3e2b3;--text:#e9e2d0;--muted:#a3a9b5;--field:#040a13;--line:#4d5d73;--focus:#f2d98e;--bad:#f2978b;--bad-bg:#2b1414;
         --ok:#a6dcae;--ok-bg:#122418}
@@ -211,8 +233,16 @@ public static class HostPages
         html{-webkit-text-size-adjust:100%;text-size-adjust:100%;background:var(--bottom)}
         body{margin:0;padding:48px 16px;min-height:100vh;color:var(--text);background:radial-gradient(120% 70% at 50% 0%,var(--top),var(--bottom) 75%);
         font:1rem/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+        """;
+
+    /// <summary>The sign-up pages' panel: the card the sign-up form sits in (the sign-up sheet only).</summary>
+    private const string SignUpPanel = """
         main{max-width:30rem;margin:0 auto;padding:28px 24px 30px;border:1px solid var(--gold-dim);border-radius:4px;overflow-wrap:anywhere;
         text-align:center;background:linear-gradient(180deg,var(--panel),var(--inner));box-shadow:inset 0 0 0 1px rgba(201,171,111,.14),0 16px 40px rgba(0,0,0,.55)}
+        """;
+
+    /// <summary>The register's components, both sheets: the wordmark with its sheen, the skip link, the focus ring, fields, buttons and the notice boxes.</summary>
+    private const string Parts = """
         main:focus{outline:none}
         form{text-align:left}
         header{margin:0 0 26px;text-align:center}
@@ -271,117 +301,152 @@ public static class HostPages
         .error-summary h2{margin:0 0 2px;color:var(--bad);font-size:.875rem}
         .error-summary ul{margin:0;padding:0;list-style:none}
         .error-summary a{color:var(--text);text-decoration-color:var(--bad)}
+        """;
+
+    /// <summary>The sign-up pages' field problem, visually hidden there (the error summary speaks); the host sheet shows it beside its field.</summary>
+    private const string SignUpFieldError = """
         .field-error{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+        """;
+
+    /// <summary>The sign-up panel on narrow screens: its side padding and the title's size (the sign-up sheet only).</summary>
+    private const string SignUpNarrow = """
         @media (max-width:23rem){main{padding-left:16px;padding-right:16px}h1{font-size:1rem}}
+        """;
+
+    /// <summary>Forced colours, both sheets: the buttons, notices and problem boxes keep their borders.</summary>
+    private const string Forced = """
         @media (forced-colors:active){button,.button{border-color:ButtonText}.problem,.notice,.error-summary{border-color:CanvasText}
         .wordmark{background:none;-webkit-text-fill-color:CanvasText;filter:none}}
         """;
 
-    private const string Css = """
-        :root{color-scheme:light dark;--bg:#f7f5f1;--surface:#fff;--text:#1f1f1f;--muted:#575757;--line:#6b6b6b;--soft:#dcd7cd;
-        --accent:#8a4f0e;--on-accent:#fff;--link:#1a5fb4;--focus:#1a5fb4;--bad:#b3261e;--bad-bg:#fbe9e7;--ok:#1e6b2e;--ok-bg:#e6f2e8;
-        --warn:#7a5000;--warn-bg:#fdf3dc}
-        @media (prefers-color-scheme:dark){:root{--bg:#17191c;--surface:#202328;--text:#ececec;--muted:#b4b4b4;--line:#9a9a9a;--soft:#3a3d42;
-        --accent:#f0b45a;--on-accent:#1a1a1a;--link:#8ab4f8;--focus:#8ab4f8;--bad:#ff8a80;--bad-bg:#3a1f1d;--ok:#7bd88f;--ok-bg:#1d3324;
-        --warn:#f0c674;--warn-bg:#3a3120}}
-        *,*::before,*::after{box-sizing:border-box}
-        [hidden]{display:none!important}
-        html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
-        body{margin:0;background:var(--bg);color:var(--text);font:1rem/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
-        header,main,footer{max-width:46rem;margin:0 auto;padding-left:16px;padding-right:16px}
-        header{padding-top:16px;padding-bottom:8px;border-bottom:1px solid var(--soft)}
-        main{padding-top:24px;padding-bottom:40px;overflow-wrap:anywhere}
-        main:focus{outline:none}
-        footer{padding-top:12px;padding-bottom:24px;border-top:1px solid var(--soft);color:var(--muted);font-size:.875rem}
-        .brand{margin:0;font-size:1.0625rem}
-        nav ul{display:flex;flex-wrap:wrap;gap:4px 6px;max-width:none;margin:8px 0 0;padding:0;list-style:none}
-        nav a{display:inline-block;min-height:24px;padding:6px 10px;border-radius:6px;text-decoration:none}
-        nav a:hover{text-decoration:underline}
-        nav a[aria-current=page]{background:var(--surface);color:var(--text);font-weight:600;box-shadow:inset 0 -3px 0 var(--accent)}
-        .skip{position:absolute;top:-100px;left:16px;z-index:1;padding:8px 12px;background:var(--surface);color:var(--link);font-weight:600}
-        .skip:focus{top:8px}
+    /// <summary>
+    /// The sign-up pages' stylesheet: its parts in batch 706's order, joined with CRLF as the parts' own lines are (the source file's line endings,
+    /// which a raw literal keeps), so its bytes, and its versioned address, are batch 706's.
+    /// </summary>
+    private const string PublicCss = Look + "\r\n" + SignUpPanel + "\r\n" + Parts + "\r\n" + SignUpFieldError + "\r\n" + SignUpNarrow + "\r\n" + Forced;
+
+    /// <summary>
+    /// The host pages' stylesheet: the look and the components both sheets share, then what only the host needs (<see cref="HostRules"/>): the
+    /// frame with its sidebar (layout C), the Dashboard's tiles, game cards and feed, the status and check parts, the tables, the messages, the
+    /// row buttons and a visible field problem. Dark only.
+    /// </summary>
+    private const string Css = Look + "\r\n" + Parts + "\r\n" + Forced + "\r\n" + HostRules;
+
+    /// <summary>The host sheet's own rules (batch 748): the layout, the parts of the Dashboard, the tables and forms, and the forced-colour borders.</summary>
+    private const string HostRules = """
+        :root{--line:#8593a8;--gold-dim:#806a3a;--warn:#f0c674;--warn-bg:#2e2510;--blue:#8fb6e8;--red:#e89a8f}
+        /* --line #8593a8: 6.4:1 on the field #040a13 (the sign-up sheet's #4d5d73 is 2.96:1). --gold-dim #806a3a: 3.5:1 on the panel #0b1728 (the sign-up sheet's #6f5a31 is 2.7:1). */
         :focus-visible{outline:3px solid var(--focus);outline-offset:2px}
-        h1{margin:0 0 16px;font-size:1.75rem;line-height:1.25}
-        h2{margin:32px 0 12px;font-size:1.25rem;line-height:1.3}
-        p,ul,ol,pre{max-width:65ch;margin:0 0 16px}
-        li{margin:4px 0}
-        a{color:var(--link)}
-        .step{margin:0 0 4px;color:var(--muted);font-weight:600}
-        .tip,.hint,.saved{color:var(--muted)}
-        .code{color:var(--muted);font-size:.8125rem;white-space:nowrap}
-        .vh{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
-        form{margin:0 0 16px}
-        label{display:block;margin:20px 0 4px;font-weight:600}
-        .req{font-weight:400;color:var(--muted)}
-        .hint{margin:0 0 6px}
-        input:not([type=radio]):not([type=checkbox]),select{display:block;width:100%;max-width:32rem;min-height:44px;padding:8px 10px;
-        border:2px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font:inherit}
-        textarea{display:block;width:100%;min-height:12rem;margin:0 0 12px;padding:8px 10px;border:2px solid var(--line);border-radius:6px;
-        background:var(--surface);color:var(--text);font:.875rem/1.5 ui-monospace,Consolas,monospace;resize:vertical}
-        input[aria-invalid=true]:not([type=radio]):not([type=checkbox]){border-color:var(--bad)}
-        ::placeholder{color:var(--muted);opacity:1}
-        fieldset{margin:20px 0 0;padding:0;border:0}
-        legend{margin:0 0 4px;padding:0;font-weight:600}
-        .choice{display:flex;gap:10px;align-items:flex-start;margin:12px 0 4px;font-weight:400}
-        .choice input{flex:none;width:24px;height:24px;margin:0;accent-color:var(--accent)}
-        .sub{margin:0 0 8px 2rem}
-        .sub label{margin-top:6px}
-        button,.button,.actions a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 18px;
-        border:2px solid var(--accent);border-radius:6px;background:var(--accent);color:var(--on-accent);font:inherit;font-weight:600;
-        line-height:1.3;text-align:center;text-decoration:none;cursor:pointer}
-        button:hover,.button:hover,.actions a:hover{text-decoration:underline}
-        button:disabled{cursor:progress;opacity:.75;text-decoration:none}
-        .wait{margin:12px 0 0;font-weight:600}
-        .wait:empty{display:none}
-        .secondary,button.secondary,button[data-copy],.actions a:not(.button){background:transparent;color:var(--accent)}
-        td button{min-height:36px;padding:4px 12px;overflow-wrap:normal}
-        td form{margin:0}
+        input:not([type=radio]):not([type=checkbox]):focus-visible,select:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+        .frame{max-width:64rem;margin:0 auto;border:1px solid var(--gold-dim);border-radius:4px;background:linear-gradient(180deg,var(--panel),var(--inner));
+        box-shadow:inset 0 0 0 1px rgba(201,171,111,.14),0 16px 40px rgba(0,0,0,.55)}
+        .frame:not(:has(>.side)){max-width:36rem}
+        .frame:not(:has(>.side)) .page{text-align:center}
+        .frame:has(>.side) .page h1{text-align:left}
+        @media (min-width:48rem){.frame:has(>.side){display:grid;grid-template-columns:13.5rem minmax(0,1fr)}}
+        .side{padding:12px 0 6px;border-bottom:1px solid var(--gold-dim);border-radius:4px 4px 0 0;background:rgba(0,0,0,.18)}
+        .side ul{display:flex;flex-wrap:wrap;gap:4px;max-width:none;margin:0;padding:0 8px;list-style:none}
+        .side li{margin:0}
+        .side a{display:flex;align-items:center;min-height:44px;padding:8px 12px;border-bottom:2px solid transparent;color:var(--muted);
+        font-size:.8125rem;letter-spacing:.1em;text-decoration:none;text-transform:uppercase}
+        .side a:hover{color:var(--gold-hi)}
+        .side a[aria-current=page]{border-bottom-color:var(--gold);color:var(--gold-hi);font-weight:700}
+        .server{margin:0;color:var(--gold-hi);font-weight:600;letter-spacing:.06em;overflow-wrap:anywhere}
+        .side .server{display:flex;align-items:center;gap:8px;margin:0 12px 8px;padding:0 0 10px;border-bottom:1px solid rgba(111,90,49,.6)}
+        .light{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
+        .badge{display:inline-block;min-width:1.25rem;margin-left:6px;padding:0 6px;border:1px solid var(--gold);border-radius:9px;background:var(--gold);
+        color:#1a1205;font-size:.6875rem;font-weight:700;line-height:1.1rem;letter-spacing:0;text-align:center;text-transform:none;vertical-align:middle}
+        @media (min-width:48rem){.side{padding:12px 0;border-right:1px solid var(--gold-dim);border-bottom:0;border-radius:4px 0 0 4px}
+        .side ul{flex-direction:column;flex-wrap:nowrap;gap:0;padding:0}
+        .side a{padding-left:14px;border-bottom:0;border-left:2px solid transparent}
+        .side a[aria-current=page]{border-left-color:var(--gold);background:linear-gradient(90deg,rgba(201,171,111,.14),transparent)}}
+        .page{min-width:0;padding:20px 16px 24px;overflow-wrap:anywhere}
+        @media (min-width:48rem){.page{padding:24px 28px 28px}}
+        .page>h2{margin:28px 0 10px}
+        .mark{display:inline-block;padding:0 6px;border:1px solid var(--gold-dim);color:var(--muted);font-size:.6875rem;font-weight:600;letter-spacing:.08em;
+        line-height:1.4;text-transform:uppercase;vertical-align:middle}
+        .checks .mark,.headline .mark,.status-mark{flex:none;width:1.25rem;padding:0;border:0;color:inherit;font-size:inherit;font-weight:700;letter-spacing:0;
+        line-height:inherit;text-transform:none}
+        .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:8px;margin:0 0 16px}
+        .tile{padding:10px 8px;border:1px solid var(--gold-dim);background:rgba(0,0,0,.25);text-align:center}
+        .tile b{display:block;color:var(--gold-hi);font-size:1.5rem;line-height:1.2}
+        .tile span{color:var(--muted);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase}
+        .game-card{margin:0 0 12px;padding:12px 14px;border:1px solid var(--gold-dim);border-radius:4px;background:rgba(0,0,0,.22);overflow-wrap:anywhere}
+        .feed{margin:0 0 16px;padding:0;list-style:none;max-width:none}
+        .feed li{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid rgba(111,90,49,.45)}
+        .feed time{flex:none;min-width:3.5rem;color:var(--muted)}
+        .tiles+.buttons{margin:0 0 20px}
+        .game-cards{max-width:none;margin:0 0 12px;padding:0;list-style:none}
+        .game-top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;margin:0 0 10px}
+        .game-title{color:var(--gold-hi);overflow-wrap:anywhere}
+        .game-card .buttons{margin:0}
+        .teams{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:10px 16px;margin:0 0 10px}
+        .teams h3{margin:0 0 4px;font-size:.8125rem;letter-spacing:.12em;text-transform:uppercase}
+        .team-blue{color:var(--blue)}
+        .team-red{color:var(--red)}
+        .seats{max-width:none;margin:0;padding:0;list-style:none}
+        .seats li{margin:0 0 2px}
+        details{margin:0 0 16px}
+        summary{min-height:44px;padding:10px 0;color:var(--gold);font-size:.9375rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
+        .table-search{max-width:24rem;margin:0 0 12px}
+        .table-search label{margin-top:0}
+        .user-actions{margin:0 0 16px}
+        .empty{margin:0 0 16px;color:var(--muted)}
+        .secondary,button[data-copy]{background:transparent;color:var(--gold-hi)}
+        .small{min-height:32px;padding:4px 12px;font-size:.875rem}
+        .actions{justify-content:flex-start;margin-top:24px;padding-top:16px}
+        .actions>:last-child{margin-left:auto}
+        .actions a:not(.button){display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 18px;border:1px solid var(--gold);
+        border-radius:2px;background:transparent;color:var(--gold-hi);font-weight:600;line-height:1.3;letter-spacing:.12em;text-align:center;text-decoration:none;
+        text-transform:uppercase;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 0 #3b2c13}
+        .actions a:not(.button):hover{color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 3px 0 #3b2c13,0 0 16px rgba(201,171,111,.5)}
         .buttons{display:flex;flex-wrap:wrap;gap:12px}
         .choice+.buttons{margin-top:16px}
-        .actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:28px;padding-top:16px;border-top:1px solid var(--soft)}
-        .actions>:last-child{margin-left:auto}
-        .problem,.warn,.notice{max-width:none;padding:12px 16px;border-left:5px solid;border-radius:4px}
-        .problem{border-color:var(--bad);background:var(--bad-bg)}
-        .warn{border-color:var(--warn);background:var(--warn-bg)}
-        .notice{border-color:var(--ok);background:var(--ok-bg)}
-        .problem::before{content:"\2717  ";content:"\2717  "/"";font-weight:700;color:var(--bad)}
-        .warn::before{content:"!  ";content:"!  "/"";font-weight:700;color:var(--warn)}
-        .notice::before{content:"\2713  ";content:"\2713  "/"";font-weight:700;color:var(--ok)}
-        .error-summary{margin:0 0 24px;padding:12px 16px;border:3px solid var(--bad);border-radius:6px;background:var(--surface)}
-        .error-summary h2{margin:0 0 8px;font-size:1.125rem}
-        .error-summary ul{margin:0;padding-left:20px}
-        .error-summary a{color:var(--bad);font-weight:600}
-        .field-error{margin:0 0 6px;color:var(--bad);font-weight:600}
-        .field-error::before{content:"\2717  ";content:"\2717  "/""}
-        .ok{color:var(--ok);font-weight:600}
-        .no,.bad{color:var(--bad);font-weight:600}
-        .folder,.status{margin:0 0 16px;padding:12px 16px;border:1px solid var(--soft);border-radius:8px;background:var(--surface);overflow-wrap:anywhere}
-        .folder h2,.status h2{margin:0 0 4px;font-size:1.0625rem}
-        .folder form{margin:8px 0 0}
+        .wait{margin:12px 0 0;font-weight:600}
+        .wait:empty{display:none}
+        .sub{margin:0 0 8px 2rem}
+        .sub label{margin-top:6px}
+        input:not([type=radio]):not([type=checkbox]),select{max-width:32rem}
+        textarea{display:block;width:100%;min-height:12rem;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:2px;background:var(--field);
+        color:var(--text);font:.875rem/1.5 ui-monospace,Consolas,monospace;resize:vertical}
+        .message{padding:12px 16px;border:1px solid var(--line);border-radius:2px;background:var(--field);white-space:pre-wrap;overflow-wrap:anywhere;
+        font:.9375rem/1.5 ui-monospace,Consolas,monospace}
+        .notes{white-space:pre-wrap}
         .headline{font-size:1.125rem}
-        progress{display:block;width:100%;max-width:32rem;height:1.5rem;margin:0 0 8px;accent-color:var(--accent)}
+        progress{display:block;width:100%;max-width:32rem;height:1.5rem;margin:0 0 8px;accent-color:var(--gold)}
         .checks,.cards{padding-left:0;list-style:none}
         .cards{max-width:none}
         .checks li{display:flex;gap:8px}
-        .mark{flex:none;width:1.25rem;font-weight:700}
+        .ok{color:var(--ok);font-weight:600}
+        .no,.bad{color:var(--bad);font-weight:600}
         .checks .ok,.checks .bad{font-weight:400;color:var(--text)}
         .checks .ok .mark{color:var(--ok)}
         .checks .bad .mark{color:var(--bad)}
         .cards li{margin:0 0 12px;padding:12px 16px;border-left:5px solid var(--bad);border-radius:4px;background:var(--bad-bg)}
         .cards p{margin:4px 0 0}
+        .folder,.status{margin:0 0 16px;padding:12px 16px;border:1px solid var(--gold-dim);border-radius:4px;background:rgba(0,0,0,.22);overflow-wrap:anywhere}
+        .folder h2,.status h2{margin:0 0 4px;font-size:1.0625rem}
+        .folder form{margin:8px 0 0}
         table{width:100%;margin:0 0 16px;border-collapse:collapse}
-        th,td{padding:8px 12px 8px 0;border-bottom:1px solid var(--soft);text-align:left;vertical-align:top;overflow-wrap:anywhere}
+        th,td{padding:8px 12px 8px 0;border-bottom:1px solid rgba(111,90,49,.45);text-align:left;vertical-align:top;overflow-wrap:anywhere}
         th{font-weight:600;overflow-wrap:normal}
+        th{color:var(--muted)}
         td.words{overflow-wrap:normal}
         .wide{overflow-x:auto;margin:0 0 16px}
         .wide>table{margin:0}
         .wide:has(>table[hidden]){display:none}
         @media (max-width:23rem){.wide th,.wide td{padding-right:8px}.wide td button{padding-left:8px;padding-right:8px}}
-        .message{padding:12px 16px;border:1px solid var(--line);border-radius:6px;background:var(--surface);white-space:pre-wrap;
-        overflow-wrap:anywhere;font:.9375rem/1.5 ui-monospace,Consolas,monospace}
-        .notes{white-space:pre-wrap}
-        @media (max-width:30rem){h1{font-size:1.5rem}.sub{margin-left:1rem}}
-        @media (forced-colors:active){button,.button,.actions a{border-color:ButtonText}.problem,.warn,.notice,.cards li{border-color:CanvasText}}
+        td button{min-height:36px;padding:4px 12px;overflow-wrap:normal}
+        td form{margin:0}
+        .field-error{margin:0 0 6px;color:var(--bad);font-weight:600}
+        .field-error::before{content:"\2717  "}
+        .warn{position:relative;max-width:none;margin:0 0 22px;padding:12px 16px 12px 46px;border:1px solid var(--warn);border-radius:2px;background:var(--warn-bg);text-align:left}
+        .warn::before{position:absolute;left:14px;top:13px;width:20px;height:20px;border:1px solid;border-radius:50%;content:"!";color:var(--warn);font:700 .75rem/18px system-ui,sans-serif;text-align:center}
+        footer{max-width:64rem;margin:16px auto 0;color:var(--muted);font-size:.875rem;text-align:center}
+        footer p{max-width:none;margin:0}
+        @media (forced-colors:active){.frame,.side,.tile,.game-card,.folder,.status,.mark,.badge,.warn,.actions a:not(.button){border-color:CanvasText}
+        .side a[aria-current=page]{outline:2px solid;outline-offset:-2px}
+        .side a[aria-current=page]:focus-visible{outline:3px solid;outline-offset:2px}}
         """;
 
     /// <summary>
@@ -389,7 +454,8 @@ public static class HostPages
     /// <c>/host/status.json</c> every 5 seconds without reloading, so nothing typed on a page is lost, as it fills Advanced's Online now
     /// table (<see cref="PlatformManagement.OnlineJsonPath"/>, while the table is <c>data-live</c>); it runs the Copy buttons
     /// (<c>data-copy</c> names the element whose text is copied), batch 652, the wait feedback of <see cref="Wait"/>, and, batch 666,
-    /// Update now's progress (<see cref="HostUpdates.StatusPath"/>, every second while the page has its bar). It only
+    /// Update now's progress (<see cref="HostUpdates.StatusPath"/>, every second while the page has its bar), and, batch 748, the Users page's
+    /// search (it shows what has <c>data-needs-script</c>, and hides the rows that do not match, as the host types). It only
     /// ever sets text, never markup, and a text only when it changed (the headline is a live region). A Copy button says "Copied" on
     /// itself and in the <c>copy-status</c> live region beside it; when the browser cannot copy, it selects the text.
     /// </summary>
@@ -402,6 +468,42 @@ public static class HostPages
           const fill = (id, items, make) => { const element = byId(id); if (element) element.replaceChildren(...items.map(make)); };
           const show = (id, visible) => { const element = byId(id); if (element) element.hidden = !visible; };
           const marks = { ok: '✓', bad: '✗', unknown: '?', waiting: '…', checking: '…' };
+          // The elapsed time of a game as mm:ss, from the whole seconds the status counted: the page does arithmetic on numbers only.
+          const mmss = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+          const fromTemplate = id => byId(id).content.firstElementChild.cloneNode(true);
+          const seatLines = (list, seats) => list.replaceChildren(...seats.map(seat => made('li', `${seat.player} · ${seat.champion}`)));
+          function game(card) {
+            const item = fromTemplate('card-template');
+            item.querySelector('.game-title').textContent = `${card.map} · ${card.mode}`;
+            item.querySelector('.game-time').textContent = mmss(card.elapsedSeconds);
+            seatLines(item.querySelector('.seats-blue'), card.blue);
+            seatLines(item.querySelector('.seats-red'), card.red);
+            const end = item.querySelector('a');
+            end.hidden = !card.canEnd;
+            end.href = `/host/games/end?id=${card.id}`;
+            end.querySelector('.vh').textContent = ` for the ${card.map} game`;
+            return item;
+          }
+          function line(event) {
+            const item = fromTemplate('feed-template');
+            item.querySelector('time').dateTime = event.at;
+            item.querySelector('time').textContent = event.time;
+            item.querySelector('span').textContent = event.text;
+            return item;
+          }
+          // The cards and the feed are rebuilt only when their content changed, so a focused End game keeps its focus; the times move at each poll.
+          let shownGames = '';
+          let shownFeed = '';
+          function games(list) {
+            const key = JSON.stringify(list.map(card => [card.id, card.map, card.mode, card.blue, card.red, card.canEnd]));
+            const box = byId('cards');
+            if (key !== shownGames) { shownGames = key; box.replaceChildren(...list.map(game)); }
+            list.forEach((card, index) => { const time = box.children[index]?.querySelector('.game-time'); if (time) time.textContent = mmss(card.elapsedSeconds); });
+          }
+          function feed(list) {
+            const key = JSON.stringify(list);
+            if (key !== shownFeed) { shownFeed = key; fill('feed', list, line); }
+          }
           function render(status) {
             const states = status.checks.map(check => check.state);
             text('status-mark', states.includes('bad') ? '!' : states.includes('checking') ? '…' : '✓');
@@ -409,6 +511,9 @@ public static class HostPages
             text('address', status.address);
             text('network-line', status.network);
             text('friend', status.friend);
+            text('tile-online-count', String(status.onlineCount));
+            text('tile-games-count', String(status.gamesRunning));
+            text('tile-signups-state', status.signUpsOpen ? 'Open' : 'Closed');
             text('online-title', `Online now (${status.online.length})`);
             show('online-empty', status.online.length === 0);
             text('online-empty', 'Nobody is online.');
@@ -418,10 +523,15 @@ public static class HostPages
               row.append(made('td', person.username), made('td', person.doing), made('td', person.since));
               return row;
             });
-            text('games-title', `Games (${status.gamesRunning} of ${status.gamesMax})`);
-            show('games-empty', status.games.length === 0);
-            text('games-empty', 'No game is running.');
-            fill('games', status.games, game => made('li', game));
+            text('cards-title', `Games (${status.gamesRunning} of ${status.gamesMax})`);
+            games(status.cards);
+            text('cards-empty', 'No games running.');
+            show('cards-empty', status.cards.length === 0);
+            text('lobbies', status.lobbies ?? '');
+            show('lobbies', Boolean(status.lobbies));
+            feed(status.activity);
+            text('feed-empty', 'Nothing yet.');
+            show('feed-empty', status.activity.length === 0);
             fill('checks', status.checks, check => {
               const item = made('li', '', check.state);
               const mark = made('span', marks[check.state] ?? '?', 'mark');
@@ -429,8 +539,7 @@ public static class HostPages
               item.append(mark, made('span', check.text));
               return item;
             });
-            show('attention-none', status.attention.length === 0);
-            text('attention-none', 'Nothing needs your attention.');
+            show('attention-section', status.attention.length > 0);
             fill('attention', status.attention, card => {
               const item = document.createElement('li');
               item.append(made('strong', card.message), ' ', made('span', `(${card.code})`, 'code'), made('p', card.whatToDo));
@@ -438,6 +547,10 @@ public static class HostPages
             });
             for (const form of document.querySelectorAll('form[data-action]'))
               form.hidden = !status.attention.some(card => card.action === form.dataset.action);
+            text('signup-link', status.signUpLink ?? '');
+            show('copy-signup', Boolean(status.signUpLink));
+            text('address-value', status.publicHost ?? '');
+            show('copy-address', Boolean(status.publicHost));
             show('guide', Boolean(status.guide));
             fill('guide-steps', status.guide ?? [], step => made('li', step));
           }
@@ -540,6 +653,19 @@ public static class HostPages
             }
             setTimeout(update, 1000);
           }
+          // Batch 748, the Users page: what needs this script shows only with it (the search box, Copy sign-up link), and the search hides
+          // the rows whose user and status do not hold what was typed, without a request. Without the script the table is simply complete.
+          for (const element of document.querySelectorAll('[data-needs-script]')) element.hidden = false;
+          const search = byId('user-search');
+          if (search) search.addEventListener('input', () => {
+            const words = search.value.trim().toLowerCase();
+            let shown = 0;
+            for (const row of byId('users').rows) {
+              row.hidden = words !== '' && !`${row.cells[0].textContent} ${row.cells[1].textContent}`.toLowerCase().includes(words);
+              if (!row.hidden) shown++;
+            }
+            show('users-none', shown === 0);
+          });
           if (byId('status')) { refresh(); setInterval(refresh, 5000); }
           if (byId('online-table')?.hasAttribute('data-live')) setInterval(online, 5000);
           if (byId('update-bar')) setTimeout(update, 1000);

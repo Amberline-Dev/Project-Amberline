@@ -121,7 +121,7 @@ public static class HostStepsChecks
             // Batch 652: the field holds the address Amberline found (its hint no longer repeats it) and says who can join.
             TestAssert.True(page.Contains("<input type=radio name=choice value=lan>Only people on my home network (LAN party)</label>", StringComparison.Ordinal) &&
                 page.Contains("name=lan maxlength=15", StringComparison.Ordinal) && page.Contains("placeholder=\"192.168.1.20\" value=\"192.168.1.20\"", StringComparison.Ordinal) &&
-                page.Contains("Only friends on the same router or Wi-Fi can join.", StringComparison.Ordinal), "the choice offers this PC's own address: " + page);
+                page.Contains("Only players on the same router or Wi-Fi can join.", StringComparison.Ordinal), "the choice offers this PC's own address: " + page);
             TestAssert.True(page.Contains("value=router checked", StringComparison.Ordinal), "the router's address stays the preselected choice");
 
             // Refused: nothing saved, the typed text shown back.
@@ -271,7 +271,7 @@ public static class HostStepsChecks
                 !page.Contains("<p class=tip>For example", StringComparison.Ordinal), "the internet choices: the card is a problem: " + page);
             await SavedAsync(browser, "/host/setup/address", ("choice", "lan"), ("lan", "192.168.1.20"));
             page = await browser.GetStringAsync("/host/setup/address");
-            TestAssert.True(page.Contains("<p class=tip>Only for friends outside your home network: ", StringComparison.Ordinal) &&
+            TestAssert.True(page.Contains("<p class=tip>Only for players outside your home network: ", StringComparison.Ordinal) &&
                 page.Contains("(A-NET-07)", StringComparison.Ordinal) && !page.Contains("<p class=problem>", StringComparison.Ordinal), "home network only: the card is a tip: " + page);
             router = IPAddress.Parse("203.0.113.7");
             await SavedAsync(browser, "/host/setup/address", ("choice", "router"));

@@ -15,7 +15,7 @@ waits. After each install the guide reads PATH again from the registry (for this
 The answers are kept in the state folder (answers.json), so the next run offers them again, and every run writes a log there.
 Version rule for a build made here: 0.0.<minutes since 1 January 2026, UTC>. Each build counts as newer than the one before,
 so the home release's self-install takes it; every published release (0.1.0 or later) counts as newer than any build made here.
-Batch 635 (the first friend's run): before it asks for the folders, the guide searches this PC for League of Legends.exe (its
+Batch 635 (the first player's run): before it asks for the folders, the guide searches this PC for League of Legends.exe (its
 SHA-256 against the pin in native/exehost/exehost.c) and the AIR client (LolClient.swf at the stock size, and LolClient.exe), the
 usual places first, then every fixed drive, and lists what it found. A picked parent folder resolves to the copy inside it. The
 build's details stay in the log. Everything the guide starts runs without the .NET banner or telemetry and in English, and the
@@ -303,7 +303,7 @@ function Find-GameAndAir([string[]]$Remembered) {
     # Batch 645: the folders chosen last time come first, so a search that finds them there needs no drive search.
     if ($SearchRoots) { Search-Folders $search (@($Remembered) + $SearchRoots) }
     else {
-        # The usual places first: the folder around Amberline (the first friend kept the game and the AIR client there), the
+        # The usual places first: the folder around Amberline (the first player kept the game and the AIR client there), the
         # user's own folders and the usual game folders. Then every fixed drive, unless both were found already.
         $drives = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | ForEach-Object { $_.RootDirectory.FullName })
         # Batch 637: an Amberline install's own copies come first.
@@ -611,7 +611,7 @@ try {
     $legacy = -not $installed -and (Test-Path -LiteralPath (Join-Path $app 'BUILD.json') -PathType Leaf)
     $update = [bool]($installed -or $legacy)
     $have = if ($update) { Get-AppVersion $app }
-    $later = @('From now on: start Amberline from its desktop icon. Keep its window open while friends play.',
+    $later = @('From now on: start Amberline from its desktop icon. Keep its window open while players play.',
         $(if ($prebuilt) { 'To update: choose Update now on its page, or unzip the newest release and double-click its START-HERE.cmd.' }
         else { 'To update: get the newest code and double-click START-HERE.cmd again.' }))
 
@@ -650,7 +650,7 @@ try {
         $Target.airRoot = Select-Found 'air' 'AIR client folder' $search 'Choose the AIR client folder (it holds its .swf file and assets)'
         Say 'Your AIR client folder:'
         SayPath $Target.airRoot
-        # Batch 635: the first friend unzipped Amberline inside the folder that held the AIR client and the game; that works now.
+        # Batch 635: the first player unzipped Amberline inside the folder that held the AIR client and the game; that works now.
         foreach ($pair in @(@('game', $Target.gameRoot), @('AIR client', $Target.airRoot))) {
             if (Test-Inside $repository $pair[1]) {
                 Say "Amberline's own folder is inside your $($pair[0]) folder. That is fine."
@@ -668,7 +668,7 @@ try {
         # server's package is built instead (step 1 answered "rented").
         # Batch 645: an update, which also repairs. HostInstall starts an equal version without copying it, and a build made here
         # always has a new number, so "rebuild the same version" is this update. A second install elsewhere is not offered: the
-        # pointer, the desktop icon, the ports and the friends' Play files belong to one install.
+        # pointer, the desktop icon, the ports and the users' Play files belong to one install.
         $folder = Split-Path -Parent $app
         Say
         Say "Your Amberline $(if ($have) { $have } else { 'without a version number' }) is in:"
@@ -688,7 +688,7 @@ try {
             if (-not (Read-YesNo 'rentedInstead' 'Build a package for a rented server instead?')) { Finish $kept }
             $where = 'rented'
         } else {
-            Say "This download $(if ($prebuilt) { 'is' } else { 'builds' }) $version. Updating also repairs it; your settings, logins and friends stay."
+            Say "This download $(if ($prebuilt) { 'is' } else { 'builds' }) $version. Updating also repairs it; your settings, logins and users stay."
             if ($installed) { Say 'To install elsewhere, uninstall this one first (Uninstall Amberline.cmd in its folder).' }
             Say 'Update this Amberline now?'
             # Read-YesNo's answers, and R.
@@ -869,7 +869,7 @@ try {
         }
         Finish (@(
             "Now: a new window named Amberline copies the program$(if ($copies) { ', the game and the AIR client' }) into that folder.$deletes Then its page opens in your web browser.",
-            'On that page: set up your server, then choose Invite a friend for each friend.') + $later) 'Install folder' $folder
+            'On that page: set up your server, then choose Users and Add a user.') + $later) 'Install folder' $folder
     } else {
         $output = $choice.packageFolder
         Say "Building the server package for $($choice.host) ($($choice.system)) into:"
@@ -894,12 +894,12 @@ try {
             SayPath ' cd platform'
             SayPath ' ./Amberline.Platform'
         }
-        Say '  6. Make each friend a login on the management page (see README-DEPLOY.txt).'
-        Say '  7. Give each friend their login and this Play file:'
+        Say '  6. Make each user a login on the management page (see README-DEPLOY.txt).'
+        Say '  7. Give each user their login and this Play file:'
         SayPath (' ' + (Join-Path $output 'Play.cmd'))
         if ($DryRun) { Say "DRY RUN: would open $output in File Explorer." -Whole } else { Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$output`"" }
         Finish @('Built. File Explorer shows the folder now. Next: the checklist above.',
-            'To rebuild: double-click START-HERE.cmd. The same folder keeps your friends'' Play files working.') 'Server package folder' $output
+            'To rebuild: double-click START-HERE.cmd. The same folder keeps your users'' Play files working.') 'Server package folder' $output
     }
 } catch {
     Stop-Guide $_.Exception.Message 'Double-click START-HERE.cmd to try again. If it happens again, open an issue on GitHub with the log.'

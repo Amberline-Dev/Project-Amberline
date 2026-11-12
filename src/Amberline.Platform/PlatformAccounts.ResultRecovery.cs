@@ -63,6 +63,22 @@ public sealed partial class PlatformAccounts
         }
     }
 
+    /// <summary>
+    /// NOT RETAIL (batch 748, <see cref="Delete"/>; retail had no host-side delete): the host game ids of the matches handed to the match server that name the login and have no result
+    /// yet. A handoff that cannot be read is skipped, as <see cref="RecoverResults"/> skips it. Called under the lock.
+    /// </summary>
+    private IEnumerable<Guid> PendingMatches(long accountId)
+    {
+        if (!Directory.Exists(HandoffDirectory)) yield break;
+        foreach (var path in Directory.EnumerateFiles(HandoffDirectory, "*.json"))
+        {
+            PlatformPendingMatch match;
+            try { match = ReadHandoff(path); }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException) { continue; }
+            if (match.Accounts.Contains(accountId) && !_state.Results.Any(result => result.HostGameId == match.HostGameId)) yield return match.HostGameId;
+        }
+    }
+
     public int RecoverResults(GameManager manager, TextWriter log)
     {
         if (!Directory.Exists(HandoffDirectory)) return 0;

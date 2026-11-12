@@ -17,8 +17,9 @@ using static Amberline.Tests.Air.HostModeChecks;
 namespace Amberline.Tests.Air;
 
 /// <summary>
-/// The home host's Invite a friend and Friends pages (batch 630). Temporary folders, free loopback ports, made-up logins
-/// (<c>host_one</c>, <c>friend1</c>, <c>friend2</c>) and the reserved name amberline.example.test; no browser, router or client.
+/// The home host's Add a user and Users pages (batch 630's Invite a friend and Friends; batch 748 renamed them). Temporary folders, free
+/// loopback ports, made-up logins (<c>host_one</c>, <c>friend1</c>, <c>friend2</c>) and the reserved name amberline.example.test; no browser,
+/// router or client.
 /// </summary>
 public static class HostInviteChecks
 {
@@ -53,17 +54,18 @@ public static class HostInviteChecks
             await WaitForHealthAsync(browser, "ready", run);
             await home.SignInAsync(browser);
             var dashboard = await browser.GetStringAsync(HostDashboard.PagePath);
-            TestAssert.True(dashboard.Contains("href=/host/invite>Invite a friend", StringComparison.Ordinal) &&
-                dashboard.Contains("href=/host/friends>Friends", StringComparison.Ordinal) && dashboard.Contains("href=/manage>Advanced", StringComparison.Ordinal),
-                "the dashboard links Invite a friend, Friends and Advanced");
+            // Batch 748: Users replaces Invite a friend and Friends in the sidebar; the dashboard's Add a user opens the form.
+            TestAssert.True(dashboard.Contains("href=/host/users/add>Add a user", StringComparison.Ordinal) &&
+                dashboard.Contains("href=/host/users>Users", StringComparison.Ordinal) && dashboard.Contains("href=/manage>Advanced", StringComparison.Ordinal),
+                "the dashboard links Add a user, Users and Advanced");
             using (var stranger = home.Client())
-            using (var refused = await stranger.GetAsync(HostInvite.InvitePath))
+            using (var refused = await stranger.GetAsync(HostInvite.AddPath))
                 TestAssert.Equal(HttpStatusCode.Forbidden, refused.StatusCode, "the page needs the host's session");
 
-            using (var form = await browser.GetAsync(HostInvite.InvitePath))
+            using (var form = await browser.GetAsync(HostInvite.AddPath))
             {
                 var page = await form.Content.ReadAsStringAsync();
-                TestAssert.True(page.Contains("<h1>Invite a friend</h1>", StringComparison.Ordinal) && page.Contains("name=username", StringComparison.Ordinal) &&
+                TestAssert.True(page.Contains("<h1>Add a user</h1>", StringComparison.Ordinal) && page.Contains("name=username", StringComparison.Ordinal) &&
                     page.Contains("name=summoner", StringComparison.Ordinal) && page.Contains("name=mode value=maxed checked", StringComparison.Ordinal) &&
                     page.Contains("name=mode value=fresh>", StringComparison.Ordinal) && page.Contains("Create their login", StringComparison.Ordinal), page);
                 TestAssert.Equal(HostDashboard.Policy, string.Join(";", form.Headers.GetValues("Content-Security-Policy")), "the host pages' policy");
@@ -96,22 +98,25 @@ public static class HostInviteChecks
             var typedReady = await InviteFormAsync(browser, ("username", "friend2"), ("summoner", "Friend Two"), ("mode", "fresh"), ("password", typed));
             TestAssert.True(Message(typedReady).EndsWith("username: friend2\n  password: " + typed, StringComparison.Ordinal), typedReady);
             await LoginAsync(browser, "friend2", typed, HttpStatusCode.OK);
-            TestAssert.False((await browser.GetStringAsync(HostInvite.InvitePath)).Contains(typed, StringComparison.Ordinal), "a new form is empty");
+            TestAssert.False((await browser.GetStringAsync(HostInvite.AddPath)).Contains(typed, StringComparison.Ordinal), "a new form is empty");
 
-            var friends = await browser.GetStringAsync(HostInvite.FriendsPath);
-            TestAssert.True(friends.Contains("<h1>Friends (2)</h1>", StringComparison.Ordinal) && friends.Contains("<b>friend1</b>", StringComparison.Ordinal) &&
+            // Batch 748: the login queue alone is no login to the platform, so neither has been seen here yet.
+            var friends = await browser.GetStringAsync(HostInvite.UsersPath);
+            TestAssert.True(friends.Contains("<h1>Users (2)</h1>", StringComparison.Ordinal) && friends.Contains("<b>friend1</b>", StringComparison.Ordinal) &&
                 friends.Contains("<b>friend2</b>", StringComparison.Ordinal) && !friends.Contains("host_one", StringComparison.Ordinal) &&
-                friends.Contains("no game yet", StringComparison.Ordinal) && !friends.Contains(generated, StringComparison.Ordinal), friends);
+                friends.Contains("Never seen here", StringComparison.Ordinal) && !friends.Contains(generated, StringComparison.Ordinal), friends);
+            TestAssert.True(home.Loop.Activity.Recent().Select(entry => entry.Text).SequenceEqual(["friend2 added", "friend1 added"]),
+                "the feed names each user added: " + string.Join(" | ", home.Loop.Activity.Recent().Select(entry => entry.Text)));
 
-            // Advanced: the operator's friend launcher and registration are gone; Invite a friend and Friends replace them. Batch 648: in
+            // Advanced: the operator's friend launcher and registration are gone; the Users page replaces them. Batch 648: in
             // the host pages' words (the nav replaces the Back link, as on Updates). Batch 652: the nav's own links, no paragraph repeating them.
             var advanced = await browser.GetStringAsync("/manage");
             TestAssert.True(advanced.Contains("<h1>Advanced</h1>", StringComparison.Ordinal) && !advanced.Contains("Back to the dashboard", StringComparison.Ordinal) &&
-                advanced.Contains("<a href=/host/invite>Invite a friend</a>", StringComparison.Ordinal) && advanced.Contains("<a href=/host/friends>Friends</a>", StringComparison.Ordinal) &&
+                advanced.Contains("<a href=/host/users>Users</a>", StringComparison.Ordinal) && !advanced.Contains("href=/host/invite", StringComparison.Ordinal) &&
                 !advanced.Contains("Play.cmd", StringComparison.Ordinal) && !advanced.Contains("href=\"/register\"", StringComparison.Ordinal) &&
                 advanced.Contains("<h2>Give RP</h2>", StringComparison.Ordinal) && advanced.Contains("<h2>Make a reward code</h2>", StringComparison.Ordinal) &&
                 advanced.Contains("Player reports", StringComparison.Ordinal) && advanced.Contains("<h2 id=leavers-heading>Leavers</h2>", StringComparison.Ordinal) &&
-                advanced.Contains("<h2>Send a notice to players</h2>", StringComparison.Ordinal) && advanced.Contains("<h2>Make a friend log in again</h2>", StringComparison.Ordinal), advanced);
+                advanced.Contains("<h2>Send a notice to players</h2>", StringComparison.Ordinal) && advanced.Contains("<h2>Make a user log in again</h2>", StringComparison.Ordinal), advanced);
         }
         finally
         {
@@ -154,7 +159,7 @@ public static class HostInviteChecks
             await home.SignInAsync(browser);
 
             // A bad username, a typed password of 7 characters and a start choice that does not exist: all three at once.
-            var page = await PostAsync(browser, HostInvite.InvitePath, Token(await browser.GetStringAsync(HostInvite.InvitePath)), HttpStatusCode.BadRequest,
+            var page = await PostAsync(browser, HostInvite.AddPath, Token(await browser.GetStringAsync(HostInvite.AddPath)), HttpStatusCode.BadRequest,
                 ("username", "x!"), ("summoner", ""), ("mode", "level99"), ("password", typed));
             TestAssert.True(page.Contains("<a href=#username>Choose a username of 3 to 24", StringComparison.Ordinal) &&
                 page.Contains("<a href=#password>Choose a password of at least 10 characters.</a>", StringComparison.Ordinal) &&
@@ -164,19 +169,19 @@ public static class HostInviteChecks
             TestAssert.False(page.Contains(typed, StringComparison.Ordinal), "a refused form never shows the password back");
 
             // A name already taken (the host's own login) is listed with the short password, and the start choice is fine.
-            page = await PostAsync(browser, HostInvite.InvitePath, Token(await browser.GetStringAsync(HostInvite.InvitePath)), HttpStatusCode.BadRequest,
+            page = await PostAsync(browser, HostInvite.AddPath, Token(await browser.GetStringAsync(HostInvite.AddPath)), HttpStatusCode.BadRequest,
                 ("username", "host_one"), ("summoner", "Host Two"), ("mode", "maxed"), ("password", typed));
             TestAssert.True(page.Contains("<a href=#username>This username or summoner name is already taken.", StringComparison.Ordinal) &&
                 page.Contains("<a href=#password>Choose a password of at least 10 characters.</a>", StringComparison.Ordinal) &&
                 !page.Contains("id=mode-error", StringComparison.Ordinal), page);
 
             // An empty password is not a problem (Amberline makes one): only the bad username is listed.
-            page = await PostAsync(browser, HostInvite.InvitePath, Token(await browser.GetStringAsync(HostInvite.InvitePath)), HttpStatusCode.BadRequest,
+            page = await PostAsync(browser, HostInvite.AddPath, Token(await browser.GetStringAsync(HostInvite.AddPath)), HttpStatusCode.BadRequest,
                 ("username", "x!"), ("summoner", ""), ("mode", "maxed"), ("password", ""));
             TestAssert.True(page.Contains("<a href=#username>Choose a username of 3 to 24", StringComparison.Ordinal) &&
                 !page.Contains("Choose a password", StringComparison.Ordinal) && !page.Contains("id=password-error", StringComparison.Ordinal), page);
 
-            TestAssert.True((await browser.GetStringAsync(HostInvite.FriendsPath)).Contains("<h1>Friends (0)</h1>", StringComparison.Ordinal),
+            TestAssert.True((await browser.GetStringAsync(HostInvite.UsersPath)).Contains("<h1>Users (0)</h1>", StringComparison.Ordinal),
                 "refused forms make no login");
         }
         finally
@@ -209,7 +214,7 @@ public static class HostInviteChecks
             using (var stranger = home.Client())
             using (var refused = await stranger.GetAsync(HostInvite.PlayFilePath))
                 TestAssert.Equal(HttpStatusCode.Forbidden, refused.StatusCode, "the Play file needs the host's session");
-            foreach (var path in new[] { HostInvite.PlayFilePath, HostInvite.InvitePath })
+            foreach (var path in new[] { HostInvite.PlayFilePath, HostInvite.AddPath })
             {
                 using var early = await browser.GetAsync(path);
                 var page = await early.Content.ReadAsStringAsync();
@@ -332,21 +337,23 @@ public static class HostInviteChecks
             var friendHeld = Signed(friend);
             var otherHeld = Signed(other);
 
-            var page = await browser.GetStringAsync(HostInvite.FriendsPath);
-            TestAssert.True(page.Contains("<h1>Friends (2)</h1>", StringComparison.Ordinal) && !page.Contains("host_one", StringComparison.Ordinal) &&
+            // Batch 748: Friends is the Users page, Remove access is Disable and Give access again is Enable (each its own route now).
+            var page = await browser.GetStringAsync(HostInvite.UsersPath);
+            TestAssert.True(page.Contains("<h1>Users (2)</h1>", StringComparison.Ordinal) && !page.Contains("host_one", StringComparison.Ordinal) &&
                 page.Contains($"name=accountId value={friend.Id}>", StringComparison.Ordinal) && !page.Contains($"name=accountId value={host.Id}>", StringComparison.Ordinal) &&
-                Regex.Matches(page, "online now").Count == 2, "both friends online, the host not listed: " + page);
+                Regex.Matches(page, "<td class=\"words ok\">Online</td>").Count == 2, "both friends online, the host not listed: " + page);
             var token = Token(page);
 
-            // Refused: no token, the host's own login (Remove access and New password), an account that does not exist, another site.
-            await PostAsync(browser, HostInvite.FriendsPath + "/remove", null, HttpStatusCode.BadRequest, ("accountId", friend.Id.ToString()));
-            foreach (var action in new[] { "/remove", "/password" })
+            // Refused: no token, the host's own login (Disable and New password), an account that does not exist (404 now: a stale
+            // page's user), another site.
+            await PostAsync(browser, HostInvite.UsersPath + "/disable", null, HttpStatusCode.BadRequest, ("accountId", friend.Id.ToString()));
+            foreach (var action in new[] { "/disable", "/password" })
             {
-                var refused = await PostAsync(browser, HostInvite.FriendsPath + action, token, HttpStatusCode.BadRequest, ("accountId", host.Id.ToString()));
-                TestAssert.True(refused.Contains("Choose one of your friends.", StringComparison.Ordinal), refused);
+                var refused = await PostAsync(browser, HostInvite.UsersPath + action, token, HttpStatusCode.BadRequest, ("accountId", host.Id.ToString()));
+                TestAssert.True(refused.Contains("This is your own login", StringComparison.Ordinal), refused);
             }
-            await PostAsync(browser, HostInvite.FriendsPath + "/remove", token, HttpStatusCode.BadRequest, ("accountId", "999999"));
-            using (var crossSite = new HttpRequestMessage(HttpMethod.Post, HostInvite.FriendsPath + "/remove")
+            await PostAsync(browser, HostInvite.UsersPath + "/disable", token, HttpStatusCode.NotFound, ("accountId", "999999"));
+            using (var crossSite = new HttpRequestMessage(HttpMethod.Post, HostInvite.UsersPath + "/disable")
                    { Content = new FormUrlEncodedContent(new Dictionary<string, string> { [token.Key] = token.Value, ["accountId"] = friend.Id.ToString() }) })
             {
                 crossSite.Headers.TryAddWithoutValidation("Origin", "http://attacker.example");
@@ -356,8 +363,8 @@ public static class HostInviteChecks
             StillIn(friend, friendHeld, "friend1");
             StillIn(host, hostHeld, "the host");
 
-            // Remove access: the password no longer works, every way in ends; the account and the other logins stay.
-            var removed = await PostAsync(browser, HostInvite.FriendsPath + "/remove", token, HttpStatusCode.OK, ("accountId", friend.Id.ToString()));
+            // Disable (Remove access): the password no longer works, every way in ends; the account and the other logins stay.
+            var removed = await PostAsync(browser, HostInvite.UsersPath + "/disable", token, HttpStatusCode.OK, ("accountId", friend.Id.ToString()));
             TestAssert.True(removed.Contains("friend1 can no longer log in, and was logged out.", StringComparison.Ordinal) &&
                 removed.Contains("<b>friend1</b>", StringComparison.Ordinal), "the account stays listed: " + removed);
             await LoginAsync(browser, "friend1", oldPassword, HttpStatusCode.Forbidden);
@@ -373,42 +380,42 @@ public static class HostInviteChecks
             TestAssert.True(accounts.Authenticate("host_one", HostPassword) is not null && accounts.Authenticate("friend2", oldPassword) is not null,
                 "the host's and friend2's passwords stay");
 
-            // Batch 646: the store keeps the removal (only for friend1, and no password in it), so Friends says "Access removed" and
-            // offers only Give access again; friend2's row keeps both buttons.
+            // Batch 646: the store keeps the removal (only for friend1, and no password in it), so Users marks friend1 Disabled and
+            // offers Enable instead of New password and Disable; friend2's row keeps them.
             var store = File.ReadAllText(Path.Combine(paths.Data, "accounts.json"));
             TestAssert.True(Regex.Count(store, "\"AccessRemovedAt\"") == 1 && !store.Contains(oldPassword, StringComparison.Ordinal), "the removal is on record: " + store);
             string Row(string page, string username) => Regex.Match(page, $"<tr><td><b>{username}</b>.*?</tr>", RegexOptions.Singleline).Value;
-            var listed = await browser.GetStringAsync(HostInvite.FriendsPath);
-            TestAssert.True(Row(listed, "friend1").Contains("<b>Access removed</b> on ", StringComparison.Ordinal) &&
-                Row(listed, "friend1").Contains("Give access again<span class=vh> for friend1</span>", StringComparison.Ordinal) &&
-                !Row(listed, "friend1").Contains("New password", StringComparison.Ordinal) && !Row(listed, "friend1").Contains("Remove access", StringComparison.Ordinal) &&
-                Row(listed, "friend2").Contains("Remove access<span class=vh> for friend2</span>", StringComparison.Ordinal) &&
-                !Row(listed, "friend2").Contains("Access removed", StringComparison.Ordinal) &&
-                listed.Contains("<p class=tip>New password and Remove access log the friend out at once.", StringComparison.Ordinal), "friend1's access removed, friend2's not: " + listed);
+            var listed = await browser.GetStringAsync(HostInvite.UsersPath);
+            TestAssert.True(Row(listed, "friend1").Contains("<span class=mark>Disabled</span>", StringComparison.Ordinal) &&
+                Row(listed, "friend1").Contains("Enable<span class=vh> friend1</span>", StringComparison.Ordinal) &&
+                !Row(listed, "friend1").Contains("New password", StringComparison.Ordinal) && !Row(listed, "friend1").Contains(">Disable<", StringComparison.Ordinal) &&
+                Row(listed, "friend2").Contains("Disable<span class=vh> friend2</span>", StringComparison.Ordinal) &&
+                !Row(listed, "friend2").Contains("<span class=mark>Disabled</span>", StringComparison.Ordinal) &&
+                listed.Contains("<p class=tip>New password and Disable log the user out at once", StringComparison.Ordinal), "friend1 disabled, friend2 not: " + listed);
 
-            // Give access again (New password's route) lets friend1 in again, shown once; it ends friend1's ways in again (a parked
-            // session too), nobody else's.
+            // Enable (Give access again) lets friend1 in again, shown once; it ends friend1's ways in again (a parked session too),
+            // nobody else's.
             var fresh = Signed(friend, park: true);
-            var changed = await PostAsync(browser, HostInvite.FriendsPath + "/password", token, HttpStatusCode.OK, ("accountId", friend.Id.ToString()));
+            var changed = await PostAsync(browser, HostInvite.UsersPath + "/enable", token, HttpStatusCode.OK, ("accountId", friend.Id.ToString()));
             var message = Message(changed);
             newPassword = Regex.Match(message, @"password: (\S+)\n").Groups[1].Value;
             TestAssert.True(Generated.IsMatch(newPassword) && message.StartsWith("Your access to \"Test Server\" is back:\n  username: friend1\n", StringComparison.Ordinal) &&
                 changed.Contains("<h1>friend1 can log in again</h1>", StringComparison.Ordinal) && changed.Contains("data-copy=message", StringComparison.Ordinal), changed);
             TestAssert.False(File.ReadAllText(Path.Combine(paths.Data, "accounts.json")).Contains("\"AccessRemovedAt\"", StringComparison.Ordinal), "a new password ends the removal");
-            TestAssert.True(Row(await browser.GetStringAsync(HostInvite.FriendsPath), "friend1").Contains("Remove access", StringComparison.Ordinal), "friend1 is active again");
+            TestAssert.True(Row(await browser.GetStringAsync(HostInvite.UsersPath), "friend1").Contains(">Disable<", StringComparison.Ordinal), "friend1 is active again");
             await LoginAsync(browser, "friend1", newPassword, HttpStatusCode.OK);
             TestAssert.True(access.AccountFor(fresh.Tunnel) is null, "New password revokes friend1's tunnel token");
             TestAssert.False(sessions.Resume("rtmp-back", friend.Username, fresh.Session), "friend1's parked session cannot resume");
             TestAssert.Throws<ArgumentException>(() => sessions.Login("rtmp-late", friend.Username, fresh.Ticket, version), "friend1's unused ticket");
             StillIn(other, otherHeld, "friend2");
             StillIn(host, hostHeld, "the host");
-            TestAssert.False((await browser.GetStringAsync(HostInvite.FriendsPath)).Contains(newPassword, StringComparison.Ordinal), "shown only once");
+            TestAssert.False((await browser.GetStringAsync(HostInvite.UsersPath)).Contains(newPassword, StringComparison.Ordinal), "shown only once");
             // New password for a friend whose access stays keeps its own words.
-            var renewed = Message(await PostAsync(browser, HostInvite.FriendsPath + "/password", token, HttpStatusCode.OK, ("accountId", friend.Id.ToString())));
+            var renewed = Message(await PostAsync(browser, HostInvite.UsersPath + "/password", token, HttpStatusCode.OK, ("accountId", friend.Id.ToString())));
             var renewedPassword = Regex.Match(renewed, @"password: (\S+)\n").Groups[1].Value;
             TestAssert.True(Generated.IsMatch(renewedPassword) && renewed.StartsWith("Your new password for \"Test Server\":\n  username: friend1\n", StringComparison.Ordinal), renewed);
             await LoginAsync(browser, "friend1", renewedPassword, HttpStatusCode.OK);
-            TestAssert.True(log.Text.Contains("/host/friends/password", StringComparison.Ordinal), "the web host log saw the requests");
+            TestAssert.True(log.Text.Contains("/host/users/password", StringComparison.Ordinal), "the web host log saw the requests");
             TestAssert.False(log.Text.Contains(newPassword, StringComparison.Ordinal) || log.Text.Contains(renewedPassword, StringComparison.Ordinal),
                 "the web host log never holds a password");
             await app.StopAsync();
@@ -454,17 +461,17 @@ public static class HostInviteChecks
     }
 
     private static async Task<string> InviteFormAsync(HttpClient browser, params (string Name, string Value)[] fields) =>
-        await PostAsync(browser, HostInvite.InvitePath, Token(await browser.GetStringAsync(HostInvite.InvitePath)), HttpStatusCode.OK, fields);
+        await PostAsync(browser, HostInvite.AddPath, Token(await browser.GetStringAsync(HostInvite.AddPath)), HttpStatusCode.OK, fields);
 
     private static async Task RefusedAsync(HttpClient browser, string says, string? keeps, params (string Name, string Value)[] fields)
     {
-        var count = Regex.Match(await browser.GetStringAsync(HostInvite.FriendsPath), @"<h1>Friends \((\d+)\)</h1>").Groups[1].Value;
-        var token = says == "The page expired" ? (KeyValuePair<string, string>?)null : Token(await browser.GetStringAsync(HostInvite.InvitePath));
-        var page = await PostAsync(browser, HostInvite.InvitePath, token, HttpStatusCode.BadRequest, fields);
+        var count = Regex.Match(await browser.GetStringAsync(HostInvite.UsersPath), @"<h1>Users \((\d+)\)</h1>").Groups[1].Value;
+        var token = says == "The page expired" ? (KeyValuePair<string, string>?)null : Token(await browser.GetStringAsync(HostInvite.AddPath));
+        var page = await PostAsync(browser, HostInvite.AddPath, token, HttpStatusCode.BadRequest, fields);
         TestAssert.True(page.Contains(says, StringComparison.Ordinal) && (keeps is null || page.Contains(keeps, StringComparison.Ordinal)), page);
         foreach (var (name, value) in fields)
             if (name == "password") TestAssert.False(page.Contains(value, StringComparison.Ordinal), "a refused form never shows the password back");
-        TestAssert.True((await browser.GetStringAsync(HostInvite.FriendsPath)).Contains($"<h1>Friends ({count})</h1>", StringComparison.Ordinal), "a refused form makes no login");
+        TestAssert.True((await browser.GetStringAsync(HostInvite.UsersPath)).Contains($"<h1>Users ({count})</h1>", StringComparison.Ordinal), "a refused form makes no login");
     }
 
     internal static async Task<string> PostAsync(HttpClient client, string path, KeyValuePair<string, string>? token, HttpStatusCode expected,

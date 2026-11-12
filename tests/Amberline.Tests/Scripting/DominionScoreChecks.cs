@@ -1,5 +1,7 @@
+using System.Buffers.Binary;
 using Amberline.Core;
 using Amberline.Data;
+using Amberline.Network.Protocol;
 using Amberline.Simulation.BehaviorTrees;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Stats;
@@ -278,6 +280,105 @@ public static class DominionScoreChecks
         {
             GameData.ConfigureDefault(GameDataPaths.Default);
         }
+    }
+
+    /// <summary>
+    /// Batch 747 (Reconstruction, DominionScore.PlayMusicPhase): the decoded 0xE5 is 10 bytes, the opcode, a hero's net id (the stock client routes
+    /// the packet to a hero), the command at 5 (1 = BeginMusicCue) and the FMOD cue at 6. Nothing goes out at the start: the client begins its
+    /// own phase 1 theme (Map_CrystalScar, cue 13) on StartGame. As the lower nexus of either team passes 375, 250 and 125, every client gets one
+    /// Begin of Global_Phase2, 3 and 4 (cues 15, 16, 17 of LoL_Audio.fev), once each; a fallen nexus sends none, since the client plays its own
+    /// victory or defeat music on EndGame.
+    /// </summary>
+    [Check("dominion.music-phase-follows-the-lower-nexus")]
+    public static void MusicPhaseFollowsTheLowerNexus()
+    {
+        var (_, hero, packets, sink, host) = MusicMatch();
+        var score = host.Score!;
+        var tick = 0;
+        void Run() { for (var step = 0; step < 30; step++) score.Tick(++tick * Step, Step); }
+        List<byte[]> Music() => packets.Where(packet => packet.Plaintext.Span[0] == 0xE5).Select(packet => packet.Plaintext.ToArray()).ToList();
+        void Phases(string what, params uint[] cues) =>
+            TestAssert.True(Music().Select(packet => Convert.ToHexString(packet))
+                    .SequenceEqual(cues.Select(cue => Convert.ToHexString(MusicBegin(hero.NetId, cue)))),
+                $"{what}: expected Begin of cues [{string.Join(", ", cues)}], got [{string.Join(", ", Music().Select(Convert.ToHexString))}]");
+
+        Run();
+        Phases("the start sends nothing (the client starts its own theme)");
+        sink.DamageNexus(Team.Order, 120.0);
+        Run();
+        Phases("380 is still phase 1");
+        sink.DamageNexus(Team.Chaos, 125.0);
+        Run();
+        Phases("Chaos at 375: phase 2", 15);
+        var first = packets.First(packet => packet.Plaintext.Span[0] == 0xE5);
+        TestAssert.True(first.Channel == 3 && first.Reliability == LeaguePacketReliability.Reliable,
+            $"0xE5 goes reliable on the S2C channel 3 (channel {first.Channel}, {first.Reliability})");
+        sink.DamageNexus(Team.Chaos, 25.0);
+        Run();
+        Phases("Chaos at 350 stays in phase 2", 15);
+        sink.DamageNexus(Team.Order, 140.0);
+        Run();
+        Phases("Order at 240 is now the lower nexus: phase 3", 15, 16);
+        sink.DamageNexus(Team.Chaos, 300.0);
+        Run();
+        Phases("Chaos at 50: phase 4", 15, 16, 17);
+        sink.DamageNexus(Team.Chaos, 50.0);
+        Run();
+        Phases("the fallen nexus sends nothing more", 15, 16, 17);
+    }
+
+    /// <summary>
+    /// Batch 747: a returning client (BehaviorTreeQuestHost.ReconnectState) gets the current music phase as one Begin addressed to its own hero,
+    /// and none while the match is still in phase 1. Two thresholds passed in one step send only the deeper phase.
+    /// </summary>
+    [Check("dominion.reconnecting-client-gets-the-current-music-phase")]
+    public static void ReconnectingClientGetsTheCurrentMusicPhase()
+    {
+        var (world, hero, packets, sink, host) = MusicMatch();
+        var returning = world.Register(new Entity(world.Allocate(UnitType.Hero), EntityKind.Hero, UnitType.Hero, Team.Chaos, new Position2(13000, 4500))
+            { Name = "Annie", ChampionName = "Annie" });
+        var known = new HashSet<uint> { hero.NetId, returning.NetId };
+        List<byte[]> Music(IEnumerable<PlaintextPacket> stream) =>
+            stream.Where(packet => packet.Plaintext.Span[0] == 0xE5).Select(packet => packet.Plaintext.ToArray()).ToList();
+        var tick = 0;
+        void Run() { for (var step = 0; step < 30; step++) host.Score!.Tick(++tick * Step, Step); }
+
+        Run();
+        TestAssert.Equal(0, Music(host.ReconnectState(returning.NetId, Team.Chaos, known)).Count,
+            "in phase 1 the returning client gets no 0xE5 (its own StartGame began the theme)");
+        sink.DamageNexus(Team.Chaos, 260.0);
+        Run();
+        var live = Music(packets);
+        TestAssert.True(live.Count == 1 && live[0].AsSpan().SequenceEqual(MusicBegin(world.Heroes()[0].NetId, 16)),
+            $"500 to 240 in one step sends only phase 3 (cue 16), got {live.Count} packets");
+        var burst = Music(host.ReconnectState(returning.NetId, Team.Chaos, known));
+        TestAssert.True(burst.Count == 1 && burst[0].AsSpan().SequenceEqual(MusicBegin(returning.NetId, 16)),
+            $"the returning client gets one Begin of the current phase (cue 16) addressed to its own hero, got {burst.Count}");
+    }
+
+    // Batch 747: map 8's score with a packet sender, one Order champion and a recorded nexus pair (500 each).
+    private static (WorldState World, Entity Hero, List<PlaintextPacket> Packets, RecordingScoreSink Sink, BehaviorTreeQuestHost Host) MusicMatch()
+    {
+        var world = new WorldState();
+        var hero = world.Register(new Entity(world.Allocate(UnitType.Hero), EntityKind.Hero, UnitType.Hero, Team.Order, new Position2(1000, 4500))
+            { Name = "Annie", ChampionName = "Annie" });
+        var packets = new List<PlaintextPacket>();
+        var host = BehaviorTreeQuestHost.ForMap(GameMaps.CrystalScar, GameDataPaths.Default, world, hooks: new CapturePointHooks(Send: packets.Add))
+            ?? throw new InvalidOperationException("map 8 has a quest host");
+        var sink = new RecordingScoreSink();
+        host.AttachScore(new FixedControl(0, 0), sink);
+        return (world, hero, packets, sink, host);
+    }
+
+    // The decoded 0xE5 Begin, written byte by byte (not through the builder).
+    private static byte[] MusicBegin(uint heroNetId, uint cue)
+    {
+        var bytes = new byte[10];
+        bytes[0] = 0xE5;
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(1), heroNetId);
+        bytes[5] = 1;
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(6), cue);
+        return bytes;
     }
 
     private static void ConfigureMapEight() =>

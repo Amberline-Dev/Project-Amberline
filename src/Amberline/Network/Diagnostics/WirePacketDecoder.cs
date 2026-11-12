@@ -32,7 +32,7 @@ public static class WirePacketDecoder
             [0xC4] = "DisableHUDForEndOfGame", [0xCD] = "EndOfGameEvent", [0xCE] = "EndGame",
             [0x18] = "UpgradeSpellAns", [0x8C] = "FXCreateGroup", [0x3D] = "FXKill",
             [0x66] = "Ambiguous_0x66", [0xCB] = "NeutralCampEmpty", [0xE0] = "UnitChangeTeam", [0xE1] = "UnitSetMinimapIcon", [0x0D] = "BasicAttack",
-            [0x39] = "InstantStopAttack", [0x26] = "AddUnitPerceptionBubble", [0x74] = "PauseAnimation", [0x5E] = "LevelUpSpell", [0x9E] = "ChangeCharacterVoice", [0x99] = "ChangePARColorOverride", [0xE4] = "ColorRemapFX",
+            [0x39] = "InstantStopAttack", [0x26] = "AddUnitPerceptionBubble", [0x74] = "PauseAnimation", [0x5E] = "LevelUpSpell", [0x9E] = "ChangeCharacterVoice", [0x99] = "ChangePARColorOverride", [0xE4] = "ColorRemapFX", [0xE5] = "MusicCueCommand",
             [0x83] = "ToolTipVars", [0x68] = "ApplyDamage", [0x25] = "AddGold", [0x45] = "LevelUp",
             [0x61] = "Die", [0xA6] = "Die", [0x72] = "BuyItemAns", [0x0B] = "RemoveItemAns",
             [0x44] = "SwapItemAns", [0xA7] = "UseItemAns", [0x56] = "SetItem", [0x8A] = "SetCooldown",

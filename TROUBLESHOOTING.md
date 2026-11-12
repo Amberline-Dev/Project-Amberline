@@ -22,7 +22,7 @@ Every problem Amberline shows says what happened and what to do. Most also have 
 - **User Account Control** (Windows asks for your permission):
   - while `START-HERE.cmd` installs a tool with `winget`: choose **Yes**;
   - when you choose **Allow through Windows Firewall** on the dashboard: Windows asks once, for a Microsoft program named
-    **Windows Command Processor**. Choose **Yes**. If you choose No, the dashboard says **Windows did not allow it. Friends cannot
+    **Windows Command Processor**. Choose **Yes**. If you choose No, the dashboard says **Windows did not allow it. Players cannot
     join yet.** ([A-NET-02](#a-net-02)).
 - **Windows Security removed a file**: see [A-FILES-06](#a-files-06).
 
@@ -43,13 +43,13 @@ Amberline cannot start, or cannot update, because another program listens on one
 
 #### A-NET-02
 
-Windows Firewall does not let your friends in yet. The dashboard says which case it is:
+Windows Firewall does not let your players in yet. The dashboard says which case it is:
 
 - **Windows Firewall blocks Amberline.** Choose **Allow through Windows Firewall**. Windows asks once, for a Microsoft program
   named Windows Command Processor: choose **Yes**.
-- **Windows did not allow it, so friends cannot join yet.** You chose No in that Windows question. Choose **Allow through
+- **Windows did not allow it, so players cannot join yet.** You chose No in that Windows question. Choose **Allow through
   Windows Firewall** again, and press **Yes**.
-- **Windows lets friends in on some network types only.** Choose **Allow through Windows Firewall** again: friends need every
+- **Windows lets players in on some network types only.** Choose **Allow through Windows Firewall** again: players need every
   network type, public ones too.
 - **Windows Firewall has Amberline's rule for another folder.** You moved or updated Amberline. Choose **Allow through Windows
   Firewall** again to point the rule at this folder.
@@ -95,32 +95,32 @@ mode, or open the same ports on both routers, or set your router as the box's "e
 
 #### A-NET-07
 
-**Your internet provider shares one address among many homes, so friends cannot reach this PC.** This is called CGNAT. Ask your
+**Your internet provider shares one address among many homes, so players cannot reach this PC.** This is called CGNAT. Ask your
 provider for a public IPv4 address (some do it on request), or [host on a rented server](HOSTING.md#a-rented-server).
 
 #### A-NET-08
 
-**A VPN is on, so friends may not reach you.** Friends reach you through your normal connection. Switch the VPN off while you
+**A VPN is on, so players may not reach you.** Players reach you through your normal connection. Switch the VPN off while you
 host, then press **Test again**.
 
 #### A-NET-09
 
-**Your address changed at 07:12. Friends need the new Play file to reach you.** Your internet address changed, often because
-the router restarted. Amberline already uses the new one. Choose **Download the Play file** and send it to every friend; it
+**Your address changed at 07:12. Users need the new Play file to reach you.** Your internet address changed, often because
+the router restarted. Amberline already uses the new one. Choose **Download the Play file** and send it to every user; it
 holds the new address. Then choose **Hide**. See
 [When your address changes](HOSTING.md#when-your-address-changes).
 
 #### A-NET-10
 
-**friend1 logged in, but their game could not connect to Amberline.** Games use the game ports (UDP 5219 to 5222, or the range
+**user1 logged in, but their game could not connect to Amberline.** Games use the game ports (UDP 5219 to 5222, or the range
 Settings shows under **Games**), not the sign-in port, so the login working says nothing about the game.
 
 - Check that your router sends the game ports to this PC (UPnP, or the port forwarding of the router guide), and that Windows
   Firewall lets Amberline in (the **Network** list on the dashboard).
-- A VPN, or a school or work network on your friend's side, can also block games.
-- With **Only people on my home network**: check Windows Firewall, and that your friend's PC is on your home network.
+- A VPN, or a school or work network on the player's side, can also block games.
+- With **Only people on my home network**: check Windows Firewall, and that the player's PC is on your home network.
 
-Then ask your friend to start the game again, and choose **Hide**.
+Then ask the player to start the game again, and choose **Hide**.
 
 ### Files (A-FILES)
 
@@ -158,8 +158,8 @@ was moved, renamed or deleted since Amberline last started. Choose it again on t
 #### A-FILES-06
 
 - **Windows Security may have removed Amberline.Server.exe, a part of Amberline.** Restore it in Windows Security
-  (**Protection history**), or download Amberline again; your settings and friends stay. Then press **Restart Amberline**.
-- **A part of Amberline was changed.** Download Amberline again and start it. Your settings and friends stay.
+  (**Protection history**), or download Amberline again; your settings and users stay. Then press **Restart Amberline**.
+- **A part of Amberline was changed.** Download Amberline again and start it. Your settings and users stay.
 
 Amberline compares its program files with the list it was built with at every start.
 
@@ -179,11 +179,11 @@ for example by emptying the Recycle Bin, or games and updates may fail to save. 
 
 #### A-CERT-01
 
-**Your friends' Play files stop working on 1 March 2028. Make new ones.** Or **Your friends' Play files stopped working:
+**Your users' Play files stop working on 1 March 2028. Make new ones.** Or **Your users' Play files stopped working:
 Amberline's certificate ran out.** Each Play file checks your server's certificate. This message shows 60 days before the
 certificate runs out. New installs get a certificate that lasts 20 years; installs from early versions have one that lasts two.
 
-Choose **Make new Play files**. Amberline makes a new certificate and restarts (not while a game runs). Then send every friend
+Choose **Make new Play files**. Amberline makes a new certificate and restarts (not while a game runs). Then send every user
 the new Play file: their old ones stop working at once.
 
 ### Running (A-RUN)
@@ -201,7 +201,7 @@ new game. If it happens again, choose **Open the support log** and send it with 
 
 ## Router problems
 
-Friends outside your home reach your PC through your router. Amberline asks your router to let them in, with a router feature
+Players outside your home reach your PC through your router. Amberline asks your router to let them in, with a router feature
 called UPnP. These can stop that:
 
 - **UPnP is off** ([A-NET-03](#a-net-03), [A-NET-04](#a-net-04)): switch it on in your router's settings (often called "Allow
@@ -211,7 +211,7 @@ called UPnP. These can stop that:
   mode, open the same ports on both, or make your router the box's "exposed host".
 - **A shared provider address** ([A-NET-07](#a-net-07), CGNAT): your provider gives one internet address to many homes, so nobody
   outside can reach you. Ask your provider for a public IPv4 address, or use a rented server.
-- **A VPN** ([A-NET-08](#a-net-08)): switch it off while you host. On a friend's side, a VPN or a school or work network can stop
+- **A VPN** ([A-NET-08](#a-net-08)): switch it off while you host. On a player's side, a VPN or a school or work network can stop
   their game from connecting ([A-NET-10](#a-net-10)).
 - **Everyone is at home**: you do not need the router at all. Choose
   [Only people on my home network (LAN party)](HOSTING.md#only-your-home-network-lan-party).
@@ -343,6 +343,8 @@ the game from** the server's name:
 
 ### The desktop icon
 
+- **The desktop icon is gone.** Its copy is in your install folder (the folder that holds `companion`, `air` and `game`), under the
+  same name: double-click it to play. Double-click your server's Play file again to put the icon back on the desktop.
 - **Can't reach** the server: check that you are online. If you are, the server may be off: ask the host to start it, then
   choose **Try again**.
 - The server **did not prove it is the server this shortcut was made for**: the host may have set the server up again. Ask the
@@ -366,7 +368,7 @@ The details never show the server's address.
 ### Logging in
 
 Use the username and password from your host's message, or the ones you chose on the sign-up page. After too many wrong passwords, sign-in is blocked for 15 minutes.
-If you lost your password, ask your host: **Friends**, **New password** makes a new one.
+If you lost your password, ask your host: **Users**, **New password** makes a new one.
 
 ## Support log
 
@@ -387,7 +389,7 @@ It hides, with marks:
 
 - your Windows user name (`<Windows user>`), your PC's name (`<PC name>`), your server's name (`<server name>`) and your public
   address (`<public address>`, or `<home address>` for a home-network address);
-- every login's username and summoner name (`<login>`);
+- every login's username and summoner name, also of a login you deleted (`<login>`);
 - every internet or home-network address (`<internet address>`, `<home address>`) and e-mail address (`<e-mail>`);
 - anything after the word "password", codes in web links, and long keys and tokens (`<hidden>`, `<secret>`).
 

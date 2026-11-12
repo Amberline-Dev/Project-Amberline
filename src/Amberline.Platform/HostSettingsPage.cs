@@ -116,8 +116,8 @@ public static class HostSettingsPage
             """;
         var notice = problem is not null ? HostPages.Errors((problem, typed is null ? null : "games")) : saved switch
         {
-            "name" => $"<p class=notice role=status>Saved. Send your friends the new Play file to show the new name. {PlayFileLink}</p>",
-            "address" => $"<p class=notice role=status>Saved. Send your friends the new Play file: their old one looks at the old address. {PlayFileLink}</p>",
+            "name" => $"<p class=notice role=status>Saved. Send your users the new Play file to show the new name. {PlayFileLink}</p>",
+            "address" => $"<p class=notice role=status>Saved. Send your users the new Play file: their old one looks at the old address. {PlayFileLink}</p>",
             "folders" => "<p class=notice role=status>Saved. Amberline restarted to use the new folders.</p>",
             "register" or "share" => "<p class=notice role=status>Saved.</p>",
             "cheats" => "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
@@ -150,7 +150,7 @@ public static class HostSettingsPage
             <p><a href=/host/updates>Change the update check</a></p></section>
             <section class=folder aria-labelledby=play-title><h2 id=play-title>Play file</h2>
             <p>{{PlayFileLink}}</p>
-            <p><a href="{{HostAttention.CertificatePath}}?from=settings">Make new Play files</a>: every friend's old Play file stops working.</p></section>
+            <p><a href="{{HostAttention.CertificatePath}}?from=settings">Make new Play files</a>: every user's old Play file stops working.</p></section>
             <section class=folder aria-labelledby=register-title><h2 id=register-title>Sign-ups</h2>
             <form method=post action={{RegisterPath}}>{{token}}
             <label class=choice><input type=checkbox name=on value=on{{(signUp.On ? " checked" : "")}}>Let people register themselves</label>
@@ -185,7 +185,7 @@ public static class HostSettingsPage
                 ? Tick("clients", clients, $"Also delete the game and AIR client copies ({HostUninstall.Size(plan.Size(UninstallKind.Clients))})") : "") +
             (plan.Has(UninstallKind.Data)
                 ? Tick("data", data, $"Also delete your logins and settings ({HostUninstall.Size(plan.Size(UninstallKind.Data))}). " +
-                    "Friends' logins and Play files stop working for good.") : "");
+                    "Users' logins and Play files stop working for good.") : "");
         return HostMode.Page($$"""
             <h1>Uninstall Amberline</h1>
             {{HostPages.Errors(shown)}}

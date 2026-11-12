@@ -34,7 +34,7 @@ public sealed record PlatformSettings(string DataRoot, string ServerExecutable, 
     public bool AllowCheats { get; init; }
     /// <summary>
     /// Settings' Cheat commands list (batch 680): the account ids that may use the cheat commands, null until its first Save. An id
-    /// outlives a login's new password and its Remove access, which keep the account.
+    /// outlives a login's new password and its Disable, which keep the account; Delete (batch 748) removes it from the list.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long[]? CheatAccounts { get; init; }
@@ -132,8 +132,8 @@ public static class Program
         using var accounts = new PlatformAccounts(home, airRoot);
         await using var manager = new GameManager(hostSettings, Path.Combine(home, "games"));
         accounts.RecoverResults(manager, Console.Out);
-        var sessions = new PlatformSessions(accounts);
-        var games = new PlatformGames(accounts, manager, settings.GameHost);
+        var sessions = new PlatformSessions(accounts, activity: host?.Activity);
+        var games = new PlatformGames(accounts, manager, settings.GameHost, activity: host?.Activity);
         // DIAGNOSTICS (owner, 3 and 4 November 2026): in home mode only the logins Settings' Cheat commands list ticks get cheats.
         if (host is not null) games.MayCheat = HostSettingsPage.CheatRule(host.Paths.Settings);
         var services = new PlatformServices(accounts, sessions, games, settings.HttpPort);
@@ -145,8 +145,10 @@ public static class Program
         using var tls = HostFiles.Certificate(remoteDirectory);
         // NOT RETAIL: the tunnel names the friend behind each loopback connection for the host page's Online table.
         var tunnelPeers = new AirTunnelPeers();
-        // NOT RETAIL: the friend's tunnel bearer tokens, persisted beside the host certificate (see AirRemoteAccess).
-        var remoteAccess = new AirRemoteAccess(remoteDirectory);
+        // NOT RETAIL: the friend's tunnel bearer tokens, persisted beside the host certificate (see AirRemoteAccess). Batch 748: a token
+        // counts only while its login exists and is not disabled, so a revoke that was never saved cannot bring a deleted or disabled login's
+        // tunnel back (the tunnels, their sign-in check and the ladder all ask AccountFor).
+        var remoteAccess = new AirRemoteAccess(remoteDirectory) { Allowed = id => accounts.Find(id) is { AccessRemovedAt: null } };
         var pin = tls.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256);
         // NOT RETAIL: people register themselves on the friends' port while Settings' switch is on (HostSelfRegistration); home mode only.
         using var signUp = host is null ? null : new HostSelfRegistration(host, accounts, settings.RemotePort, pin, settings.SelfRegistration);
@@ -199,8 +201,10 @@ public static class Program
                 { PermitLimit = 12, Window = TimeSpan.FromHours(1), QueueLimit = 0 }));
         });
         await using var app = builder.Build();
+        // DIAGNOSTICS: the dashboard's demo data follows the switch as this start read it (HostLoop.DemoData), never the live variable.
         await using var dashboard = host is null ? null : new HostDashboard(host, settings,
-            () => PlatformManagement.Online(accounts, sessions, games, chat), () => HostDashboard.RunningGames(manager), maxGames: () => manager.MaxGames)
+            () => PlatformManagement.Online(accounts, sessions, games, chat), () => HostDashboard.RunningGames(manager), maxGames: () => manager.MaxGames,
+            signUp: signUp, board: games.HostBoard, endGame: id => manager.StopAsync(new HostGuest("", "", "", Admin: true), id), demoData: host.DemoData)
             { Support = HostSupport.For(host, settings, manager, accounts, sessions) };
         UseRegistrationProxy(app, settings);
         app.UseRateLimiter();
@@ -241,9 +245,9 @@ public static class Program
         if (host is not null) HostPages.Use(app, host, () => steps!.ServerName, nav: true);
         if (host is not null) HostPlay.Map(app, host, settings);
         if (host is not null) HostUpdates.Map(app, host, () => HostDashboard.RunningGames(manager).Count);
-        // NOT RETAIL: Invite a friend and Friends: friends' logins and the Play file, under the gated /host pages.
+        // NOT RETAIL: Users and Add a user: the logins, their status and actions, and the Play file, under the gated /host pages.
         if (host is not null) HostInvite.Map(app, host, () => steps!.PublicHost, () => steps!.ServerName, accounts, sessions, remoteAccess,
-            settings.RemotePort, pin, signUp);
+            settings.RemotePort, pin, signUp, games, chat);
         signUp?.Map(app);
         share?.Map(app);
         dashboard?.Map(app, steps, tls);
@@ -262,7 +266,7 @@ public static class Program
                 services.Broadcast = text is null ? null : notice;
                 hostNotice = text is null ? null : new PlatformHomeNotice("Notice from the host", text, DateTimeOffset.UtcNow);
                 return rtmp.Broadcast(notice);
-            }, sessions, host is null ? null : HostInvite.InvitePath);
+            }, sessions, host is null ? null : HostInvite.UsersPath);
         PlatformStore.Map(app, accounts, sessions, airRoot, (account, body) => rtmp.Push(account, body, "cn"));
         PlatformBootstrap.Map(app, host?.Paths.Bootstrap ?? Path.Combine(home, "bootstrap"), Path.Combine(AppContext.BaseDirectory, "air-client-bootstrap.cmd"),
             steps is null ? () => settings.PublicHost : () => steps.PublicHost, settings.RemotePort, tls, () => steps?.ServerName);

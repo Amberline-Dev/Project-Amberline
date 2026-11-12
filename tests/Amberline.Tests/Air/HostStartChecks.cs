@@ -45,7 +45,7 @@ public static class HostStartChecks
             TestAssert.Equal(("A-FILES-06", "Windows Security may have removed exehost.exe, a part of Amberline.", (string?)null),
                 (card?.Code, card?.Message, card?.Action), "the removed file is named");
             TestAssert.True(card!.WhatToDo.Contains("Protection history", StringComparison.Ordinal) &&
-                card.WhatToDo.Contains("your settings and friends stay", StringComparison.Ordinal), card.WhatToDo);
+                card.WhatToDo.Contains("your settings and users stay", StringComparison.Ordinal), card.WhatToDo);
             File.Delete(Path.Combine(app, "platform", "Amberline.Platform.exe"));
             TestAssert.Equal("Windows Security may have removed Amberline.Platform.exe, a part of Amberline (and 1 more part).",
                 (await HostChecks.AppFilesAsync(app, default))?.Message, "the first missing file in BUILD.json's order, and how many more");
@@ -263,9 +263,9 @@ public static class HostStartChecks
             status = await StatusUntilAsync(browser, now => Card(now, "A-NET-09") is not null);
             var banner = Card(status, "A-NET-09")!.Value;
             TestAssert.True(Regex.IsMatch(banner.GetProperty("message").GetString()!,
-                @"^Your address changed at \d\d:\d\d\. Friends need the new Play file to reach you\.$"), banner.GetRawText());
+                @"^Your address changed at \d\d:\d\d\. Users need the new Play file to reach you\.$"), banner.GetRawText());
             TestAssert.Equal("address", banner.GetProperty("action").GetString(), "the banner has its button");
-            TestAssert.Equal("Send every friend the new Play file, then choose Hide.",
+            TestAssert.Equal("Send every user the new Play file, then choose Hide.",
                 banner.GetProperty("whatToDo").GetString());
             TestAssert.Equal(1, status.GetProperty("attention").EnumerateArray().Count(card => card.GetProperty("code").GetString() == "A-NET-09"), "one banner");
             await HostAddressAsync(browser, "198.51.100.20");
@@ -401,15 +401,15 @@ public static class HostStartChecks
         TestAssert.Equal(null, HostChecks.CertificateCard(now.AddYears(20), now), "a new install's certificate");
         TestAssert.Equal(null, HostChecks.CertificateCard(now.AddDays(61), now), "more than 60 days left");
         var soon = HostChecks.CertificateCard(now.AddDays(60), now);
-        TestAssert.Equal(("A-CERT-01", $"Your friends' Play files stop working on {now.AddDays(60).ToLocalTime().ToString("d MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture)}. Make new ones.", "certificate"),
+        TestAssert.Equal(("A-CERT-01", $"Your users' Play files stop working on {now.AddDays(60).ToLocalTime().ToString("d MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture)}. Make new ones.", "certificate"),
             (soon?.Code, soon?.Message, soon?.Action), "60 days before");
-        TestAssert.Equal("Your friends' Play files stopped working: Amberline's certificate ran out.", HostChecks.CertificateCard(now.AddDays(-1), now)?.Message);
+        TestAssert.Equal("Your users' Play files stopped working: Amberline's certificate ran out.", HostChecks.CertificateCard(now.AddDays(-1), now)?.Message);
         IPAddress Ip(string text) => IPAddress.Parse(text);
         TestAssert.Equal(null, HostChecks.VpnCard(Ip("192.168.1.20"), Ip("192.168.1.20")), "the internet goes out through the router's interface");
         TestAssert.Equal(null, HostChecks.VpnCard(null, Ip("10.8.0.2")), "no router side known");
         TestAssert.Equal(null, HostChecks.VpnCard(Ip("192.168.1.20"), null), "no route to the internet known");
         var vpn = HostChecks.VpnCard(Ip("192.168.1.20"), Ip("10.8.0.2"));
-        TestAssert.Equal(("A-NET-08", "A VPN is on, so friends may not reach you.", "network"),
+        TestAssert.Equal(("A-NET-08", "A VPN is on, so players may not reach you.", "network"),
             (vpn?.Code, vpn?.Message, vpn?.Action));
 
         // The running dashboard with a certificate 30 days from its end and the internet behind a VPN; no router answers.

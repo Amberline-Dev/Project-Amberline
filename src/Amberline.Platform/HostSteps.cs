@@ -75,7 +75,7 @@ public static class HostAddress
             return WanAddress.Classify(address) switch
             {
                 WanAddressClass.Public => (value, null),
-                WanAddressClass.Private => (null, "This address belongs to your home network, so friends outside cannot use it. " +
+                WanAddressClass.Private => (null, "This address belongs to your home network, so players outside cannot use it. " +
                     "Type the address the internet sees, or choose Only people on my home network."),
                 WanAddressClass.Shared => (null, WanAddress.Problem(WanAddressClass.Shared)!.Message),
                 _ => (null, "Other computers cannot reach this address. Type the address the internet sees."),
@@ -103,14 +103,14 @@ public static class HostAddress
         if (!IPAddress.TryParse(value, out var address) || address.AddressFamily != AddressFamily.InterNetwork || address.ToString() != value)
             return (null, "This is not a home-network address: four numbers from 0 to 255 with dots, for example 192.168.1.20.");
         var bytes = address.GetAddressBytes();
-        if (bytes[0] == 127) return (null, "An address that starts with 127 means \"this PC itself\", so friends cannot use it. " + Example);
+        if (bytes[0] == 127) return (null, "An address that starts with 127 means \"this PC itself\", so players cannot use it. " + Example);
         if (bytes[0] == 169 && bytes[1] == 254)
             return (null, "Windows picks an address that starts with 169.254 by itself when the router gave none. Check that this PC is connected to your router.");
         return WanAddress.Classify(address) switch
         {
             WanAddressClass.Private => (value, null),
             WanAddressClass.Shared => (null, "This address belongs to your internet provider, not your home network. " + Example),
-            WanAddressClass.Public => (null, "This is an internet address, not a home-network one. For friends outside your home, choose another way above."),
+            WanAddressClass.Public => (null, "This is an internet address, not a home-network one. For players outside your home network, choose another way above."),
             _ => (null, "Other computers cannot reach this address. " + Example),
         };
     }
@@ -427,12 +427,12 @@ public sealed class HostSteps
 
     private const string Welcome = """
         <h1>Welcome to Amberline</h1>
-        <p>Host the 2011 game for your friends on this PC.</p>
+        <p>Host the 2011 game for your players on this PC.</p>
         """;
 
     private const string NewName = """
         <h1>Change the server name</h1>
-        <p>Friends see the new name once you send them the new Play file.</p>
+        <p>Users see the new name once you send them the new Play file.</p>
         """;
 
     private static string NameForm(string token, string? problem, string name, StepPlace place)
@@ -442,7 +442,7 @@ public sealed class HostSteps
             {{(place.Step > 0 ? Welcome : NewName)}}
             {{HostPages.Errors(shown)}}
             <form method=post action={{place.Path}} novalidate>{{token}}
-            {{HostPages.Field("name", "Server name", "Shown on your friends' desktop icon. Up to 40 letters, digits, spaces, dots, - or _, for example Friday night.",
+            {{HostPages.Field("name", "Server name", "Shown on your users' desktop icon. Up to 40 letters, digits, spaces, dots, - or _, for example Friday night.",
                 At(shown, "name"), $"required maxlength=40 value=\"{WebUtility.HtmlEncode(name)}\"")}}
             {{Actions(place)}}</form>
             """;
@@ -487,7 +487,7 @@ public sealed class HostSteps
             : choice switch { HostAddress.Typed => "address", HostAddress.Lan => "lan", _ => "choice" });
         // Batch 646: with the home-network choice the router's address does not matter, so its card is a tip there, not a problem.
         var routerCard = card is null ? ""
-            : $"<p class={(choice == HostAddress.Lan ? "tip>Only for friends outside your home network: " : "problem>")}" +
+            : $"<p class={(choice == HostAddress.Lan ? "tip>Only for players outside your home network: " : "problem>")}" +
               $"{WebUtility.HtmlEncode(card.Message)} {WebUtility.HtmlEncode(card.WhatToDo)} ({card.Code})</p>";
         return $$"""
             <h1>{{(place.Step > 0 ? "Your address" : "Change your address")}}</h1>
@@ -495,7 +495,7 @@ public sealed class HostSteps
             {{HostPages.Errors(shown)}}
             {{routerCard}}
             <form method=post action={{place.Path}}{{HostPages.Wait("Checking your address. This takes up to 20 seconds.")}}>{{token}}
-            <fieldset id=choice{{(At(shown, "choice") is null ? "" : " aria-describedby=choice-error")}}><legend>How do your friends find this PC?</legend>
+            <fieldset id=choice{{(At(shown, "choice") is null ? "" : " aria-describedby=choice-error")}}><legend>How do your players find this PC?</legend>
             {{HostPages.FieldError("choice", At(shown, "choice"))}}
             {{(offerRouter ? $"<label class=choice><input type=radio name=choice value=router{Checked(choice is not (HostAddress.Typed or HostAddress.Lookup or HostAddress.Lan))}>The address your router reports: {router}</label>" : "")}}
             <label class=choice><input type=radio name=choice value=typed{{Checked(choice == HostAddress.Typed || (!offerRouter && choice is not (HostAddress.Lookup or HostAddress.Lan)))}}>{{(offerRouter
@@ -504,7 +504,7 @@ public sealed class HostSteps
                 At(shown, "address"), $"maxlength=253 value=\"{WebUtility.HtmlEncode(typed)}\"", required: null)}}</div>
             <label class=choice><input type=radio name=choice value=lookup{{Checked(choice == HostAddress.Lookup)}}>Find my address on the internet ({{HostAddressSources.LookupService}} then sees it)</label>
             <label class=choice><input type=radio name=choice value=lan{{Checked(choice == HostAddress.Lan)}}>Only people on my home network (LAN party)</label>
-            <div class=sub>{{HostPages.Field("lan", "This PC's address on your home network", "Only friends on the same router or Wi-Fi can join.",
+            <div class=sub>{{HostPages.Field("lan", "This PC's address on your home network", "Only players on the same router or Wi-Fi can join.",
                 At(shown, "lan"), $"maxlength=15 placeholder=\"192.168.1.20\" value=\"{WebUtility.HtmlEncode(lan)}\"", required: null)}}</div>
             </fieldset>
             {{(place.Step > 0 ? HostUpdates.SetupQuestion(updates) : "")}}

@@ -20,7 +20,7 @@ namespace Amberline.Platform;
 /// session all discard it. Batch 436: a stock client that drops during a game sends nothing until the game ends, so the
 /// former 120 s window refused its reconnect and the client logged out.
 /// </summary>
-public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? clock = null)
+public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? clock = null, HostActivity? activity = null)
 {
     // LoggedIn, Peer (the RTMP connection's address), Opened and Seen (the store frame's first and last page) only feed the Online table.
     public sealed record Session(long AccountId, string Username, string Token, DateTimeOffset Expires, bool ChannelAuthenticated, string ChatToken,
@@ -70,6 +70,7 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
 
     public Session Login(string connection, string username, string ticket, string version)
     {
+        Session session;
         lock (_gate)
         {
             Expire();
@@ -80,15 +81,28 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
             if (_sessions.TryGetValue(connection, out var current) && current.AccountId != account.Id)
                 throw new ArgumentException("Log out before changing account.");
             _tickets.Remove(ticket);
-            foreach (var old in _sessions.Where(p => p.Value.AccountId == account.Id).Select(p => p.Key).ToArray()) _sessions.Remove(old);
             // A newer login of the account ends every older binding, a parked one included (the second login wins, as it
-            // does for chat, where the older stream gets <conflict/>).
-            foreach (var old in _parked.Where(p => p.Value.Session.AccountId == account.Id).Select(p => p.Key).ToArray()) _parked.Remove(old);
-            var session = new Session(account.Id, account.Username, Token(), _clock.GetUtcNow().AddMinutes(30), false, Token(),
+            // does for chat, where the older stream gets <conflict/>). Each binding that ends is named as a logout.
+            foreach (var (key, superseded) in _sessions.Where(p => p.Value.AccountId == account.Id).ToArray())
+            {
+                _sessions.Remove(key);
+                LoggedOut(superseded);
+            }
+            foreach (var (key, superseded) in _parked.Where(p => p.Value.Session.AccountId == account.Id).ToArray())
+            {
+                _parked.Remove(key);
+                LoggedOut(superseded.Session, superseded.ClosedAt);
+            }
+            session = new Session(account.Id, account.Username, Token(), _clock.GetUtcNow().AddMinutes(30), false, Token(),
                 _clock.GetUtcNow(), _peers.GetValueOrDefault(connection));
             _sessions[connection] = session;
-            return session;
+            // NOT RETAIL: the host page's activity feed names a login.
+            activity?.Add($"{account.Username} logged in");
         }
+        // NOT RETAIL: the Users page's Last seen keeps the login's time (batch 748). Touch never waits for the disk (its file is written in the
+        // background, at most once an hour) and never fails the login.
+        accounts.Touch(session.AccountId, session.LoggedIn);
+        return session;
     }
 
     public bool AuthenticateChannel(string connection, string username, string token)
@@ -115,9 +129,20 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
             Expire();
             _peers.Remove(connection);
             _throughTunnel.Remove(connection);
-            if (!_sessions.Remove(connection, out var session) || !session.ChannelAuthenticated) return;
+            if (!_sessions.Remove(connection, out var session)) return;
+            // A login whose channel never authenticated is not parked: it ends here.
+            if (!session.ChannelAuthenticated)
+            {
+                LoggedOut(session);
+                return;
+            }
             if (_parked.Count >= MaxParked)
-                _parked.Remove(_parked.MinBy(p => p.Value.ClosedAt).Key);
+            {
+                // The oldest parked login is evicted to make room, so it ends here.
+                var evicted = _parked.MinBy(p => p.Value.ClosedAt);
+                _parked.Remove(evicted.Key);
+                LoggedOut(evicted.Value.Session, evicted.Value.ClosedAt);
+            }
             _parked[connection] = new(session, _clock.GetUtcNow());
         }
     }
@@ -142,7 +167,12 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
                 if (account is null || session.Username != username && AirGameDtos.InternalName(account) != username ||
                     !SecretEquals(session.Token, token)) continue;
                 _parked.Remove(previous);
-                if (now - parked.ClosedAt > ResumeWindow || _sessions.Values.Any(s => s.AccountId == session.AccountId)) return false;
+                if (now - parked.ClosedAt > ResumeWindow || _sessions.Values.Any(s => s.AccountId == session.AccountId))
+                {
+                    // The parked login is discarded here, so it ends here.
+                    LoggedOut(session, parked.ClosedAt);
+                    return false;
+                }
                 _sessions[connection] = session with { ChannelAuthenticated = true, Expires = now.AddMinutes(30),
                     Peer = _peers.GetValueOrDefault(connection) ?? session.Peer };
                 return true;
@@ -181,7 +211,14 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
         }
     }
 
-    public void Logout(string connection) { lock (_gate) _sessions.Remove(connection); }
+    public void Logout(string connection)
+    {
+        lock (_gate)
+        {
+            // NOT RETAIL: the host page's activity feed names the logout an explicit logout ends (a parked login ends at its own expiry, see Expire).
+            if (_sessions.Remove(connection, out var session)) LoggedOut(session);
+        }
+    }
 
     /// <summary>
     /// NOT RETAIL: host tool (the /manage password reset). Ends every login of the account: its unused login tickets and its live
@@ -194,8 +231,17 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
         lock (_gate)
         {
             foreach (var key in _tickets.Where(p => p.Value.AccountId == accountId).Select(p => p.Key).ToArray()) _tickets.Remove(key);
-            foreach (var key in _sessions.Where(p => p.Value.AccountId == accountId).Select(p => p.Key).ToArray()) _sessions.Remove(key);
-            foreach (var key in _parked.Where(p => p.Value.Session.AccountId == accountId).Select(p => p.Key).ToArray()) _parked.Remove(key);
+            // The host's end of an open or parked login is a logout, named once per login (the host page's activity feed).
+            foreach (var (key, ended) in _sessions.Where(p => p.Value.AccountId == accountId).ToArray())
+            {
+                _sessions.Remove(key);
+                LoggedOut(ended);
+            }
+            foreach (var (key, parked) in _parked.Where(p => p.Value.Session.AccountId == accountId).ToArray())
+            {
+                _parked.Remove(key);
+                LoggedOut(parked.Session, parked.ClosedAt);
+            }
             Expire();
         }
     }
@@ -321,19 +367,40 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
         }
     }
 
+    // NOT RETAIL (batch 748; retail had no host-side delete): a session of a login the host has just deleted (its sessions end right after) matches nothing, so the other logins' chat
+    // never fails on it.
     private bool ChatMatches(Session session, string username, string password) =>
-        AirGameDtos.InternalName(accounts.Get(session.AccountId)) == username && SecretEquals("AIR_" + session.ChatToken, password);
+        accounts.Find(session.AccountId) is { } account && AirGameDtos.InternalName(account) == username && SecretEquals("AIR_" + session.ChatToken, password);
 
     private void Expire()
     {
         var now = _clock.GetUtcNow();
         foreach (var key in _tickets.Where(p => p.Value.Expires <= now).Select(p => p.Key).ToArray()) _tickets.Remove(key);
-        foreach (var key in _sessions.Where(p => p.Value.Expires <= now).Select(p => p.Key).ToArray()) _sessions.Remove(key);
-        foreach (var key in _parked.Where(p => now - p.Value.ClosedAt > ResumeWindow).Select(p => p.Key).ToArray()) _parked.Remove(key);
+        // An open login past its expiry, or a parked login past the resume window, ends here: each is named as a logout once.
+        foreach (var (key, expired) in _sessions.Where(p => p.Value.Expires <= now).ToArray())
+        {
+            _sessions.Remove(key);
+            // It was last there 30 minutes before its expiry: its login, its channel and each heartbeat move the expiry 30 minutes on.
+            LoggedOut(expired, expired.Expires.AddMinutes(-30));
+        }
+        foreach (var (key, parked) in _parked.Where(p => now - p.Value.ClosedAt > ResumeWindow).ToArray())
+        {
+            _parked.Remove(key);
+            LoggedOut(parked.Session, parked.ClosedAt);
+        }
         foreach (var key in _storeTickets.Where(p => p.Value.Expires <= now ||
             !ValidStoreParent(p.Value.Connection, p.Value.PlatformToken)).Select(p => p.Key).ToArray()) _storeTickets.Remove(key);
         foreach (var key in _storeSessions.Where(p => p.Value.Session.Expires <= now ||
             !ValidStoreParent(p.Value.Connection, p.Value.PlatformToken)).Select(p => p.Key).ToArray()) _storeSessions.Remove(key);
+    }
+    // NOT RETAIL: the host page's activity feed ends each login it named "logged in" with exactly one "logged out", at the one
+    // place the login ends (each removal above and in Expire calls this). The Users page's Last seen (batch 748, final fix 7) keeps the time
+    // the login was last there: now, or for a parked login when its connection closed. Touch only stamps memory (its file is written in the
+    // background), so it is safe under this lock (sessions, then accounts).
+    private void LoggedOut(Session session, DateTimeOffset? lastThere = null)
+    {
+        activity?.Add($"{session.Username} logged out");
+        accounts.Touch(session.AccountId, lastThere ?? _clock.GetUtcNow());
     }
     private static string Token() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     public static bool SecretEquals(string expected, string actual) => actual.Length == expected.Length &&

@@ -245,7 +245,8 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     /// <summary>
     /// Batch 472 (Reconstruction: retail's reconnect burst is not recovered). The live Dominion state the server sends only when it changes,
     /// for a client that returns to the match (MatchRuntimeNetwork.BuildReconnectState, after the delivery flush that created what it sees):
-    /// the records of each point whose guardian it holds (<see cref="PointRecords"/>), both 0xDD meters as last sent, and its team's open
+    /// the records of each point whose guardian it holds (<see cref="PointRecords"/>), both 0xDD meters as last sent, the music phase
+    /// (batch 747, <see cref="DominionScore.MusicPhaseCue"/>), and its team's open
     /// quests (the 0x90 adds; the announcement is not repeated). A point whose guardian it does not hold yet (an owned guardian gives sight to
     /// its own team only) is owed until the guardian's first sight (<see cref="FirstSightState"/>): its records name the guardian, and the
     /// client applies a 0xDB or 0xDC only to a unit it holds. Batch 725: first, each prop's last clip (<see cref="_propClips"/>), for the props
@@ -262,7 +263,11 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
             else owed.Add(point);
         }
         if (Score is { } score)
+        {
             foreach (var (meterTeam, health) in score.SentScores) packets.Add(DominionPackets.SetGameScore(meterTeam, health));
+            // Batch 747: the music phase, after the restarted client's StartGame began its own phase 1 theme (DominionScore.PlayMusicPhase).
+            if (score.MusicPhaseCue(heroNetId) is { } music) packets.Add(music);
+        }
         if (_questSet is { } open)
             foreach (var side in open.Where(side => side.Team == team)) packets.AddRange(QuestAdds(side));
         // Batch 518: the personal scores, before the reconnect's 0x4B rows (DuelSession.BuildReconnectMatchState) restate the stats.

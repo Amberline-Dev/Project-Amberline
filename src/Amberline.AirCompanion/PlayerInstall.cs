@@ -64,8 +64,8 @@ internal sealed record ClientPins(string Game = RetailClients.GameExecutableSha2
 /// NOT RETAIL: the player's installer (batch 619). Retail players installed the client with Riot's patcher. Here the player brings the
 /// stock 1.0.0.126 AIR and game folders; they are moved into one install folder (a rename on the same drive; on another drive a copy,
 /// a check of every file's size and SHA-256, and only then the removal of the originals), the AIR folder is pointed at the companion's
-/// local endpoints, the companion is copied in, and each server gets its connection and a desktop shortcut. A per-user record says
-/// where the install is, so a second server's Play file only adds its own connection and shortcut.
+/// local endpoints, the companion is copied in, and each server gets its connection, a desktop shortcut and a copy of it in the install
+/// folder. A per-user record says where the install is, so a second server's Play file only adds its own connection and shortcut.
 /// </summary>
 internal static class PlayerInstall
 {
@@ -338,19 +338,24 @@ internal static class PlayerInstall
     }
 
     /// <summary>
-    /// The server's folder (<c>servers\&lt;id&gt;</c>: its connection, its stage for the play mode, its token cache) and its desktop shortcut,
-    /// named after the server and holding the game executable's own icon. A server already known by its pin keeps its folder and its
-    /// single shortcut: the connection and the shortcut's name follow the new Play file.
+    /// The server's folder (<c>servers\&lt;id&gt;</c>: its connection, its stage for the play mode, its token cache), its desktop shortcut,
+    /// named after the server and holding the game executable's own icon, and a copy of that shortcut in the install folder, so the game
+    /// still starts when the desktop icon is gone. A server already known by its pin keeps its folder and its single shortcut pair: the
+    /// connection and the shortcuts' names follow the new Play file.
     /// </summary>
     internal static (string Folder, string Shortcut) AddServer(PlayerProfile profile, Record record, AirRemoteInvitation connection, string name)
     {
         var id = ServerId(connection.CertificateSha25664hex);
         var folder = Path.Combine(record.Install, "servers", id);
-        var previous = Text(ReadObject(Path.Combine(folder, "server.json")), "shortcut");
+        var stored = ReadObject(Path.Combine(folder, "server.json"));
+        var previous = Text(stored, "shortcut");
+        var previousCopy = Text(stored, "folderShortcut");
         var shortcut = ShortcutPath(profile, record.Install, id, name, previous);
+        var copy = FolderShortcutPath(record.Install, id, shortcut);
         PlayerMode.WriteJson(Path.Combine(folder, "server.json"), new
         {
             host = connection.Host, port = connection.Port, certificateSha256 = connection.CertificateSha25664hex, name, shortcut,
+            folderShortcut = copy,
         });
         PlayerMode.WriteJson(Path.Combine(folder, "stage.json"), new
         {
@@ -358,9 +363,13 @@ internal static class PlayerInstall
             clientFiles = "installed",
         });
         var tool = Path.Combine(record.Install, ToolFolder);
-        ShellLink.Write(shortcut, new(Path.Combine(tool, WindowlessName), "--shortcut " + id, tool,
-            Path.Combine(record.Game, GameExecutable), 0, $"Play the game (patch 1.0.0.126) on {name}"));
+        var link = new ShellLink.Link(Path.Combine(tool, WindowlessName), "--shortcut " + id, tool,
+            Path.Combine(record.Game, GameExecutable), 0, $"Play the game (patch 1.0.0.126) on {name}");
+        // The copy is written first: a desktop that cannot take its shortcut (a missing folder, say) must not stop the copy.
+        ShellLink.Write(copy, link);
+        ShellLink.Write(shortcut, link);
         if (previous is not null && !Same(previous, shortcut) && IsOurShortcut(previous, id)) File.Delete(previous);
+        if (previousCopy is not null && !Same(previousCopy, copy) && IsOurShortcut(previousCopy, id)) File.Delete(previousCopy);
         return (folder, shortcut);
     }
 
@@ -379,6 +388,21 @@ internal static class PlayerInstall
             if (!File.Exists(path) || (previous is not null && Same(path, previous)) || IsOurShortcut(path, id)) return path;
         }
         throw new InstallRefusedException($"The desktop already has too many shortcuts named {name}.");
+    }
+
+    /// <summary>
+    /// The install folder's copy of <paramref name="shortcut"/>, under the same file name there. Only a file of the player's own with
+    /// that name moves the copy to a numbered name; the file itself is never touched.
+    /// </summary>
+    private static string FolderShortcutPath(string install, string id, string shortcut)
+    {
+        var stem = Path.GetFileNameWithoutExtension(shortcut);
+        for (var number = 1; number < 100; number++)
+        {
+            var path = Path.Combine(install, (number == 1 ? stem : $"{stem} {number}") + ".lnk");
+            if (!File.Exists(path) || IsOurShortcut(path, id)) return path;
+        }
+        throw new InstallRefusedException($"The install folder already has too many shortcuts named {stem}.");
     }
 
     internal static bool IsOurShortcut(string path, string id)

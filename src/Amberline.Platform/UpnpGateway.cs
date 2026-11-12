@@ -60,7 +60,7 @@ public static class WanAddress
         WanAddressClass.Public => null,
         WanAddressClass.Private => new("A-NET-06", "Your router is behind another router (often your provider's box).",
             "Put the provider's box in bridge mode, or open the same ports on both routers, or set this router as the box's \"exposed host\"."),
-        WanAddressClass.Shared => new("A-NET-07", "Your internet provider shares one address among many homes, so friends cannot reach this PC.",
+        WanAddressClass.Shared => new("A-NET-07", "Your internet provider shares one address among many homes, so players cannot reach this PC.",
             "Ask your provider for a public IPv4 address (some do it on request), or host on a rented server."),
         // Reconstruction: the design names no code for a router without an address; it is the router-did-not-help case.
         _ => new("A-NET-03", "Your router answered but has no internet address right now.",
