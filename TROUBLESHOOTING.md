@@ -377,6 +377,47 @@ the game from** the server's name:
 
 The details never show the server's address.
 
+### The 2011 launcher
+
+If you have the original 2011 launcher's folder, the desktop icon can open that launcher instead of Amberline's own window. It shows
+the server's news and status, and **Play** starts the game client and the game, as in 2011. Without the folder, the game starts the
+usual way, as before.
+
+- **Where the folder goes.** Choose it in the optional **2011 launcher folder** row during setup. Or run `Play.cmd` again on an install
+  that does not have it: setup then asks for the folder, or offers to download it when your host shares it. Setup moves the launcher's
+  own files into a `launcher` folder inside your install folder, beside `companion`, `air` and `game`. If the folder lies inside an old
+  installation's folders (a path with a `projects` folder in it), setup copies the files and leaves the folder as it was. You can also copy the launcher's files into that
+  `launcher` folder yourself.
+- **Only version 1.0.0.251 works.** Setup and the start both check the launcher's program. A folder with another version, or with a
+  file missing, is refused, and the window says why.
+- **The language follows the launcher.** The AIR client shows the language you pick in the launcher. The launcher and the game stay
+  in English, and the usual start always uses English.
+- **Every region leads to your server.** North America, EU West and EU Nordic & East all connect to the same server.
+- **The launcher closes at once.** It needs the same Windows parts as the game, and a PC that runs the game has them. Amberline then
+  starts the game the usual way and says why, once, in the small window that starts the game:
+  **The classic launcher didn't open: <reason>. Starting the usual way.** The reasons:
+  - **The classic launcher folder is missing <a file>.** or **The classic launcher is not version 1.0.0.251.** Choose the complete
+    folder of the 2011 launcher, version 1.0.0.251.
+  - **The classic launcher's program file could not be read.** Close the program that may be using it, then start again.
+  - **Port 8393, 8394 or 8395 is in use by another program.** Close that program, then start again.
+  - **Another classic launcher or update service is already running on this PC.** Close the launcher's window, then start again.
+  - **<a path> already exists and was not created by Amberline.** An old install of the game, or what is left of one, is in the
+    folder the launcher uses on this PC (normally `C:\rads`), so this comes back at every start. Remove that old install's folders,
+    or choose **Remove the 2011 launcher** (below) to start the usual way from then on.
+  - **The folder <a path> has a space in its path, so the classic launcher cannot start from it.** The classic start is not possible
+    on this PC; Amberline starts the usual way each time.
+  - **It closed before it was ready.** or **It was not ready within 60 seconds.** The launcher did not open the game client. Start
+    again. If it keeps happening, remove the 2011 launcher (below).
+  - Any other reason: send the message to your host.
+- **Last time the classic launcher did not open the game client.** After such a start, the next start asks: choose **Open the classic
+  launcher again**, or **Start the usual way this time**. The question comes back until the game client has opened through the
+  launcher.
+- **Remove the 2011 launcher.** In Amberline's uninstaller (its entry in Windows' list of installed apps, or `Uninstall.cmd` in the
+  install folder), choose **Remove the 2011 launcher**. Its files go, with the files Amberline built for it on this PC, and the usual
+  start is used from then on. The choice shows only while the launcher's folder is in the install folder.
+- **Windows asks for administrator rights when the launcher starts.** Entries left in Windows' list of installed apps by an old install
+  of the game can make the launcher's safety check ask for them. Remove the old entries (Settings, then Apps), or ask your host for help.
+
 ### Logging in
 
 Use the username and password from your host's message, or the ones you chose on the sign-up page. After too many wrong passwords, sign-in is blocked for 15 minutes.

@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using Amberline.Core;
+using Amberline.Data;
 using Amberline.Network.Protocol;
 using Amberline.Simulation;
 using Amberline.Simulation.Spells;
@@ -135,6 +136,78 @@ public static partial class ChampionLiveRegressionChecks
         TestAssert.False(view.Effects.Contains(id), $"{context}: the observer's view keeps no record of an ended TeleportHome");
     }
 
+
+    // Batch 763 (owner report, 12 November 2026: after slot 0 (HideInShadows) and a recall the stealth particle came back, and again whenever the
+    // camera came back to the caster). HideInShadows.TargetExecute creates its cast particle (EffectIDVar 'a' in NextBuffVars) and no script
+    // removes it; three of its four emitters are single-particle with no e-life, so the client keeps the system until a 0x3D and fires the
+    // particles again each time it comes back into view (GameData.EndlessParticleSeconds). Every client that saw the cast (the caster's, an ally's,
+    // an enemy's) gets the kill once the particles have played (1.5 s), and nothing creates it again: not the recall, not a fog re-entry.
+    [Check("spells-endless-cast-effect-is-killed-once-shown-and-never-replayed")]
+    public static void EndlessCastEffectIsKilledOnceShownAndNeverReplayed()
+    {
+        const string swirl = "twitch_invis_cas";
+        TestAssert.Near(1.5, GameData.Default.EndlessParticleSeconds(swirl + ".troy") ?? -1.0, 1e-6, "the swirl's emitters never end; its particles live 1.5 s");
+        TestAssert.True(GameData.Default.EndlessParticleSeconds("TeleportHome.troy") is null, "a system with finite emitters ends on its own");
+        using var match = new Match("Twitch", Team.Order, ally: true, allyChampion: "Annie");
+        var caster = match.Hero(0);
+        var enemy = match.Hero(1);
+        caster.Position = new Position2(7000, 7000);
+        match.Hero(2).Position = new Position2(7150, 7000);
+        enemy.Position = new Position2(7300, 7000);
+        match.Runtime.Delivery.Flush(); match.Clear();
+        var start = match.Runtime.World.Clock.Now();
+        var kills = new double[match.Captures.Count];
+        var wire = match.Captures.Select(_ => new Capture()).ToArray();
+        uint id = 0;
+        void Run(double seconds)
+        {
+            for (var elapsed = 0.0; elapsed < seconds - 1e-9; elapsed += 0.1)
+            {
+                match.Runtime.Tick(0.1);
+                for (var seat = 0; seat < wire.Length; seat++)
+                {
+                    foreach (var packet in match.Captures[seat].Packets)
+                    {
+                        if (id == 0 && Opcode(packet) == FxPackets.CreateGroupOpcode &&
+                            BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[6..]) == SpellPackets.BuffNameHash(swirl))
+                            id = packet.EntityReferences.First(reference => reference.Role == LeaguePacketEntityRole.Create).NetId;
+                        if (id != 0 && Opcode(packet) == FxPackets.KillOpcode && BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[5..]) == id)
+                            kills[seat] = match.Runtime.World.Clock.Now() - start;
+                        wire[seat].Packets.Add(packet);
+                    }
+                    match.Captures[seat].Packets.Clear();
+                }
+            }
+        }
+        match.Cast(0, 0, caster);
+        Run(3.0);
+        TestAssert.True(id != 0, "slot 0 created the swirl");
+        TestAssert.True(caster.Buffs.Any(buff => buff.Name == "HideInShadows"), "stealthed");
+        for (var seat = 0; seat < wire.Length; seat++)
+        {
+            TestAssert.Equal(1, EffectCreatesNamed(wire[seat], id, swirl), $"seat {seat}: one create at the cast");
+            TestAssert.Equal(1, CountKill(wire[seat], id), $"seat {seat}: the kill once the swirl has played");
+            TestAssert.True(kills[seat] is >= 1.5 and <= 1.7, $"seat {seat}: killed {kills[seat]:0.##} s after the cast, after its 1.5 s and within two steps");
+            TestAssert.False(match.Runtime.Session.Participants[seat].View.Effects.Contains(id), $"seat {seat}: the view no longer holds it");
+        }
+        // The recall breaks the stealth (Recall's CastingBreaksStealth) and takes the caster home; he comes back and the enemy loses and regains him.
+        match.Cast(0, SpellSystem.RecallSlot, caster);
+        Run(9.5);
+        TestAssert.True(caster.Position.X < 1000, "recalled home");
+        caster.Position = new Position2(7000, 7000);
+        Run(1.0);
+        enemy.Position = new Position2(11000, 11000);
+        Run(1.0);
+        TestAssert.False(match.Runtime.Session.Participants[1].View.Visible.Contains(caster.NetId), "the enemy lost sight");
+        enemy.Position = new Position2(7300, 7000);
+        Run(1.0);
+        TestAssert.True(match.Runtime.Session.Participants[1].View.Visible.Contains(caster.NetId), "the enemy sees him again");
+        for (var seat = 0; seat < wire.Length; seat++)
+        {
+            TestAssert.Equal(1, CountCreatesNamed(wire[seat], swirl), $"seat {seat}: never created again (recall, fog re-entry)");
+            TestAssert.Equal(1, CountKill(wire[seat], id), $"seat {seat}: one kill");
+        }
+    }
 
     [Check("spells-buff-effect-left-by-its-buff-is-not-replayed")]
     public static void BuffEffectLeftByItsBuffIsNotReplayed()

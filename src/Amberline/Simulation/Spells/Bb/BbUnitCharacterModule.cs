@@ -238,10 +238,16 @@ public sealed class BbUnitCharacterModule
     /// The cast runs by the same <c>CastType</c> switch as a champion child (<see cref="BbChampionModule.CastChild"/>): 1 a homing
     /// missile that runs the child's <c>TargetExecute</c> on arrival, 0 the effect at the cast frame (immediately, since these
     /// children carry no cast time of their own: <c>WrathoftheAncients</c> lists no <c>SpellData*CastTime</c>), 3 a line and 2 a chain
-    /// stay unbound because no shipped unit character casts one. There is no cast packet for a non-hero: the client builds the
-    /// cast from the unit's own spellbook, and the stock client draws a monster's cast from the missile and effect packets alone
-    /// (Reconstruction: the hand-written Worm AI sent a 0x0D for each of its casts; a script's child cast sends no cast answer). Batch 665: the
-    /// AI's own slot cast (<see cref="CastSpellSlot"/>, the capture point guardian's shot) sends one, so the client plays its animation.
+    /// stay unbound because no shipped unit character casts one.
+    /// </para>
+    /// <para>
+    /// Batch 762 (owner, 12 November 2026: the Baron "has no attack animations, just points where the enemy is standing and spawns
+    /// particles"): a cast of the unit's own spell slot that is cast, not fired (<c>FireWithoutCasting</c> false: every BBSpellCast of the
+    /// Worm's rotation), goes out as the unit's cast answer (0xBD), as the AI's own slot cast does (<see cref="CastSpellSlot"/>, batch 665).
+    /// The client plays a spell's AnimationName only from a SpellCaster, and its cast routine builds one from a cast answer on a slot below
+    /// 42; the missile packet (0x41) builds the missile alone, so the Worm turned and its WormAttack flew without the Attack1 clip.
+    /// Reconstruction: the packet retail sent is not captured. An extra-slot child (the Worm's geyser placemarker) stays unannounced.
+    /// Evidence: docs/maintenance/2026-11-12-batch-762-baron-attack-animation.md.
     /// </para>
     /// <para>
     /// <c>OverrideCoolDownCheck</c> false answers the slot's cooldown through <see cref="Entity.ScriptSlotReadyAt"/> like a hero's
@@ -250,7 +256,8 @@ public sealed class BbUnitCharacterModule
     /// for the child, as they do for a hero's extra-slot child.
     /// </para>
     /// </summary>
-    private void CastChild(BbChildCast child) => CastChild(child, announce: false);
+    private void CastChild(BbChildCast child) =>
+        CastChild(child, announce: child.SlotType == BbSlotType.SpellSlots && !child.FireWithoutCasting);
 
     private void CastChild(BbChildCast child, bool announce)
     {

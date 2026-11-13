@@ -518,6 +518,10 @@ public static class AirRemoteChecks
         TestAssert.False(AirRemoteTunnel.IsPublicPath("/register"), "the pinned remote port must not serve registration");
         TestAssert.True(AirRemoteProxy.IsAllowedPath("/login-queue/rest/queue/authenticate"));
         TestAssert.False(AirRemoteProxy.IsAllowedPath("/manage/invitations"));
+        // Batch 761: the launcher's news (LauncherNews.Route) is the one path the tunnel proxy and the friends' port add, exactly.
+        TestAssert.True(AirRemoteProxy.IsAllowedPath("/launcher/news"), "the launcher's news reaches the friends through the tunnel proxy");
+        TestAssert.True(AirRemoteTunnel.IsPublicPath("/launcher/news"), "the friends' port serves the launcher's news");
+        TestAssert.False(AirRemoteProxy.IsAllowedPath("/launcher/news/x") || AirRemoteTunnel.IsPublicPath("/launcher/news/x"), "nothing under it is added");
         using var rebound = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{proxy.HttpPort}/health");
         rebound.Headers.Host = "untrusted.example";
         using var reboundResponse = await client.SendAsync(rebound);
@@ -776,7 +780,7 @@ public static class AirRemoteChecks
         return buffer;
     }
 
-    private static X509Certificate2 CreateCertificate()
+    internal static X509Certificate2 CreateCertificate()
     {
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest("CN=air-remote-check", rsa,
@@ -804,7 +808,7 @@ public static class AirRemoteChecks
         public override DateTimeOffset GetUtcNow() => now;
     }
 
-    private static int FreePort()
+    internal static int FreePort()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();

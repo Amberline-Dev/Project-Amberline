@@ -26,12 +26,27 @@ public sealed record PlatformSettings(string DataRoot, string ServerExecutable, 
     public bool SelfRegistration { get; init; }
     /// <summary>Settings' "Share the game files with players" (<see cref="HostFileShare"/>, batch 681); off unless the host turned it on.</summary>
     public bool ShareFiles { get; init; }
+    /// <summary>
+    /// NOT RETAIL (batch 761, task 8): the host's optional 2011 launcher folder (<see cref="FolderKind.Launcher"/>), read in place. The host's Play
+    /// and the file sharing take it while it holds the accepted files (<see cref="ClassicLauncherFiles"/>); absent when the host names none. An empty
+    /// or blank value (a hand-edited file) reads as none, so no reader (the folder page, Play, the file sharing) sees a folder that is not one.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LauncherRoot { get => _launcherRoot; init => _launcherRoot = string.IsNullOrWhiteSpace(value) ? null : value; }
+    private string? _launcherRoot;
     /// <summary>NOT RETAIL: Settings' "Offer skins and RP" (<see cref="PlatformControls"/>); written only when on, so a file without it offers them.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool PaidContentOff { get; init; }
     /// <summary>NOT RETAIL: Settings' Champions list: the playable champion ids the host disabled, null until its first Save.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int[]? DisabledChampions { get; init; }
+    /// <summary>
+    /// NOT RETAIL (batch 761): Settings' "Launcher news" box (<c>HostSettingsPage</c>): up to five headlines the 2011 launcher shows when it
+    /// opens (<c>LauncherNews</c>). Empty until the host saves one; the launcher then reads the welcome headline. A null list (a hand-edited
+    /// file) reads as empty, so no reader of the settings ever sees null.
+    /// </summary>
+    public IReadOnlyList<LauncherHeadline> LauncherNews { get => _launcherNews; init => _launcherNews = value ?? []; }
+    private IReadOnlyList<LauncherHeadline> _launcherNews = [];
     /// <summary>
     /// Retired (batch 680): batch 666's "Allow cheat commands in my games". Read only while <see cref="CheatAccounts"/> is missing, when
     /// it ticks the host's own login (<see cref="CheatLogins"/>); the list's first Save drops it.
@@ -141,7 +156,8 @@ public static class Program
         await using var manager = new GameManager(hostSettings, Path.Combine(home, "games"));
         accounts.RecoverResults(manager, Console.Out);
         var sessions = new PlatformSessions(accounts, activity: host?.Activity);
-        var games = new PlatformGames(accounts, manager, settings.GameHost, activity: host?.Activity);
+        // NOT RETAIL: a friend's game start names the game address their player tool reported through the tunnel (spec §7).
+        var games = new PlatformGames(accounts, manager, settings.GameHost, activity: host?.Activity, reportedGameAddress: sessions.ReportedGameAddress);
         // DIAGNOSTICS (owner, 3 and 4 November 2026): in home mode only the logins Settings' Cheat commands list ticks get cheats.
         if (host is not null) games.MayCheat = HostSettingsPage.CheatRule(host.Paths.Settings);
         var services = new PlatformServices(accounts, sessions, games, settings.HttpPort);
@@ -163,7 +179,7 @@ public static class Program
         // NOT RETAIL (batch 751): My account, where users change their own password or delete their own account (HostAccountPage); home mode only.
         using var accountPage = host is null ? null : new HostAccountPage(host, accounts, sessions, remoteAccess, games, chat, settings.RemotePort);
         // NOT RETAIL: the host's own game and AIR client for players who have none, while Settings' switch is on (HostFileShare); home mode only.
-        var share = host is null ? null : new HostFileShare(host, settings.DataRoot, airRoot, settings.RemotePort, settings.ShareFiles);
+        var share = host is null ? null : new HostFileShare(host, settings.DataRoot, airRoot, settings.RemotePort, settings.ShareFiles, settings.LauncherRoot);
         await using var rtmp = new AirRtmpHost(new IPEndPoint(IPAddress.Loopback, settings.RtmpPort),
             services.Route, sessions.AuthenticateChannel, sessions.AccountForConnection, services.Disconnect,
             Console.Out, services.ResponseSent, sessions.Resume, services.ConnectionClosed,
@@ -172,6 +188,8 @@ public static class Program
                 sessions.ObservePeer(connection, tunnelPeers.Resolve(settings.RtmpPort, peer));
                 // NOT RETAIL: which sessions came through the friends' tunnel (the dashboard's friend seats, PlatformSessions.ThroughTunnel).
                 sessions.ObserveOrigin(connection, !tunnelPeers.IsDirectLocal(settings.RtmpPort, peer));
+                // NOT RETAIL: the game address the friend's player tool reported on this tunnel, for that player's game start.
+                sessions.ObserveGameAddress(connection, tunnelPeers.GameAddress(settings.RtmpPort, peer));
             });
         games.Push = (account, body) => rtmp.Push(account, body);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
@@ -289,6 +307,8 @@ public static class Program
         PlatformBootstrap.Map(app, host?.Paths.Bootstrap ?? Path.Combine(home, "bootstrap"), Path.Combine(AppContext.BaseDirectory, "air-client-bootstrap.cmd"),
             steps is null ? () => settings.PublicHost : () => steps.PublicHost, settings.RemotePort, tls, () => steps?.ServerName);
         MapRegistration(app, accounts, signUp);
+        // NOT RETAIL (batch 761): the 2011 launcher's news and server status (LauncherNews); retail served its news from the publisher's site.
+        LauncherNews.Map(app, () => accounts.Controls.LauncherNews, () => steps?.ServerName ?? settings.ServerName, LauncherNews.LocalDay);
         app.MapPost(LoginQueuePath, (Delegate)((HttpContext context) => AuthenticateAsync(context, accounts, sessions, remoteAccess)));
         app.MapGet("/ip", () => Results.Json(new { ip_address = "127.0.0.1" }));
         app.MapGet("/status/{**path}", () => Results.Json(PlatformHome.StatusPayload()));

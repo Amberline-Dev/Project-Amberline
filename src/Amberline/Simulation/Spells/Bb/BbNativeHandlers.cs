@@ -1068,6 +1068,16 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
                 }
                 else Spells.EndEffectWithUnitCorpse(id, placemarker.NetId);
             }
+            // Batch 763 (Reconstruction; owner report, 12 November 2026: the cast particle of HideInShadows came back after a recall and whenever
+            // the camera came back to the caster): an effect the script never removes whose particle system never ends on the client (an emitter
+            // without an e-life, GameData.EndlessParticleSeconds) is killed once it has shown all it will show. The client keeps such a system until
+            // a 0x3D and fires its single particles again each time it comes back into view. How retail's server ended these is not recovered.
+            if (id != 0u && !persistent)
+            {
+                var shown = Spells.Data.EndlessParticleSeconds(effect);
+                if (audience.EnemyName is { } other) shown = Spells.Data.EndlessParticleSeconds(other) is { } theirs && shown is { } ours ? Math.Max(ours, theirs) : null;
+                if (shown is { } seconds) Spells.RunAt(Spells.CurrentTime + seconds, () => { if (_host.KilledEffects.Add(id)) Spells.Effects.KillEffect(id); });
+            }
             if (sent && _host.HasFrame) _host.Frame.Effects.Add((effect, bound?.NetId ?? targetObject?.NetId ?? 0u));
             if (call.Value("EffectIDVar") is { } idName)
             {

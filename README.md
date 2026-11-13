@@ -26,6 +26,10 @@ From then on, start Amberline from its desktop icon, and keep its window open wh
 2. **Check the two folders** it found (**Change…** picks others), then choose **Install**.
 3. **Open the new desktop icon** with your host's server name, and log in with the username and password from your host.
 
+**Optional: the original 2011 launcher.** If you have that launcher's folder, choose it in the optional **2011 launcher folder** row
+during setup, or run `Play.cmd` again on an install that does not have it yet. Then starting the game opens the launcher, as in 2011.
+Without it, the game starts as it always has. See [The 2011 launcher](TROUBLESHOOTING.md#the-2011-launcher).
+
 ## Help
 
 - [HOSTING.md](HOSTING.md): every page and button, updates, users who sign up themselves, a LAN party and a rented server.

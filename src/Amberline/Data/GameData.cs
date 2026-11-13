@@ -276,6 +276,7 @@ public sealed partial class GameData
     private readonly Dictionary<string, bool> _persistsThroughDeath = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, double> _channelDurations = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string>? _clientParticleNames;
+    private readonly Dictionary<string, double?> _endlessParticles = new(StringComparer.OrdinalIgnoreCase);
 
     public static GameData Default => DefaultInstance.Value;
 
@@ -509,6 +510,54 @@ public sealed partial class GameData
         var trimmed = name.Trim();
         var dot = trimmed.LastIndexOf('.');
         return dot > 0 ? trimmed[..dot] : trimmed;
+    }
+
+    /// <summary>
+    /// Batch 763: the seconds after its creation by which a particle system that never ends on the stock client has shown all it will show,
+    /// or null when the system ends on its own, keeps emitting, or has no <c>.troybin</c>. The client's emitter loaders (the client
+    /// and 953042) read <c>e-life</c> with <c>[Hacks] default-e-life</c> as its default (-1; the shipped Game.cfg sets none) and store a
+    /// negative life as FLT_MAX, so an emitter without a life never dies, and its system (all of <c>System*GroupPart1..n</c>, the first token
+    /// of each value naming the section, until the first absent part, 620788) lives until a <c>0x3D</c> kills it. A <c>single-particle</c>
+    /// emitter fires once per start; the system update resets every emitter of a system that leaves the view
+    ///, so a live system fires its single particles again each time it comes back into
+    /// view. Counted per emitter: <c>e-timeoffset</c> + its finite <c>e-life</c> (0 for an endless single-particle emitter) + the longest
+    /// <c>p-life</c> (the base value, default 3, and the rows of its random table <c>p-life1..</c>). Null as well when an endless emitter is
+    /// not single-particle and has an <c>e-rate</c> (it keeps emitting), or when a part names a section with none of these keys (not modelled).
+    /// </summary>
+    public double? EndlessParticleSeconds(string effectName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(effectName);
+        var stem = ParticleStem(effectName);
+        if (_endlessParticles.TryGetValue(stem, out var cached)) return cached;
+        var path = Paths.Data($"Particles/{stem}.troybin");
+        var troy = File.Exists(path) ? InibinReader.Load(path, raw: true) : null;
+        // A value and the numbers of its random table rows ("<key>2"... as "%f %f"); the largest, or null when absent.
+        double? Most(string key)
+        {
+            double? most = troy!.TryGetValue(InibinReader.KeyHash(key), out var value) ? value.AsClientFloat() : null;
+            for (var row = 1; troy.TryGetValue(InibinReader.KeyHash($"{key}{row}"), out var entry) && entry.Kind == InibinValueKind.String; row++)
+                foreach (var number in entry.AsString().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+                    if (double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)) most = Math.Max(most ?? parsed, parsed);
+            return most;
+        }
+        bool endless = false, skip = troy is null;
+        var shown = 0.0;
+        for (var part = 1; !skip && troy!.TryGetValue(InibinReader.KeyHash($"System*GroupPart{part}"), out var group) &&
+             group.Kind == InibinValueKind.String && group.AsString().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries) is [var section, ..] &&
+             !section.Contains("-NONE-", StringComparison.Ordinal); part++)
+        {
+            double? life = Most($"{section}*e-life"), particle = Most($"{section}*p-life"), rate = Most($"{section}*e-rate");
+            var single = Most($"{section}*single-particle") is { } flag && flag != 0.0;
+            if (life is null && particle is null && rate is null && !single) skip = true;
+            var start = Math.Max(0.0, Most($"{section}*e-timeoffset") ?? 0.0);
+            if (life is >= 0.0) shown = Math.Max(shown, start + life.Value + (particle ?? 3.0));
+            else if (single) (endless, shown) = (true, Math.Max(shown, start + (particle ?? 3.0)));
+            else if (rate is > 0.0) skip = true;
+            else endless = true;
+        }
+        double? seconds = endless && !skip ? shown : null;
+        _endlessParticles[stem] = seconds;
+        return seconds;
     }
 
     public IReadOnlyList<float> CriticalKarmaConstants

@@ -79,6 +79,14 @@ public static class AirOverlay
     }
 
     /// <summary>
+    /// NOT RETAIL: retail's game used the language its launcher wrote into <c>locale=</c>; the usual start has no language choice, so it sets
+    /// <paramref name="locale"/> (en_US) back. Only that line changes: it is added when missing, and every other line stays as it is.
+    /// </summary>
+    public static void SetLocale(string airRoot, string locale = "en_US") =>
+        ApplyProperties(Path.Combine(Path.GetFullPath(airRoot), "locale.properties"),
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["locale"] = locale });
+
+    /// <summary>
     /// Migrates only the old generated story endpoint in an owned disposable
     /// copy. Stock source files, lobby routing, and unrelated operator values
     /// are left untouched.

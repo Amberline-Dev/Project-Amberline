@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Amberline.AirCompanion;
 using Amberline.Platform;
@@ -37,6 +38,9 @@ public static class HostFileShareChecks
         var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         var home = Host("league-host-file-share", big: true);
         var game = Game(home);
+        // Batch 761 (the classic launcher, section 6): the 2011 launcher writes the player's language into this file; a host's copy is never shared.
+        Directory.CreateDirectory(Path.Combine(game, "DATA", "CFG", "defaults"));
+        File.WriteAllText(Path.Combine(game, "DATA", "CFG", "defaults", "locale.cfg"), "[General]\r\nLanguageLocaleRegion=pl_PL\r\n");
         WriteSettings(home, new { serverName = Server, publicHost = "amberline.example.test", addressSource = HostAddress.Typed, dataRoot = game });
         var run = Task.Run(() => HostMode.RunAsync(home.Loop));
         try
@@ -58,14 +62,53 @@ public static class HostFileShareChecks
             using (var file = JsonDocument.Parse(File.ReadAllText(home.Loop.Paths.Settings)))
                 TestAssert.True(file.RootElement.GetProperty("shareFiles").GetBoolean(), "the switch is saved in platform.json");
             var manifest = await ManifestAsync(player);
+            TestAssert.False(manifest.Keys.Any(path => path.EndsWith("/DATA/CFG/defaults/locale.cfg", StringComparison.OrdinalIgnoreCase)),
+                "the launcher's language file is not in the manifest");
+            await StatusAsync(player, HttpStatusCode.NotFound, "for the launcher's language file", Url(Release + "/DATA/CFG/defaults/locale.cfg"));
             var expected = Expected(home);
             TestAssert.Equal(string.Join("\n", expected.Keys.Order(StringComparer.Ordinal)), string.Join("\n", manifest.Keys.Order(StringComparer.Ordinal)),
                 "the manifest lists exactly the shared files");
+            TestAssert.False(manifest.Keys.Any(path => path.StartsWith("launcher/", StringComparison.Ordinal)), "without a launcher folder, none is listed");
             foreach (var (path, source) in expected)
                 TestAssert.Equal((new FileInfo(source).Length, RetailClients.Sha256(source)), manifest[path], path);
             settings = await SettingsAsync(browser, "Settings, sharing on");
             TestAssert.True(settings.Contains("value=on checked>Share the game files with players</label>", StringComparison.Ordinal) &&
                 settings.Contains("<p>Shared: the game folder (", StringComparison.Ordinal) && settings.Contains("through your internet upload", StringComparison.Ordinal), settings);
+
+            // Batch 761, task 8: the host's 2011 launcher is listed under launcher/ while Settings names an accepted folder: each file of its release and
+            // its file list (the folder's own, or the one beside it), never another file of the folder. A folder that fails its check is not listed.
+            // Final review: an empty launcherRoot (a hand-edited platform.json) reads as no folder; the game and the AIR client are still shared.
+            await RestartWithLauncherAsync(home, browser, run, "", starts: 2);
+            var emptyRoot = await ManifestAsync(player);
+            TestAssert.Equal(string.Join("\n", expected.Keys.Order(StringComparer.Ordinal)), string.Join("\n", emptyRoot.Keys.Order(StringComparer.Ordinal)),
+                "an empty launcherRoot: the game and the AIR client are listed, and no launcher");
+
+            var launcher = Path.Combine(home.Root, "host-launcher");
+            File.WriteAllBytes(Path.Combine(home.Root, "releasemanifest"), [7, 7]);
+            File.Delete(Path.Combine(launcher, "xml", "slideshow.xml"));
+            await RestartWithLauncherAsync(home, browser, run, launcher, starts: 3);
+            var broken = await ManifestAsync(player);
+            TestAssert.False(broken.Keys.Any(path => path.StartsWith("launcher/", StringComparison.Ordinal)), "a launcher folder that fails its check is not listed");
+            TestAssert.Equal(string.Join("\n", expected.Keys.Order(StringComparer.Ordinal)), string.Join("\n", broken.Keys.Order(StringComparer.Ordinal)),
+                "the game and the AIR client are still listed");
+            var unshared = await SettingsAsync(browser, "Settings, a launcher that cannot be shared");
+            TestAssert.False(unshared.Contains("and the 2011 launcher (", StringComparison.Ordinal), "Settings does not count a launcher that is not shared");
+            TestAssert.True(unshared.Contains("<p class=warn>The 2011 launcher is not shared. The classic launcher folder is missing xml", StringComparison.Ordinal),
+                "Settings says why the launcher is left out");
+
+            ClassicLauncherChecks.WriteLauncherFiles(launcher);
+            File.WriteAllText(Path.Combine(launcher, "notes.txt"), "the host's own note beside the launcher's files");
+            await RestartWithLauncherAsync(home, browser, run, launcher, starts: 4);
+            foreach (var (path, source) in LauncherExpected(launcher)) expected[path] = source;
+            var shared = await ManifestAsync(player);
+            TestAssert.Equal(string.Join("\n", expected.Keys.Order(StringComparer.Ordinal)), string.Join("\n", shared.Keys.Order(StringComparer.Ordinal)),
+                "the launcher's files and its file list are listed beside the game and the AIR client, and nothing else of the folder");
+            foreach (var (path, source) in expected)
+                TestAssert.Equal((new FileInfo(source).Length, RetailClients.Sha256(source)), shared[path], path);
+            await StatusAsync(player, HttpStatusCode.OK, "the launcher's files", Url("launcher/LoLLauncher.exe"), Url("launcher/xml/slideshow.xml"), Url("launcher/releasemanifest"));
+            await StatusAsync(player, HttpStatusCode.NotFound, "a file of the launcher folder that is not one of its files", Url("launcher/notes.txt"));
+            settings = await SettingsAsync(browser, "Settings, the launcher shared");
+            TestAssert.True(settings.Contains("and the 2011 launcher (", StringComparison.Ordinal), settings);
 
             // A file by its manifest path, whole and as a range (a resumed download), and a name with a space.
             using (var whole = await player.GetAsync(Url(Exe)))
@@ -165,7 +208,7 @@ public static class HostFileShareChecks
             var genuine = File.ReadAllBytes(executable);
             File.WriteAllBytes(executable, RandomNumberGenerator.GetBytes(genuine.Length));
             await PostAsync(browser, Switch, Token(await browser.GetStringAsync(HostSettingsPage.PagePath)), HttpStatusCode.Redirect, ("on", "on"));
-            await StatusAsync(player, HttpStatusCode.NotFound, "with an executable that is not the pinned one", "/files", Url(Exe), Url(Release + "/DATA/file1.bin"));
+            await StatusAsync(player, HttpStatusCode.NotFound, "with an executable that is not the pinned one", "/files", Url(Exe), Url(Release + "/DATA/file1.bin"), Url("launcher/LoLLauncher.exe"));
             settings = await SettingsAsync(browser, "Settings, a copy that cannot be shared");
             TestAssert.True(settings.Contains("<p class=problem role=alert>Your copy cannot be shared: the game folder: The game executable is not the 1.0.0.126 game", StringComparison.Ordinal) &&
                 settings.Contains("Nothing is shared.", StringComparison.Ordinal), settings);
@@ -184,6 +227,46 @@ public static class HostFileShareChecks
                 Directory.Delete(link);
             }
             else Console.WriteLine("server.host-file-share: this Windows user cannot make a link, so the link refusal is not proven on this PC.");
+
+            // Batch 761, task 8 (review round 1): a junction standing in the 2011 launcher's folder would serve its files from wherever it points, so the
+            // launcher is left out (the game and the AIR client are still shared) and Settings says why. Where Windows lets this user make a junction (mklink /J).
+            var img = Path.Combine(launcher, "img");
+            var elsewhere = Path.Combine(home.Root, "elsewhere");
+            Directory.CreateDirectory(elsewhere);
+            // The other folder holds every picture of img (so the launcher still passes its own file check through the junction): the share must refuse it anyway.
+            for (var picture = 0; picture < 6; picture++) File.WriteAllText(Path.Combine(elsewhere, $"ad{picture}.png"), $"a picture from another folder {picture}");
+            Directory.Move(img, img + "-real");
+            var junction = false;
+            try
+            {
+                using (var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+                    { ArgumentList = { "/c", "mklink", "/J", img, elsewhere }, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true })
+                    ?? throw new InvalidOperationException("cmd.exe did not start"))
+                {
+                    mklink.StandardOutput.ReadToEnd();
+                    mklink.StandardError.ReadToEnd();
+                    mklink.WaitForExit();
+                    junction = mklink.ExitCode == 0;
+                }
+                if (junction)
+                {
+                    await PostAsync(browser, Switch, Token(await browser.GetStringAsync(HostSettingsPage.PagePath)), HttpStatusCode.Redirect, ("on", "on"));
+                    var through = await ManifestAsync(player);
+                    TestAssert.Equal(string.Join("\n", expected.Keys.Where(path => !path.StartsWith("launcher/", StringComparison.Ordinal)).Order(StringComparer.Ordinal)),
+                        string.Join("\n", through.Keys.Order(StringComparer.Ordinal)), "a launcher with a junction in it is left out; the game and the AIR client are still listed");
+                    await StatusAsync(player, HttpStatusCode.NotFound, "for the launcher's files, through the junction or not", Url("launcher/img/ad0.png"), Url("launcher/LoLLauncher.exe"));
+                    var junctionSettings = await SettingsAsync(browser, "Settings, a launcher with a junction");
+                    TestAssert.True(junctionSettings.Contains("<p class=warn>The 2011 launcher is not shared. ", StringComparison.Ordinal) &&
+                        junctionSettings.Contains("is a link, which is never shared.", StringComparison.Ordinal), junctionSettings);
+                }
+                else Console.WriteLine("server.host-file-share: this Windows user cannot make a junction (mklink /J), so the junction refusal is not proven on this PC.");
+            }
+            finally
+            {
+                // A non-recursive delete removes the junction itself and never the folder it points to; the launcher's own folder is put back.
+                if (Directory.Exists(img) && (File.GetAttributes(img) & FileAttributes.ReparsePoint) != 0) Directory.Delete(img);
+                Directory.Move(img + "-real", img);
+            }
 
             // Saved again with the copy fixed: shared again. Off: 404 at once, without a restart.
             await PostAsync(browser, Switch, Token(await browser.GetStringAsync(HostSettingsPage.PagePath)), HttpStatusCode.Redirect, ("on", "on"));
@@ -208,6 +291,7 @@ public static class HostFileShareChecks
     {
         if (!OperatingSystem.IsWindows()) return;
         ListRefusals();
+        LauncherOffers();
         var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         var home = Host("league-air-player-download", big: false);
         var game = Game(home);
@@ -320,7 +404,7 @@ public static class HostFileShareChecks
                      "../evil.dll", Release + "/../../../../evil.dll", "air/../evil.dll", "air/notes.txt", "air/logs2/x", "game/projects/other/x",
                      "C:/Windows/evil.dll", "/air/LolClient.exe", Release + "/DATA\\..\\x", Release + "/CON", Release + "/nul.txt", Release + "/a:stream",
                      Release + "/dots.", Release + "/space ", Release + "//x", Release + "/", "air/logs/../../x", "game/projects/lol_game_client_EN/x",
-                     "\\\\server\\share\\x", "air", Release + "/" + new string('x', 240),
+                     "\\\\server\\share\\x", "air", Release + "/" + new string('x', 240), "launcher", "launcher/notes.txt", "launcher/xml/other.xml",
                  })
             Throws<InvalidDataException>(() => PlayerDownload.Read(List(3, new { path, size = 0, sha256 = new string('C', 64) }), pins), "outside the game", path);
         Throws<InvalidDataException>(() => PlayerDownload.Read(List(3, new { path = "AIR/lolclient.exe".ToLowerInvariant(), size = 0, sha256 = new string('C', 64) }), pins), "outside the game", "a path twice");
@@ -328,6 +412,69 @@ public static class HostFileShareChecks
         Throws<InvalidDataException>(() => PlayerDownload.Read(List(3, new { path = Release + "/x", size = 0, sha256 = "not-a-hash" }), pins), "is not valid", "a bad hash");
         Throws<InvalidDataException>(() => PlayerDownload.Read("[]"u8.ToArray(), pins), "not a list of files", "not a list");
         Throws<InstallRefusedException>(() => PlayerDownload.Read(List(3), pins with { Game = new string('D', 64) }), "is not the 1.0.0.126", "another game executable");
+    }
+
+    /// <summary>
+    /// Batch 761, task 7 (design §1): the 2011 launcher's files in a list. The list is accepted with the launcher's pin on LoLLauncher.exe; a wrong EXE,
+    /// a missing file or a path outside the launcher's files is refused; the launcher is planned into &lt;install&gt;\launcher; the staged files are
+    /// checked and placed there, and a staged copy that fails its check is refused with nothing placed. The lists and the staged files are written
+    /// here; no server runs.
+    /// </summary>
+    private static void LauncherOffers()
+    {
+        var root = AirBootstrapChecks.TemporaryDirectory("league-air-player-launcher");
+        try
+        {
+            var sha = ClassicLauncherChecks.WriteLauncherFiles(Path.Combine(root, "sample"));
+            var pins = new ClientPins(new string('A', 64), new string('B', 64), sha);
+            var game = new { path = Exe, size = 1, sha256 = pins.Game };
+            var air = new { path = "air/LolClient.exe", size = 2, sha256 = pins.Air };
+            // The launcher's entries as the list spells them: every file of the release, the EXE with the pin (the other hashes are not checked here).
+            object[] Entries(string exeSha, string? without = null) => ClassicLauncherFiles.Required
+                .Where(file => file.Replace('\\', '/') != without)
+                .Select(file => (object)new { path = "launcher/" + file.Replace('\\', '/'), size = 1, sha256 = file == "LoLLauncher.exe" ? exeSha : new string('D', 64) })
+                .ToArray();
+            byte[] Offer(object[] launcher) => JsonSerializer.SerializeToUtf8Bytes(new { protocol = 1, bytes = 3 + launcher.Length, files = new object[] { game, air }.Concat(launcher) });
+
+            var offer = PlayerDownload.Read(Offer(Entries(sha)), pins);
+            TestAssert.Equal(2 + ClassicLauncherFiles.Required.Count, offer.Files.Count, "the game, the AIR client and the 2011 launcher's files");
+            Throws<InstallRefusedException>(() => PlayerDownload.Read(Offer(Entries(new string('C', 64))), pins), "is not version 1.0.0.251",
+                "a launcher with another SHA-256 is refused by the pin");
+            Throws<InvalidDataException>(() => PlayerDownload.Read(Offer(Entries(sha, without: "xml/slideshow.xml")), pins), "without its file xml/slideshow.xml",
+                "a launcher missing one of its files");
+            TestAssert.True(PlayerDownload.Allowed("launcher/LoLLauncher.exe") && PlayerDownload.Allowed("launcher/xml/slideshow.xml") &&
+                PlayerDownload.Allowed("launcher/releasemanifest"), "the launcher's files and its file list are allowed");
+            TestAssert.False(PlayerDownload.Allowed("launcher/xml/other.xml") || PlayerDownload.Allowed("launcher/notes.txt"), "nothing else under launcher is");
+
+            // Planned into <install>\launcher, and planning writes nothing.
+            var install = Path.Combine(root, "Install");
+            var plan = PlayerDownload.Plan(install, offer);
+            TestAssert.Equal(Path.Combine(install, "launcher"), plan.Launcher, "the launcher files are planned into <install>\\launcher");
+            TestAssert.False(Directory.Exists(Path.Combine(install, "launcher")), "planning writes nothing");
+
+            // The staged launcher is checked and placed (the launcher alone, as an install that has its clients downloads it); a staged copy that
+            // fails its check is refused, and nothing is placed.
+            var launcherOnly = PlayerDownload.Subset(offer, path => path.StartsWith("launcher/", StringComparison.Ordinal));
+            TestAssert.Equal(ClassicLauncherFiles.Required.Count, launcherOnly.Files.Count, "the launcher's files alone");
+            var staging = Path.Combine(install, PlayerDownload.Staging);
+            ClassicLauncherChecks.WriteLauncherFiles(Path.Combine(staging, "launcher"));
+            PlayerDownload.Place(staging, plan, launcherOnly, pins, Server, null, CancellationToken.None);
+            TestAssert.True(File.Exists(Path.Combine(install, "launcher", "LoLLauncher.exe")), "the checked launcher is in <install>\\launcher");
+            TestAssert.False(Directory.Exists(Path.Combine(staging, "launcher")), "the staged launcher was put in place");
+
+            var bad = Path.Combine(root, "Bad");
+            var badPlan = PlayerDownload.Plan(bad, offer);
+            var badStaging = Path.Combine(bad, PlayerDownload.Staging);
+            ClassicLauncherChecks.WriteLauncherFiles(Path.Combine(badStaging, "launcher"));
+            File.Delete(Path.Combine(badStaging, "launcher", "xml", "slideshow.xml"));
+            Throws<InstallRefusedException>(() => PlayerDownload.Place(badStaging, badPlan, launcherOnly, pins, Server, null, CancellationToken.None), "is not complete",
+                "a staged launcher that fails its check");
+            TestAssert.False(Directory.Exists(Path.Combine(bad, "launcher")), "nothing is placed");
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     /// <summary>
@@ -354,7 +501,9 @@ public static class HostFileShareChecks
         Directory.CreateDirectory(Path.Combine(air, "logs"));
         File.WriteAllText(Path.Combine(air, "logs", "host.log"), "the host's own login");
         File.WriteAllText(Path.Combine(air, "notes.txt"), "the host's own file beside the AIR client");
-        return HostFolderChecks.Pins(game, air);
+        // Batch 761, task 8: the host's 2011 launcher folder, a dummy release whose pin is its own EXE's hash (the folder check's seam).
+        var launcherSha = ClassicLauncherChecks.WriteLauncherFiles(Path.Combine(root, "host-launcher"));
+        return HostFolderChecks.Pins(game, air) with { LauncherSha256 = launcherSha };
     });
 
     private static string Game(Home home) => Path.Combine(home.Root, "host-game", "projects", "lol_game_client", "releases", "0.0.0.51");
@@ -363,7 +512,8 @@ public static class HostFileShareChecks
     private static Dictionary<string, string> Expected(Home home)
     {
         var projects = Path.Combine(home.Root, "host-game", "projects");
-        string[] written = ["lastCmd.log", "maestro-game_client.log", "Localization_Errors.txt", "2026-11-04_10-00-00_r3dlog.txt", "2026-11-04_10-00-00_netlog.txt", "DATA/crash.dmp"];
+        string[] written = ["lastCmd.log", "maestro-game_client.log", "Localization_Errors.txt", "2026-11-04_10-00-00_r3dlog.txt", "2026-11-04_10-00-00_netlog.txt", "DATA/crash.dmp",
+            "DATA/CFG/defaults/locale.cfg"];
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var file in Directory.EnumerateFiles(projects, "*", SearchOption.AllDirectories))
         {
@@ -390,6 +540,26 @@ public static class HostFileShareChecks
         var files = json.RootElement.GetProperty("files").EnumerateArray().ToDictionary(entry => entry.GetProperty("path").GetString()!,
             entry => (entry.GetProperty("size").GetInt64(), entry.GetProperty("sha256").GetString()!), StringComparer.Ordinal);
         TestAssert.Equal(files.Values.Sum(file => file.Item1), json.RootElement.GetProperty("bytes").GetInt64(), "the manifest's total");
+        return files;
+    }
+
+    /// <summary>Settings' launcher folder as platform.json holds it (or none), then the next process of Amberline, which reads it; a save restarts the same way.</summary>
+    private static async Task RestartWithLauncherAsync(Home home, HttpClient browser, Task<int> run, string? launcher, int starts)
+    {
+        var file = JsonNode.Parse(File.ReadAllText(home.Loop.Paths.Settings))!.AsObject();
+        file.Remove("launcherRoot");
+        if (launcher is not null) file["launcherRoot"] = launcher;
+        File.WriteAllText(home.Loop.Paths.Settings, file.ToJsonString());
+        home.Loop.Restart();
+        await WaitForStartsAsync(home.Loop, starts, run);
+        await WaitForHealthAsync(browser, "ready", run);
+    }
+
+    /// <summary>The entries a share lists for the 2011 launcher folder: each file of its release and its file list, by their paths under launcher/.</summary>
+    private static Dictionary<string, string> LauncherExpected(string launcher)
+    {
+        var files = ClassicLauncherFiles.Required.ToDictionary(file => "launcher/" + file.Replace('\\', '/'), file => Path.Combine(launcher, file), StringComparer.Ordinal);
+        if (ClassicLauncherFiles.ManifestFor(launcher) is { } manifest) files["launcher/releasemanifest"] = manifest;
         return files;
     }
 

@@ -16,6 +16,8 @@
     <Compile Include="..\Amberline.AirCompanion\GameLanguagePack.cs" Link="Folders\GameLanguagePack.cs" />
     <!-- Batch 637: the host's one-folder install moves the game and AIR client with the player installer's move code. -->
     <Compile Include="..\Amberline.AirCompanion\FolderMove.cs" Link="Folders\FolderMove.cs" />
+    <!-- Batch 761, task 8: the host's optional 2011 launcher folder (HostFolders' row) and its file sharing (HostFileShare) use the launcher's accepted files. -->
+    <Compile Include="..\Amberline.AirCompanion\ClassicLauncherFiles.cs" Link="Folders\ClassicLauncherFiles.cs" />
     <ProjectReference Include="../Amberline.Host/Amberline.Host.csproj" />
     <ProjectReference Include="../Amberline.Rtmp/Amberline.Rtmp.csproj" />
   </ItemGroup>

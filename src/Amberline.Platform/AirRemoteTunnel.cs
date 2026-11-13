@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -10,17 +11,21 @@ namespace Amberline.Platform;
 /// NOT RETAIL: operator tooling for the host page's Online table. The tunnel reaches the RTMP and XMPP loopback listeners
 /// from a loopback source port, so those listeners see 127.0.0.1 for a friend. The tunnel knows the friend's real address
 /// (the TLS peer of its remote listener, a direct TCP peer: <c>UseRegistrationProxy</c> never reads forwarded headers there),
-/// so it records which source port carries which friend while the connection lasts. Memory only, never logged.
+/// so it records which source port carries which friend while the connection lasts, with the game address the friend's player tool
+/// reported (<see cref="AirRemoteTunnel.GameAddressHeader"/>). Memory only, never logged.
 /// </summary>
 public sealed class AirTunnelPeers
 {
-    private readonly ConcurrentDictionary<(int Port, int Source), IPAddress> _peers = new();
-    internal void Add(int port, int source, IPAddress peer) =>
-        _peers[(port, source)] = peer.IsIPv4MappedToIPv6 ? peer.MapToIPv4() : peer;
+    private readonly ConcurrentDictionary<(int Port, int Source), (IPAddress Peer, IPAddress? Game)> _peers = new();
+    internal void Add(int port, int source, IPAddress peer, IPAddress? gameAddress = null) =>
+        _peers[(port, source)] = (peer.IsIPv4MappedToIPv6 ? peer.MapToIPv4() : peer, gameAddress);
     internal void Remove(int port, int source) => _peers.TryRemove((port, source), out _);
 
     /// <summary>The address to attribute to a connection a loopback listener on <paramref name="port"/> accepted from <paramref name="source"/>.</summary>
-    public IPAddress Resolve(int port, IPEndPoint source) => _peers.GetValueOrDefault((port, source.Port)) ?? source.Address;
+    public IPAddress Resolve(int port, IPEndPoint source) => _peers.GetValueOrDefault((port, source.Port)).Peer ?? source.Address;
+
+    /// <summary>The game address the friend's player tool reported for that connection's tunnel, or null (none, or not a tunnel).</summary>
+    public IPAddress? GameAddress(int port, IPEndPoint source) => _peers.GetValueOrDefault((port, source.Port)).Game;
 
     /// <summary>
     /// DIAGNOSTICS: true when the connection reached this PC directly, from loopback and not through a remote tunnel (a tunnel
@@ -48,11 +53,33 @@ public static class AirRemoteTunnel
     public const int MaxConnectionsPerAccount = 4;
     private const int MaxMessageBytes = 256 * 1024;
 
+    /// <summary>
+    /// NOT RETAIL: retail's platform always sent its own game server address in the game start. A friend's player tool sends, on its RTMP
+    /// tunnel's upgrade, the IPv4 address it reached this host at (the Play file's host, resolved on the friend's PC), so the game start
+    /// built for that session can name it: the 2011 launcher's own Maestro starts the game with the game start unchanged (spec §7). The
+    /// value is the client's word, so it only ever reaches that same player's own game start.
+    /// </summary>
+    public const string GameAddressHeader = "X-Game-Address";
+
+    /// <summary>A strict dotted IPv4 address (four decimal octets 0-255 without a leading zero, nothing else), or null for anything else. A leading zero
+    /// is octal to the stock client and .NET ("010" is 8), so such a text is refused rather than read two ways.</summary>
+    public static IPAddress? ParseGameAddress(string? value)
+    {
+        var parts = value?.Split('.');
+        if (parts is not { Length: 4 }) return null;
+        var octets = new byte[4];
+        for (var i = 0; i < 4; i++)
+            if (parts[i].Length > 3 || (parts[i].Length > 1 && parts[i][0] == '0') || !byte.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out octets[i])) return null;
+        return new IPAddress(octets);
+    }
+
     // Playtest B3 #11: /register is never served on the pinned remote port; the host creates accounts locally. Batch 656: the home
     // host's own sign-up is the one exception, outside this list, while Settings' switch is on (HostSelfRegistration.Serves).
     public static bool IsPublicPath(string path) => path is "/" or "/health" or "/ip" or "/landing" or "/story" or "/ladder" or
         "/login-queue/rest/queue/authenticate" or Path or ChatPath or SignInPath or
-        "/bootstrap/client.json" or "/bootstrap/companion.zip" or "/bootstrap/Play.cmd" ||
+        "/bootstrap/client.json" or "/bootstrap/companion.zip" or "/bootstrap/Play.cmd" or
+        // NOT RETAIL (batch 761): the 2011 launcher's news (LauncherNews.Route) is read by the friends' launchers through the tunnel too.
+        "/launcher/news" ||
         path.StartsWith("/status/", StringComparison.Ordinal) || path.StartsWith("/rss/", StringComparison.Ordinal) ||
         path.StartsWith("/store/", StringComparison.Ordinal) || path.StartsWith("/img/", StringComparison.Ordinal);
 
@@ -196,7 +223,8 @@ public static class AirRemoteTunnel
             await tcp.ConnectAsync(IPAddress.Loopback, targetPort, context.RequestAborted).ConfigureAwait(false);
             // Recorded before the first byte is pumped, so the loopback listener finds it when the connection is first used.
             if (peers is not null && context.Connection.RemoteIpAddress is { } peer)
-                peers.Add(targetPort, source = ((IPEndPoint)tcp.Client.LocalEndPoint!).Port, peer);
+                peers.Add(targetPort, source = ((IPEndPoint)tcp.Client.LocalEndPoint!).Port, peer,
+                    ParseGameAddress(context.Request.Headers[GameAddressHeader].ToString()));
             using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
             await PumpAsync(tcp.GetStream(), socket, stats, context.RequestAborted).ConfigureAwait(false);
         }

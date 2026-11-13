@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using Amberline.Host;
+using Amberline.Platform.Folders;
 using Microsoft.AspNetCore.Antiforgery;
 
 namespace Amberline.Platform;
@@ -31,19 +32,25 @@ public sealed class HostPlay(Func<ProcessStartInfo, Process?> start)
     /// <summary>
     /// Writes <c>stage.json</c> for the companion's <c>LoadDesktopStage</c>. The port is named here, so the stage needs no
     /// <c>platform-data</c>; the game address is loopback, because the match servers run on this PC (the address friends are given
-    /// may be the router's, which many routers do not reach from inside).
+    /// may be the router's, which many routers do not reach from inside). <paramref name="launcherSha256"/> is the pin the host's 2011 launcher
+    /// must have (DIAGNOSTICS: a test seam; the play start passes the shipped pin).
     /// </summary>
-    public static string WriteStage(HostPaths paths, PlatformSettings settings)
+    public static string WriteStage(HostPaths paths, PlatformSettings settings, string launcherSha256 = ClassicLauncherFiles.LauncherSha256)
     {
         var stage = StageRoot(paths);
-        HostFiles.Write(Path.Combine(stage, "stage.json"), new
+        var values = new Dictionary<string, object?>
         {
-            stockExecutable = Path.Combine(Path.GetFullPath(settings.DataRoot), HostFolders.GameExecutable),
-            airSource = Path.GetFullPath(settings.AirRoot!),
-            httpPort = settings.HttpPort,
-            maestroPort = MaestroPort,
-            gameHost = "127.0.0.1",
-        });
+            ["stockExecutable"] = Path.Combine(Path.GetFullPath(settings.DataRoot), HostFolders.GameExecutable),
+            ["airSource"] = Path.GetFullPath(settings.AirRoot!),
+            ["httpPort"] = settings.HttpPort,
+            ["maestroPort"] = MaestroPort,
+            ["gameHost"] = "127.0.0.1",
+        };
+        // NOT RETAIL (batch 761, task 8, design §9): the host's own Play takes the classic start with the host's 2011 launcher, but only while that folder
+        // holds the accepted files. Otherwise the stage names no launcher at all, and the usual start runs.
+        if (settings.LauncherRoot is { } launcher && ClassicLauncherFiles.Problem(launcher, launcherSha256) is null)
+            values["launcherRoot"] = Path.GetFullPath(launcher);
+        HostFiles.Write(Path.Combine(stage, "stage.json"), values);
         return stage;
     }
 

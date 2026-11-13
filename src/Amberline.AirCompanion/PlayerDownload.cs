@@ -28,8 +28,11 @@ internal static class PlayerDownload
     private static readonly TimeSpan Stall = TimeSpan.FromSeconds(60);
     private const string Game = "game/projects/lol_game_client/releases/0.0.0.51";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private static readonly Regex Shape = new(@"^(?:game/projects/lol_game_client/releases/0\.0\.0\.51|game/projects/lol_game_client_[a-z]{2}_[a-z]{2}|air)/[^/]",
+    private static readonly Regex Shape = new(@"^(?:game/projects/lol_game_client/releases/0\.0\.0\.51|game/projects/lol_game_client_[a-z]{2}_[a-z]{2}|air|launcher)/[^/]",
         RegexOptions.CultureInvariant);
+    /// <summary>NOT RETAIL (classic launcher, design §1): the 2011 launcher's paths in a list: each of its release's files and its file list.</summary>
+    private static readonly HashSet<string> LauncherPaths = new(ClassicLauncherFiles.Required.Select(file => "launcher/" + file.Replace('\\', '/'))
+        .Append("launcher/releasemanifest"), StringComparer.OrdinalIgnoreCase);
     private static readonly char[] Invalid = [.. Path.GetInvalidFileNameChars(), ':'];
 
     internal sealed record Entry(string Path, long Size, string Sha256);
@@ -55,7 +58,10 @@ internal static class PlayerDownload
         return Read(json, pins);
     }
 
-    /// <summary>The list's checks: its shape, every path (<see cref="Allowed"/>, once each), sizes that add up, and the two pins.</summary>
+    /// <summary>
+    /// The list's checks: its shape, every path (<see cref="Allowed"/>, once each), sizes that add up, and the pins: the game's and AIR client's, and
+    /// the 2011 launcher's when the list has it (NOT RETAIL, design §1).
+    /// </summary>
     internal static Offer Read(byte[] json, ClientPins pins)
     {
         Manifest? manifest;
@@ -74,34 +80,74 @@ internal static class PlayerDownload
         bool Pinned(string path, string pin) => files.Any(entry => entry.Path == path && string.Equals(entry.Sha256, pin, StringComparison.OrdinalIgnoreCase));
         if (!Pinned(Game + "/League of Legends.exe", pins.Game) || !Pinned("air/LolClient.exe", pins.Air))
             throw new InstallRefusedException("The server's copy is not the 1.0.0.126 game and AIR client (an executable's SHA-256 differs), so Setup does not download it.");
+        // NOT RETAIL (classic launcher, design §1): a list that has the 2011 launcher has all of its files, and its EXE has the launcher pin.
+        if (files.Any(entry => entry.Path.StartsWith("launcher/", StringComparison.Ordinal)))
+        {
+            foreach (var file in ClassicLauncherFiles.Required)
+                if (!files.Any(entry => entry.Path == "launcher/" + file.Replace('\\', '/')))
+                    throw Bad($"it lists the 2011 launcher without its file {file.Replace('\\', '/')}");
+            if (!Pinned("launcher/LoLLauncher.exe", pins.Launcher))
+                throw new InstallRefusedException("The server's 2011 launcher is not version 1.0.0.251 (its executable's SHA-256 differs), so Setup does not download it.");
+        }
         return new(files, bytes);
     }
 
     /// <summary>
-    /// A path of the install's layout: under the game's release folder, a language project beside it, or one of the AIR client's own
-    /// entries; plain names only (no empty, <c>.</c> or <c>..</c> part, no drive, stream or reserved device name, nothing Windows trims).
+    /// A path of the install's layout: under the game's release folder, a language project beside it, one of the AIR client's own
+    /// entries, or one of the 2011 launcher's files (NOT RETAIL, design §1); plain names only (no empty, <c>.</c> or <c>..</c> part, no drive, stream or reserved device name, nothing Windows trims).
     /// </summary>
     internal static bool Allowed(string path)
     {
         if (path.Length > 240 || !Shape.IsMatch(path)) return false;
         var parts = path.Split('/');
         if (parts[0] == "air" && !AirEntries.Contains(parts[1], StringComparer.OrdinalIgnoreCase)) return false;
+        if (parts[0] == "launcher" && !LauncherPaths.Contains(path)) return false;
         return parts.All(part => part.Length > 0 && part is not ("." or "..") && !part.EndsWith('.') && !part.EndsWith(' ') &&
             part.IndexOfAny(Invalid) < 0 && !PlayerInstall.ReservedName.IsMatch(part));
     }
 
     /// <summary>
     /// The download's install: the folder's rules of a found copy (no drive root, not inside a server installation, no client folders
-    /// there yet) and the free space for what is not downloaded yet. Nothing moves, so the plan has no moves.
+    /// there yet, for the parts the offer lists) and the free space for what is not downloaded yet. The download moves nothing itself
+    /// (<see cref="Place"/> does). NOT RETAIL (classic launcher, review round 1): an install set up before its launcher passes its recorded
+    /// <paramref name="kept"/> install, so the plan keeps the AIR and game folders its record names and only the launcher is added; a launcher
+    /// folder the player picked is the one move the plan holds, planned as MakePlan plans it (its profile names the host's launcher folder).
     /// </summary>
-    internal static PlayerInstall.Plan Plan(string installFolder, Offer offer)
+    internal static PlayerInstall.Plan Plan(string installFolder, Offer offer, PlayerInstall.Record? kept = null, PlayerProfile? profile = null,
+        string? launcher = null, ClientPins? pins = null)
     {
-        var install = Full(installFolder);
+        var install = Full(kept?.Install ?? installFolder);
         if (IsDriveRoot(install)) throw new InstallRefusedException("Choose a folder for the install, not a whole drive.");
         if (HostInstallation(install) is not null)
             throw new InstallRefusedException("The install folder is inside an Amberline server installation. Choose a folder of your own.");
-        NotThere(Path.Combine(install, "air"), "AIR client");
-        NotThere(Path.Combine(install, "game"), "game client");
+        // NOT RETAIL (classic launcher, review round 1): an install's own clients are never fetched again: a kept install takes the launcher alone.
+        if (kept is not null && (Listed(offer, "air/") || Listed(offer, "game/")))
+            throw new InstallRefusedException("The install already has its game and AIR client; only the 2011 launcher can be added to it.");
+        // A download of the launcher alone (an install that has its clients already) leaves the clients where they are.
+        if (Listed(offer, "air/")) NotThere(Path.Combine(install, "air"), "AIR client");
+        if (Listed(offer, "game/")) NotThere(Path.Combine(install, "game"), "game client");
+        // NOT RETAIL (classic launcher, design §1): a launcher folder the player picked moves in with this plan; a launcher in the list is placed by Place.
+        if (launcher is not null && Listed(offer, "launcher/"))
+            throw new InstallRefusedException("The 2011 launcher is both picked and in the server's list. Choose the folder or download it, not both.");
+        var moves = new List<FolderMove.Move>();
+        var notes = new List<string>();
+        string? launcherRun = null;
+        if (launcher is not null)
+        {
+            // The picked launcher must not overlap the clients the install keeps, as MakePlan refuses it against the AIR and game folders it moves.
+            var clients = kept is null ? Array.Empty<string>() : new[] { kept.Air, kept.Game };
+            var picked = PlayerInstall.LauncherPlan(profile ?? throw new ArgumentException("A picked 2011 launcher needs the player's profile."), install,
+                launcher, pins ?? new ClientPins(), RunningImages(), clients);
+            launcherRun = picked.Launcher;
+            moves.AddRange(picked.Moves);
+            notes.AddRange(picked.Notes);
+        }
+        else if (Listed(offer, "launcher/"))
+        {
+            launcherRun = Path.Combine(install, PlayerInstall.LauncherFolder);
+            PlayerInstall.LauncherNotThere(launcherRun, pins ?? new ClientPins(), installed: kept is not null);
+        }
+        var copyBytes = moves.Where(move => move.KeepSource || !SameRoot(move.Source, move.Target)).Sum(CopyBytes);
         var staging = Path.Combine(install, Staging);
         var staged = Directory.Exists(staging) ? new DirectoryInfo(staging).EnumerateFiles("*", SearchOption.AllDirectories).Sum(file => file.Length) : 0;
         var root = Path.GetPathRoot(install)!;
@@ -109,16 +155,67 @@ internal static class PlayerDownload
         try { free = new DriveInfo(root).AvailableFreeSpace; }
         catch (Exception exception) when (exception is IOException or ArgumentException or UnauthorizedAccessException)
         { throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} is not available. Choose another install folder."); }
-        var needed = Math.Max(0, offer.Bytes - staged);
+        var needed = Math.Max(0, offer.Bytes - staged) + copyBytes;
         if (needed > free)
             throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} has {Gigabytes(free)} GB free; the download needs {Gigabytes(needed)} GB. Choose another install folder or free some space.");
-        return new(install, Path.Combine(install, "air"), Path.Combine(install, GameRelease), [], null, 0, []);
+        return new(install, kept?.Air ?? Path.Combine(install, "air"), kept?.Game ?? Path.Combine(install, GameRelease), moves, null, copyBytes, notes,
+            launcherRun);
+    }
+
+    /// <summary>Whether the offer lists a file under <paramref name="prefix"/> (<c>air/</c>, <c>game/</c> or <c>launcher/</c>).</summary>
+    private static bool Listed(Offer offer, string prefix) => offer.Files.Any(entry => entry.Path.StartsWith(prefix, StringComparison.Ordinal));
+
+    /// <summary>The offer's files that <paramref name="keep"/> keeps, with their total size.</summary>
+    internal static Offer Subset(Offer offer, Func<string, bool> keep)
+    {
+        var files = offer.Files.Where(entry => keep(entry.Path)).ToList();
+        return new(files, files.Sum(entry => entry.Size));
+    }
+
+    /// <summary>
+    /// The checks of the staged parts the offer lists (the game and the AIR client, and the 2011 launcher, NOT RETAIL: design §1), then each part is
+    /// put in place: <c>air</c> at the plan's AIR folder, <c>game</c> at <c>&lt;install&gt;\game</c>, <c>launcher</c> at <c>&lt;install&gt;\launcher</c>.
+    /// All or none: a part already put in place is put back when a later one fails. The staging folder is removed at the end.
+    /// </summary>
+    internal static void Place(string staging, PlayerInstall.Plan plan, Offer offer, ClientPins pins, string server, IProgress<InstallProgress>? progress,
+        CancellationToken cancel)
+    {
+        progress?.Report(new("Checking the downloaded game…"));
+        if (Listed(offer, "game/") && RetailClients.GameProblem(Path.Combine(staging, GameRelease), pins.Game) is { } game)
+            throw new InstallRefusedException($"The game from {server} is not complete ({game}). Nothing was installed; ask the host.");
+        if (Listed(offer, "air/") && RetailClients.AirProblem(Path.Combine(staging, "air"), pins.Air) is { } air)
+            throw new InstallRefusedException($"The AIR client from {server} is not complete ({air}). Nothing was installed; ask the host.");
+        if (Listed(offer, "launcher/") &&
+            ClassicLauncherFiles.Problem(Path.Combine(staging, PlayerInstall.LauncherFolder), pins.Launcher) is { } launcher)
+            throw new InstallRefusedException($"The 2011 launcher from {server} is not complete ({launcher}). Nothing was installed; ask the host.");
+        cancel.ThrowIfCancellationRequested();
+        var parts = new List<(string From, string To)>();
+        if (Listed(offer, "air/")) parts.Add((Path.Combine(staging, "air"), plan.Air));
+        if (Listed(offer, "game/")) parts.Add((Path.Combine(staging, "game"), Path.Combine(plan.Install, "game")));
+        if (Listed(offer, "launcher/"))
+            parts.Add((Path.Combine(staging, PlayerInstall.LauncherFolder), Path.Combine(plan.Install, PlayerInstall.LauncherFolder)));
+        var placed = new List<(string From, string To)>();
+        try
+        {
+            foreach (var (from, to) in parts)
+            {
+                progress?.Report(new("Putting the game in place…"));
+                Directory.Move(from, to);
+                placed.Add((from, to));
+            }
+        }
+        catch
+        {
+            foreach (var (from, to) in Enumerable.Reverse(placed)) Directory.Move(to, from);
+            throw;
+        }
+        TryDeleteTree(staging);
     }
 
     /// <summary>
     /// Downloads every file of <paramref name="offer"/> into the staging folder (what is already there and checks out stays; anything
-    /// else there goes), checks the two client folders, then renames <c>air</c> and <c>game</c> into <paramref name="plan"/>'s install.
-    /// Cancel works until the renames; a second call continues where the first stopped.
+    /// else there goes), then <see cref="Place"/>s the parts the offer lists (the two client folders, and the 2011 launcher when listed) into
+    /// <paramref name="plan"/>'s install. Cancel works until the renames; a second call continues where the first stopped.
     /// </summary>
     internal static async Task DownloadAsync(HttpClient client, Uri origin, Offer offer, PlayerInstall.Plan plan, ClientPins pins, string server,
         IProgress<InstallProgress>? progress, CancellationToken cancel)
@@ -132,21 +229,7 @@ internal static class PlayerDownload
         var meter = new Meter(progress, offer.Bytes, server);
         await Parallel.ForEachAsync(files, new ParallelOptions { MaxDegreeOfParallelism = Workers, CancellationToken = cancel },
             (file, token) => FetchAsync(client, origin, file.Key, file.Value, meter, token));
-        progress?.Report(new("Checking the downloaded game…"));
-        if (RetailClients.GameProblem(Path.Combine(staging, GameRelease), pins.Game) is { } game)
-            throw new InstallRefusedException($"The game from {server} is not complete ({game}). Nothing was installed; ask the host.");
-        if (RetailClients.AirProblem(Path.Combine(staging, "air"), pins.Air) is { } air)
-            throw new InstallRefusedException($"The AIR client from {server} is not complete ({air}). Nothing was installed; ask the host.");
-        cancel.ThrowIfCancellationRequested();
-        progress?.Report(new("Putting the game in place…"));
-        Directory.Move(Path.Combine(staging, "air"), plan.Air);
-        try { Directory.Move(Path.Combine(staging, "game"), Path.Combine(plan.Install, "game")); }
-        catch
-        {
-            Directory.Move(plan.Air, Path.Combine(staging, "air"));
-            throw;
-        }
-        TryDeleteTree(staging);
+        Place(staging, plan, offer, pins, server, progress, cancel);
     }
 
     /// <summary>One file: kept when it is already there and checks out, else continued from its <c>.part</c> (or fetched whole), then checked.</summary>

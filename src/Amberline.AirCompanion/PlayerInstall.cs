@@ -57,8 +57,12 @@ internal sealed record PlayerProfile(string LocalAppData, string Desktop, bool W
     public string HostSettings => Path.Combine(LocalAppData, "Amberline", "data", "platform.json");
 }
 
-/// <summary>The SHA-256 the two client executables must have; checks pass their fixtures' own.</summary>
-internal sealed record ClientPins(string Game = RetailClients.GameExecutableSha256, string Air = RetailClients.LolClientSha256);
+/// <summary>
+/// The SHA-256 the two client executables must have, and the 2011 launcher's (<see cref="ClassicLauncherFiles.LauncherSha256"/>, NOT RETAIL: the
+/// classic start's launcher, design 2026-11-12 §1); checks pass their fixtures' own.
+/// </summary>
+internal sealed record ClientPins(string Game = RetailClients.GameExecutableSha256, string Air = RetailClients.LolClientSha256,
+    string Launcher = ClassicLauncherFiles.LauncherSha256);
 
 /// <summary>
 /// NOT RETAIL: the player's installer (batch 619). Retail players installed the client with Riot's patcher. Here the player brings the
@@ -71,6 +75,14 @@ internal static class PlayerInstall
 {
     internal const string GameRelease = FolderMove.GameRelease;
     internal const string ToolFolder = "companion";
+    /// <summary>NOT RETAIL (the classic start, design 2026-11-12 §1): the install's folder of the original 2011 launcher's files.</summary>
+    internal const string LauncherFolder = "launcher";
+    /// <summary>
+    /// NOT RETAIL (classic start, review round 1): the launcher's own top-level names (its files, its img and xml folders, and its file list). A picked
+    /// launcher folder gives up only these; anything else in it stays where it is (as the AIR client's own entries do, batch 639).
+    /// </summary>
+    internal static readonly string[] LauncherEntries =
+        [.. ClassicLauncherFiles.Required.Select(file => file.Split('\\')[0]).Distinct(StringComparer.OrdinalIgnoreCase), "releasemanifest"];
     internal const string WindowlessName = "Amberline.exe";
     internal const string UninstallFile = "Uninstall.cmd";
     internal const string DefaultServerName = "Amberline";
@@ -90,10 +102,11 @@ internal static class PlayerInstall
     /// <summary>
     /// What an install will do. <paramref name="Air"/> and <paramref name="Game"/> are the folders the install runs afterwards;
     /// <paramref name="AirCopyFrom"/> is an AIR folder a server on this PC uses, copied instead of moved; <paramref name="CopyBytes"/> is
-    /// what crosses drives.
+    /// what crosses drives. <paramref name="Launcher"/> is the 2011 launcher folder the install takes in (the picked folder, moved to
+    /// <c>&lt;install&gt;\launcher</c>), or the install's own launcher folder when it is already there; null when there is none.
     /// </summary>
     internal sealed record Plan(string Install, string Air, string Game, IReadOnlyList<Move> Moves, string? AirCopyFrom, long CopyBytes,
-        IReadOnlyList<string> Notes);
+        IReadOnlyList<string> Notes, string? Launcher = null);
 
     /// <summary>
     /// A finished install. <paramref name="Leftovers"/> are originals that could not be removed; <paramref name="Stayed"/> says what was
@@ -163,7 +176,16 @@ internal static class PlayerInstall
     /// folder, and the one of the one-folder install the pointer names (batch 637). They are used in place and never moved. A settings
     /// file that cannot be read stops the install: it might name a folder the installer would otherwise move.
     /// </summary>
-    internal static IReadOnlyList<string> HostFolders(PlayerProfile profile)
+    internal static IReadOnlyList<string> HostFolders(PlayerProfile profile) => HostSettingsFolders(profile, "dataRoot", "airRoot");
+
+    /// <summary>
+    /// NOT RETAIL (classic launcher, owner ruling, review round 1): the 2011 launcher folder a host on this PC keeps (platform.json's launcherRoot), read in
+    /// place with the host's game and AIR folders. The player's installer never moves it: a picked folder that is it is copied.
+    /// </summary>
+    internal static IReadOnlyList<string> HostLauncherFolders(PlayerProfile profile) => HostSettingsFolders(profile, "launcherRoot");
+
+    /// <summary>The folders the host's settings files name under the given keys (<see cref="HostFolders"/>): in place, never moved.</summary>
+    private static IReadOnlyList<string> HostSettingsFolders(PlayerProfile profile, params string[] names)
     {
         var folders = new List<string>();
         var files = new[] { profile.HostSettings, ReadPointer(profile.LocalAppData) is { } install ? Path.Combine(install, "data", "platform.json") : null };
@@ -174,7 +196,7 @@ internal static class PlayerInstall
                 if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("not an object");
                 var folder = Path.GetDirectoryName(path)!;
                 folders.AddRange(document.RootElement.EnumerateObject()
-                    .Where(property => property.Name.Equals("dataRoot", StringComparison.OrdinalIgnoreCase) || property.Name.Equals("airRoot", StringComparison.OrdinalIgnoreCase))
+                    .Where(property => names.Contains(property.Name, StringComparer.OrdinalIgnoreCase))
                     .Where(property => property.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(property.Value.GetString()))
                     .Select(property => Path.GetFullPath(property.Value.GetString()!, folder)));
             }
@@ -188,7 +210,8 @@ internal static class PlayerInstall
     /// <summary>
     /// Checks everything before anything changes and says what the install will do. Every refusal is an <see cref="InstallRefusedException"/>.
     /// </summary>
-    internal static Plan MakePlan(PlayerProfile profile, string airFolder, string gameFolder, string installFolder, ClientPins pins)
+    internal static Plan MakePlan(PlayerProfile profile, string airFolder, string gameFolder, string installFolder, ClientPins pins,
+        string? launcherFolder = null)
     {
         var install = Full(installFolder);
         var air = Full(airFolder);
@@ -255,7 +278,17 @@ internal static class PlayerInstall
             }
         }
 
-        var copyBytes = moves.Where(move => !SameRoot(move.Source, move.Target)).Sum(CopyBytes) +
+        // NOT RETAIL (classic launcher, design §1): the optional 2011 launcher folder, moved in like AIR and the game (LauncherPlan).
+        string? launcherRun = null;
+        if (launcherFolder is not null)
+        {
+            var picked = LauncherPlan(profile, install, launcherFolder, pins, running, [air, game]);
+            launcherRun = picked.Launcher;
+            moves.AddRange(picked.Moves);
+            notes.AddRange(picked.Notes);
+        }
+
+        var copyBytes = moves.Where(move => move.KeepSource || !SameRoot(move.Source, move.Target)).Sum(CopyBytes) +
             (airCopyFrom is null ? 0 : TreeBytes(airCopyFrom, "AIR client"));
         var root = Path.GetPathRoot(install)!;
         long free;
@@ -264,7 +297,52 @@ internal static class PlayerInstall
         { throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} is not available. Choose another install folder."); }
         if (copyBytes > free)
             throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} has {Gigabytes(free)} GB free; the copy needs {Gigabytes(copyBytes)} GB. Choose another install folder or free some space.");
-        return new(install, airRun, gameRun, moves, airCopyFrom, copyBytes, notes);
+        return new(install, airRun, gameRun, moves, airCopyFrom, copyBytes, notes, launcherRun);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (classic launcher, design 2026-11-12 §1): the optional 2011 launcher folder of an install. The player's copy must pass the
+    /// launcher check (<see cref="ClassicLauncherFiles.Problem"/>), whose sentence is the refusal. A folder already at <c>&lt;install&gt;\launcher</c>
+    /// has nothing to move. Any other folder is moved there like the AIR and game folders, but copied when it lies under a RADS root
+    /// (<see cref="FolderMove.InProjects"/>), and so is one a host on this PC keeps its launcher in (<see cref="HostLauncherFolders"/>). Only the
+    /// launcher's own top-level names move (<see cref="LauncherEntries"/>); what else the folder holds stays, and the note says so (batch 639).
+    /// Returns the folder the install takes the launcher from, the moves, and that note.
+    /// </summary>
+    internal static (string Launcher, IReadOnlyList<Move> Moves, IReadOnlyList<string> Notes) LauncherPlan(PlayerProfile profile, string install, string folder,
+        ClientPins pins, IReadOnlyList<string> running, IReadOnlyList<string> clients)
+    {
+        var launcher = Full(folder);
+        var target = Path.Combine(install, LauncherFolder);
+        if (ClassicLauncherFiles.Problem(launcher, pins.Launcher) is { } problem) throw new InstallRefusedException(problem);
+        if (Same(launcher, target)) return (target, [], []);
+        if (Inside(launcher, install))
+            throw new InstallRefusedException("The 2011 launcher folder is inside the install folder. Choose the folder you copied it from.");
+        if (clients.Any(client => Overlaps(launcher, client)))
+            throw new InstallRefusedException("The 2011 launcher folder must be a folder of its own, apart from the AIR and game client folders.");
+        // NOT RETAIL (classic launcher, review round 1): a folder under a RADS root, or one a host on this PC keeps its launcher in, is copied and stays whole.
+        var keep = InProjects(launcher) || HostLauncherFolders(profile).Any(hosted => Overlaps(hosted, launcher));
+        var move = new Move("2011 launcher", launcher, target, LauncherEntries, keep);
+        CheckMovable(move, install, running);
+        LauncherNotThere(target, pins, ReadRecord(profile) is { } record && Same(record.Install, install));
+        var others = Others(move);
+        string[] notes = others.Count == 0 ? [] :
+        [
+            $"2011 launcher: {launcher} holds other things too. Only the 2011 launcher's own files {(keep ? "are copied" : "move")}; " +
+            $"these stay: {string.Join(", ", others)}.",
+        ];
+        return (launcher, [move], notes);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (classic launcher, final review): no <c>&lt;install&gt;\launcher</c> yet (<see cref="FolderMove.NotThere"/>). A set-up install
+    /// (<paramref name="installed"/>) cannot change its install folder, so its own launcher folder that fails the launcher check is sent to Uninstall's
+    /// "Remove the 2011 launcher" instead.
+    /// </summary>
+    internal static void LauncherNotThere(string target, ClientPins pins, bool installed)
+    {
+        if (installed && Directory.Exists(target) && ClassicLauncherFiles.Problem(target, pins.Launcher) is not null)
+            throw new InstallRefusedException("The 2011 launcher in this install is incomplete. Remove it first: open Uninstall and choose Remove the 2011 launcher.");
+        NotThere(target, "2011 launcher");
     }
 
     /// <summary>The moves of <paramref name="plan"/>, all or none (<see cref="FolderMove.Execute"/>); the originals go once every copy is in place.</summary>
@@ -285,13 +363,18 @@ internal static class PlayerInstall
     {
         var name = ServerName(serverName);
         Log(profile, $"install: {name} into {plan.Install}; {plan.Moves.Count} folder(s) to move, {Gigabytes(plan.CopyBytes)} GB to copy");
+        // NOT RETAIL (classic launcher, design §1): the file list beside a picked launcher folder is taken along. It is looked up before the move,
+        // since the folder is gone after it.
+        var launcherTarget = Path.Combine(plan.Install, LauncherFolder);
+        var launcherList = plan.Launcher is { } picked && !Same(picked, launcherTarget) ? ClassicLauncherFiles.ManifestFor(picked) : null;
         var leftovers = Execute(plan, progress, options, cancel);
         var stayed = new List<string>();
-        foreach (var move in plan.Moves.Where(move => move.Entries is not null))
+        foreach (var move in plan.Moves.Where(move => move.Entries is not null && !move.KeepSource))
             if (Others(move) is { Count: > 0 } others) stayed.Add($"These stayed in {move.Source}, because they are not part of the {move.Label}: {string.Join(", ", others)}.");
             else
                 try { Directory.Delete(move.Source); }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { leftovers = [.. leftovers, move.Source]; }
+        if (launcherList is not null) CopyLauncherList(profile, launcherList, launcherTarget);
         var record = new Record(plan.Install, plan.Air, plan.Game);
         PlayerMode.WriteJson(profile.RecordPath, record);
         Log(profile, "install: the clients are in place" + (stayed.Count == 0 ? "" : "; " + string.Join(" ", stayed)));
@@ -320,6 +403,19 @@ internal static class PlayerInstall
         if (profile.WritesRegistry) PlayerUninstall.WriteAppsEntry(record);
         Log(profile, $"install: done; shortcut {shortcut}" + (leftovers.Count == 0 ? "" : "; left: " + string.Join(", ", leftovers)));
         return new(record, server, shortcut, leftovers, stayed);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (classic launcher, design §1): the 2011 launcher's file list (<c>releasemanifest</c>) that lay beside a picked folder is copied into
+    /// the launcher folder; a list the folder held came with the move. A copy that fails is logged, and the classic start then writes its own list.
+    /// </summary>
+    private static void CopyLauncherList(PlayerProfile profile, string list, string launcher)
+    {
+        var target = Path.Combine(launcher, "releasemanifest");
+        if (File.Exists(target)) return;
+        try { File.Copy(list, target); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { Log(profile, $"install: the 2011 launcher's file list was not copied ({exception.Message}); the classic start writes its own"); }
     }
 
     /// <summary>The install folder's way out: the windowless tool's removal window (it asks before it deletes anything).</summary>
@@ -361,6 +457,8 @@ internal static class PlayerInstall
         {
             remote = true, airRoot = record.Air, stockExecutable = Path.Combine(record.Game, GameExecutable), maestroPort = MaestroPort,
             clientFiles = "installed",
+            // NOT RETAIL (classic start, design §1): the install's launcher folder, named whether or not the install has one (the start checks it).
+            launcherRoot = Path.Combine(record.Install, LauncherFolder),
         });
         var tool = Path.Combine(record.Install, ToolFolder);
         var link = new ShellLink.Link(Path.Combine(tool, WindowlessName), "--shortcut " + id, tool,

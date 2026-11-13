@@ -23,6 +23,8 @@ public static class HostSettingsPage
     // NOT RETAIL (batch 751): retail had no host page for either switch; these two paths are the Settings sections' own POST routes.
     /// <summary>Batch 751: Settings' "Skins and RP" switch and its Champions list (<see cref="PlatformControls"/>).</summary>
     public const string PaidContentPath = PagePath + "/paid-content", ChampionsPath = PagePath + "/champions";
+    /// <summary>NOT RETAIL (batch 761): Settings' "Launcher news" box (<see cref="LauncherNews"/>), the 2011 launcher's headlines.</summary>
+    public const string NewsPath = PagePath + "/news";
 
     /// <summary>
     /// DIAGNOSTICS (batch 680; owner, 4 November 2026: "selected person will have cheats in all matches - only toggleable by the host",
@@ -41,16 +43,20 @@ public static class HostSettingsPage
     /// Batch 656: <see cref="RegisterPath"/> saves the switch of <paramref name="signUp"/> (people register themselves). Batch 680:
     /// Cheat commands lists the logins of <paramref name="accounts"/> (none for a page-only Settings without a store). Batch 681: Game files
     /// holds the switch of <paramref name="share"/> (the host shares the game with players; none for a page-only Settings). Batch 684:
-    /// <paramref name="gamesChanged"/> hears a saved Games at the same time.
+    /// <paramref name="gamesChanged"/> hears a saved Games at the same time. Batch 761: <paramref name="today"/> (DIAGNOSTICS: test seam) is the
+    /// day a saved launcher headline is dated with (the local day unless a check injects one).
     /// </summary>
     public static void Map(WebApplication app, HostLoop loop, HostSteps steps, Func<int> games, HostSelfRegistration signUp,
-        PlatformAccounts? accounts = null, HostFileShare? share = null, Action<int>? gamesChanged = null)
+        PlatformAccounts? accounts = null, HostFileShare? share = null, Action<int>? gamesChanged = null, Func<DateOnly>? today = null)
     {
+        // The day a saved headline is dated with: the local day, unless a check injects another (LauncherNews.Dated, batch 761).
+        var clock = today ?? (() => LauncherNews.LocalDay());
         steps.MapSettings(app);
         HostFolders.MapSettings(app, loop, games);
         PlatformAccount[] Logins() => [.. (accounts?.ListAccounts() ?? []).OrderBy(account => account.Username, StringComparer.Ordinal)];
-        IResult Page(HttpContext context, IAntiforgery antiforgery, string saved, string? problem = null, string? typed = null) =>
-            HostMode.Page(Render(loop, steps, signUp, share, accounts?.Controls, Logins(), Program.RegistrationToken(context, antiforgery), saved, problem, typed),
+        IResult Page(HttpContext context, IAntiforgery antiforgery, string saved, string? problem = null, string? typed = null,
+            IReadOnlyList<(string Title, string? Link)>? news = null) =>
+            HostMode.Page(Render(loop, steps, signUp, share, accounts?.Controls, Logins(), Program.RegistrationToken(context, antiforgery), saved, problem, typed, news),
                 problem is null ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
         if (share is not null)
             app.MapPost(SharePath, async (HttpContext context, IAntiforgery antiforgery) =>
@@ -103,6 +109,26 @@ public static class HostSettingsPage
             if (accounts is not null) accounts.Controls.DisabledChampions = disabled.ToHashSet();
             return Results.Redirect(PagePath + "?saved=champions");
         });
+        // NOT RETAIL (batch 761): the 2011 launcher's news, which retail read from the publisher's site: up to five headlines, a headline keeps its day while its text stays.
+        app.MapPost(NewsPath, async (HttpContext context, IAntiforgery antiforgery) =>
+        {
+            var form = await HostSteps.FormAsync(context, antiforgery);
+            if (form is null) return Page(context, antiforgery, "", HostSteps.Expired);
+            var rows = NewsRows(form);
+            // A refused save changes nothing, here or in platform.json, and comes back with the rows as they were typed.
+            if (LauncherNews.Problem(rows) is { } problem) return Page(context, antiforgery, "", problem, news: rows);
+            var day = clock();
+            LauncherHeadline[] news = [];
+            // The save first, then the live list, as the paid-content switch does: a failed save changes nothing live. The dates come from the list
+            // the file holds under this lock, so a headline whose title and link are unchanged keeps the day it was written.
+            HostMode.Change(loop.Paths.Settings, saved =>
+            {
+                news = LauncherNews.Dated(saved.LauncherNews, rows, day);
+                return saved with { LauncherNews = news };
+            });
+            if (accounts is not null) accounts.Controls.LauncherNews = news;
+            return Results.Redirect(PagePath + "?saved=news");
+        });
         app.MapGet(UninstallPath, (HttpContext context, IAntiforgery antiforgery) =>
             UninstallPage(loop, Program.RegistrationToken(context, antiforgery), games(), null, false, false));
         app.MapPost(UninstallPath, async (HttpContext context, IAntiforgery antiforgery) =>
@@ -154,9 +180,54 @@ public static class HostSettingsPage
 
     private static string Encode(string? text) => WebUtility.HtmlEncode(text ?? "");
 
+    /// <summary>
+    /// NOT RETAIL (batch 761): Settings' "Launcher news" box (<see cref="LauncherNews"/>): five rows, each a headline and an optional link, and one
+    /// counter for the whole box. <paramref name="typed"/> is a refused save's rows, shown as they were typed; otherwise the saved headlines are.
+    /// </summary>
+    private static string LauncherNewsSection(PlatformSettings settings, string token, IReadOnlyList<(string Title, string? Link)>? typed)
+    {
+        var rows = typed ?? LauncherNews.Usable(settings.LauncherNews).Select(headline => (headline.Title, headline.Link)).ToArray();
+        var fields = string.Concat(Enumerable.Range(1, LauncherNews.MaxHeadlines).Select(number =>
+        {
+            var (title, link) = number <= rows.Count ? rows[number - 1] : ("", (string?)null);
+            return HostPages.Field($"news-title-{number}", $"Headline {number}", null, null, $"value=\"{Encode(title)}\" autocomplete=off spellcheck=false", false, "title") +
+                HostPages.Field($"news-link-{number}", $"Link for headline {number}", null, null, $"value=\"{Encode(link)}\" autocomplete=off spellcheck=false", false, "link");
+        }));
+        return $"""
+            <section class=folder aria-labelledby=news-title><h2 id=news-title>Launcher news</h2>
+            <p class=tip>The 2011 launcher shows up to {LauncherNews.MaxHeadlines} headlines, each with an optional link, and the server's status when it opens. Use plain letters, digits and punctuation only: no quotation marks and no backslashes. A headline keeps its date while its title and link stay the same; a new or changed one is dated the day you save it. Until you save one, the launcher shows a welcome headline.</p>
+            <form method=post action={NewsPath} data-news-budget={LauncherNews.MaxBytes}>{token}
+            {fields}
+            <p class=hint id=news-budget aria-live=polite>{NewsCounter(rows)}</p>
+            <div class=buttons><button type=submit>Save</button></div></form></section>
+            """;
+    }
+
+    /// <summary>The counter's words: the bytes left of the budget, or how far over it the headlines are (the page's script keeps it so as the host types).</summary>
+    private static string NewsCounter(IReadOnlyList<(string Title, string? Link)> rows)
+    {
+        var left = LauncherNews.MaxBytes - LauncherNews.Bytes(rows);
+        return left >= 0 ? $"{left} bytes left of {LauncherNews.MaxBytes}." : $"{-left} bytes over the {LauncherNews.MaxBytes}-byte limit.";
+    }
+
+    /// <summary>The box as posted: a row with neither text is no headline, each text is trimmed, and the titles and links pair up by their order.</summary>
+    private static IReadOnlyList<(string Title, string? Link)> NewsRows(IFormCollection form)
+    {
+        var titles = form["title"].ToArray();
+        var links = form["link"].ToArray();
+        var rows = new List<(string Title, string? Link)>();
+        for (var index = 0; index < Math.Max(titles.Length, links.Length); index++)
+        {
+            var title = (index < titles.Length ? titles[index] : null)?.Trim() ?? "";
+            var link = (index < links.Length ? links[index] : null)?.Trim() ?? "";
+            if (title.Length + link.Length > 0) rows.Add((title, link.Length == 0 ? null : link));
+        }
+        return rows;
+    }
+
     /// <summary>The page; a <paramref name="typed"/> value makes <paramref name="problem"/> the Games field's (<see cref="HostGamesSetting"/>).</summary>
     private static string Render(HostLoop loop, HostSteps steps, HostSelfRegistration signUp, HostFileShare? share, PlatformControls? controls, PlatformAccount[] logins,
-        string token, string saved, string? problem, string? typed = null)
+        string token, string saved, string? problem, string? typed = null, IReadOnlyList<(string Title, string? Link)>? news = null)
     {
         var settings = HostMode.ReadOrDefault(loop.Paths.Settings);
         var cheaters = settings.CheatLogins();
@@ -171,6 +242,7 @@ public static class HostSettingsPage
             "address" => $"<p class=notice role=status>Saved. Send your users the new Play file: their old one looks at the old address. {PlayFileLink}</p>",
             "folders" => "<p class=notice role=status>Saved. Amberline restarted to use the new folders.</p>",
             "register" or "share" or "paid" or "champions" => "<p class=notice role=status>Saved.</p>",
+            "news" => "<p class=notice role=status>Saved. The 2011 launcher shows them the next time it opens.</p>",
             "cheats" => "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
             HostGamesSetting.Saved => $"<p class=notice role=status>{HostGamesSetting.SavedNotice}</p>",
             _ => "",
@@ -230,6 +302,7 @@ public static class HostSettingsPage
             {{signUp.Link(steps.PublicHost)}}</section>
             {{paid}}
             {{champions}}
+            {{LauncherNewsSection(settings, token, news)}}
             {{files}}
             <section class=folder aria-labelledby=cheats-title><h2 id=cheats-title>Cheat commands</h2>
             <p>A ticked login can use them in every game it plays here. Only you can change this list.</p>

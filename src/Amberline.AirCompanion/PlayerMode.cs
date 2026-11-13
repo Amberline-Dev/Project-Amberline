@@ -89,7 +89,7 @@ internal static class PlayerMode
         var finishing = Program.Option(args, "--finish-update") is { } previous && int.TryParse(previous, out var processId) ? processId : (int?)null;
         if (finishing is { } old) await FinishUpdateAsync(old, tool, install);
         using var status = new PlayerInstallWindow.StatusWindow(title);
-        return await StartAsync(install, id!, checkUpdate: finishing is null, ShortcutUi.Windows(status));
+        return await StartAsync(install, id!, checkUpdate: finishing is null, ShortcutUi.Windows(status, title));
     }
 
     /// <summary>
@@ -97,23 +97,35 @@ internal static class PlayerMode
     /// again without a window and without starting a client. <see cref="Play"/> gets the server folder, its connection file and the
     /// callback that closes the start window once the League client's window shows. Batch 697: <see cref="Leftover"/> asks about a
     /// client left from an earlier start (true for Close and start; the flag says whether closing is offered), and <see cref="Ports"/>
-    /// are the local ports the play step binds, so a check uses free ports instead of the real ones.
+    /// are the local ports the play step binds, so a check uses free ports instead of the real ones. NOT RETAIL (the classic start, design
+    /// 2026-11-12 §2): the windows' play step hands Program.RunDesktopAsync the next-start question (true for "Open the classic launcher
+    /// again") and the start window as the fallback's notice.
     /// </summary>
     internal sealed record ShortcutUi(Action<string> Status, Action Hide, Func<PlayerProblem, bool> TryAgain, Func<PlayerProblem, bool, bool> Leftover,
         Func<string, string, Action, Task<int>> Play, IReadOnlyList<int> Ports)
     {
-        public static ShortcutUi Windows(PlayerInstallWindow.StatusWindow status) => new(status.Show, status.Hide,
-            problem =>
+        public static ShortcutUi Windows(PlayerInstallWindow.StatusWindow status, string title)
+        {
+            // "The usual way this time" shows the start window the classic start kept hidden.
+            Func<bool> askClassic = () =>
             {
-                status.Hide();
-                return PlayerInstallWindow.AskTryAgain(problem);
-            },
-            (problem, canClose) =>
-            {
-                status.Hide();
-                return PlayerInstallWindow.AskCloseLeftover(problem, canClose);
-            },
-            (server, connection, shown) => Program.RunDesktopAsync(server, MaestroPort, connection, shown), LocalPorts);
+                if (PlayerInstallWindow.AskClassic(title)) return true;
+                status.Show(Starting);
+                return false;
+            };
+            return new(status.Show, status.Hide,
+                problem =>
+                {
+                    status.Hide();
+                    return PlayerInstallWindow.AskTryAgain(problem);
+                },
+                (problem, canClose) =>
+                {
+                    status.Hide();
+                    return PlayerInstallWindow.AskCloseLeftover(problem, canClose);
+                },
+                (server, connection, shown) => Program.RunDesktopAsync(server, MaestroPort, connection, shown, askClassic, status.Show), LocalPorts);
+        }
     }
 
     /// <summary>
@@ -137,11 +149,17 @@ internal static class PlayerMode
         var connection = Path.Combine(server, "server.json");
         var title = Remembered(server, "name", "server.json") ?? PlayerInstall.DefaultServerName;
         var log = Path.Combine(server, "logs", "shortcut.log");
+        // NOT RETAIL (design 2026-11-12 §5): with the accepted 2011 launcher, the launcher is the first window. Ours stays hidden; a problem
+        // still shows its dialog, and a fallback its notice. A stage that cannot be read gets the usual window; the play step reports it.
+        string? launcher = null;
+        try { launcher = Program.LoadDesktopStage(server, MaestroPort, connection).LauncherRoot; }
+        catch (Exception exception) when (exception is not OutOfMemoryException) { }
+        var quiet = launcher is not null && ClassicLauncherFiles.Problem(launcher) is null;
         try
         {
             while (true)
             {
-                ui.Status(Checking);
+                if (!quiet) ui.Status(Checking);
                 PlayerProblem problem;
                 try
                 {
@@ -155,7 +173,7 @@ internal static class PlayerMode
                     }
                     else
                     {
-                        ui.Status(Starting);
+                        if (!quiet) ui.Status(Starting);
                         return await ui.Play(server, connection, ui.Hide);
                     }
                 }
@@ -206,8 +224,9 @@ internal static class PlayerMode
     /// NOT RETAIL (batch 697; retail had no companion): a client from an earlier start that is still running. An AIR client that did
     /// not exit keeps its companion waiting, and that companion holds the local ports this start binds, which used to read "Can't
     /// reach the server". Only processes started from this install's own folders count (the install, the server's AIR folder and its
-    /// game executable), never anything else on the PC. A running game is never closed: the player gets Cancel only. Otherwise the
-    /// player chooses Close and start or Cancel. False when the start stops here.
+    /// game executable, and the classic start's launcher, AIR and game paths: <see cref="Ours"/>), never anything else on the PC. A
+    /// running game is never closed: the player gets Cancel only. Otherwise the player chooses Close and start or Cancel. False when the
+    /// start stops here.
     /// </summary>
     private static async Task<bool> ClearLeftoversAsync(string install, string server, string title, string log, ShortcutUi ui)
     {
@@ -216,7 +235,7 @@ internal static class PlayerMode
         {
             if (leftovers.Count == 0) return true;
             var details = "Still running from this install:\r\n" + string.Join("\r\n", leftovers.Select(left => $"{left.Image} (process {left.Process.Id})"));
-            var game = leftovers.Any(left => Path.GetFileName(left.Image).Equals(GameFile, StringComparison.OrdinalIgnoreCase));
+            var game = leftovers.Any(left => IsGame(left.Image));
             var question = game
                 ? new PlayerProblem(title, "A game is in progress on this PC.", "Finish the game first, then double-click the shortcut again.", details, log)
                 : new PlayerProblem(title, "A game client from an earlier start is still running in the background.", "Close it and start?", details, log);
@@ -232,9 +251,10 @@ internal static class PlayerMode
         }
     }
 
-    /// <summary>The running processes (but this one) whose executable is inside <paramref name="install"/> or <paramref name="air"/>, or is <paramref name="game"/>.</summary>
+    /// <summary>The running processes (but this one) that are <see cref="Ours"/>, with the RADS root the classic start uses.</summary>
     internal static List<(Process Process, string Image)> Leftovers(string install, string? air, string? game)
     {
+        var radsRoot = GameManagedLayout.ResolveRoot();
         var found = new List<(Process, string)>();
         foreach (var process in Process.GetProcesses())
         {
@@ -242,13 +262,27 @@ internal static class PlayerMode
             // A process this user cannot inspect (another user's, an elevated or protected one) is not ours to close.
             try { if (process.Id != Environment.ProcessId) image = process.MainModule?.FileName; }
             catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
-            if (image is not null && (FolderMove.Inside(image, install) || air is not null && FolderMove.Inside(image, air) ||
-                game is not null && FolderMove.Same(image, game)))
-                found.Add((process, image));
+            if (image is not null && Ours(image, install, air, game, radsRoot)) found.Add((process, image));
             else process.Dispose();
         }
         return found;
     }
+
+    /// <summary>
+    /// Whether <paramref name="image"/> is inside <paramref name="install"/> or <paramref name="air"/>, or is <paramref name="game"/>. NOT RETAIL
+    /// (the classic start, design 2026-11-12 §5): also the launcher, AIR and the game as a classic start runs them under
+    /// <paramref name="radsRoot"/> (its launcher copy and the layout's junctions), so a second start finds that session too.
+    /// </summary>
+    internal static bool Ours(string image, string install, string? air, string? game, string? radsRoot)
+    {
+        if (FolderMove.Inside(image, install) || air is not null && FolderMove.Inside(image, air) || game is not null && FolderMove.Same(image, game)) return true;
+        if (radsRoot is null) return false;
+        var classic = ClassicLauncherLayout.Images(radsRoot);
+        return FolderMove.Same(image, classic.Launcher) || FolderMove.Same(image, classic.Air) || FolderMove.Same(image, classic.Game);
+    }
+
+    /// <summary>A running game is never closed, whichever path it runs from.</summary>
+    internal static bool IsGame(string image) => Path.GetFileName(image).Equals(GameFile, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gracefully first: a process with a window is asked to close it; one with none (the windowless companion, an AIR client whose

@@ -73,6 +73,32 @@ public static class AirPlayerInstallChecks
                 Fails(() => PlayerInstall.Execute(plan, null, new((_, _) => !crossDrive)), "could not be moved");
             busy.AssertUntouched(plan, before);
         }
+
+        // The 2011 launcher folder (batch 761): on one drive it is renamed into <install>\launcher with the other folders; across drives it is
+        // copied, checked and then removed, like them. The launcher's refusals and its stage are in server.classic-launcher-install.
+        var launcherSource = Path.Combine(root, "launcher-same");
+        var launcherSha = ClassicLauncherChecks.WriteLauncherFiles(launcherSource);
+        var launched = Fixture.Make(Path.Combine(root, "launcher-one-drive"));
+        plan = PlayerInstall.MakePlan(launched.Profile, launched.Air, launched.Game, launched.Install, launched.Pins with { Launcher = launcherSha }, launcherSource);
+        TestAssert.Equal(4, plan.Moves.Count, "the AIR client, the game, its language project and the launcher");
+        TestAssert.Equal(Path.Combine(launched.Install, "launcher"), plan.Moves.Single(move => FolderMove.Same(move.Source, launcherSource)).Target,
+            "the launcher folder's target");
+        before = launched.Snapshot();
+        TestAssert.Equal(0, PlayerInstall.Execute(plan).Count);
+        // The launcher's own names moved; its folder is left for Install to remove once it is empty, as the AIR client's shared folder is (batch 639).
+        launched.AssertMoved(plan with { Moves = plan.Moves.Where(move => !FolderMove.Same(move.Source, launcherSource)).ToList() }, before);
+        TestAssert.False(File.Exists(Path.Combine(launcherSource, "LoLLauncher.exe")), "the launcher's own files left the picked folder");
+        TestAssert.True(File.Exists(Path.Combine(launched.Install, "launcher", "LoLLauncher.exe")), "the launcher is in the install");
+
+        var crossing = Path.Combine(root, "launcher-other-drive");
+        ClassicLauncherChecks.WriteLauncherFiles(crossing);
+        var across = Fixture.Make(Path.Combine(root, "launcher-across"));
+        plan = PlayerInstall.MakePlan(across.Profile, across.Air, across.Game, across.Install, across.Pins with { Launcher = launcherSha }, crossing);
+        before = across.Snapshot();
+        TestAssert.Equal(0, PlayerInstall.Execute(plan, null, new(SameDrive: (_, _) => false)).Count);
+        across.AssertMoved(plan with { Moves = plan.Moves.Where(move => !FolderMove.Same(move.Source, crossing)).ToList() }, before);
+        TestAssert.False(File.Exists(Path.Combine(crossing, "LoLLauncher.exe")), "across drives the launcher's own files left the folder once their copies were checked");
+        TestAssert.True(File.Exists(Path.Combine(across.Install, "launcher", "LoLLauncher.exe")), "the launcher is in the install");
     });
 
 
@@ -473,8 +499,9 @@ public static class AirPlayerInstallChecks
             TestAssert.True(window.Font.SizeInPoints >= 10F, "the font is smaller than 10 pt: " + window.Font.SizeInPoints);
             AssertAccessible(window);
             var setup = Find(window, "Setup");
-            // Batch 681: the server's download (hidden until the server offers one) sits under the two client folders.
-            TestAssert.Equal(new[] { "Change the AIR client folder", "Change the game client folder", "Download the game from Alpha", "Change the install folder", "Install", "Cancel" },
+            // Batch 681: the server's download (hidden until the server offers one) sits under the client folders. Batch 761: the optional
+            // 2011 launcher row comes after the game folder, as the third folder.
+            TestAssert.Equal(new[] { "Change the AIR client folder", "Change the game client folder", "Change the 2011 launcher folder", "Download the game from Alpha", "Change the install folder", "Install", "Cancel" },
                 TabOrder(setup).ToArray());
             TestAssert.Equal("Install", ((System.Windows.Forms.Control)window.AcceptButton!).AccessibleName);
             TestAssert.Equal("Cancel", ((System.Windows.Forms.Control)window.CancelButton!).AccessibleName);

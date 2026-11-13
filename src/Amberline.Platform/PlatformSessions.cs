@@ -52,6 +52,9 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
     // NOT RETAIL: whether each connection reached this PC through the friends' tunnel (true) or directly (false), set at its first
     // use: the dashboard's mark for a friend's seat (ThroughTunnel), and the old host-only cheat rule (IsLocalAccount).
     private readonly Dictionary<string, bool> _throughTunnel = [];
+    // NOT RETAIL: the game address each tunnel connection's player tool reported (AirRemoteTunnel.GameAddressHeader; retail's platform
+    // always sent its own game server address). Memory only, never logged; a closed connection forgets it (Suspend).
+    private readonly Dictionary<string, IPAddress> _gameAddresses = [];
     private readonly Dictionary<string, StoreGrant> _storeTickets = [];
     private readonly Dictionary<string, StoreAccess> _storeSessions = [];
 
@@ -129,6 +132,7 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
             Expire();
             _peers.Remove(connection);
             _throughTunnel.Remove(connection);
+            _gameAddresses.Remove(connection);
             if (!_sessions.Remove(connection, out var session)) return;
             // A login whose channel never authenticated is not parked: it ends here.
             if (!session.ChannelAuthenticated)
@@ -265,6 +269,29 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
     {
         lock (_gate)
             return _sessions.Any(pair => pair.Value.AccountId == accountId && _throughTunnel.GetValueOrDefault(pair.Key));
+    }
+
+    /// <summary>
+    /// NOT RETAIL: records the game address a connection's player tool reported through the friends' tunnel (null: none), at its first use.
+    /// </summary>
+    public void ObserveGameAddress(string connection, IPAddress? address)
+    {
+        lock (_gate)
+        {
+            if (address is null) _gameAddresses.Remove(connection);
+            else _gameAddresses[connection] = address;
+        }
+    }
+
+    /// <summary>
+    /// NOT RETAIL: the game address the account's logged-in connection reported (spec §7, the friend's view), or null: local sessions and
+    /// sessions without a report keep the advertised game host. A closed connection forgets it (<see cref="Suspend"/>).
+    /// </summary>
+    public IPAddress? ReportedGameAddress(long accountId)
+    {
+        lock (_gate)
+            return _sessions.Where(pair => pair.Value.AccountId == accountId)
+                .Select(pair => _gameAddresses.GetValueOrDefault(pair.Key)).FirstOrDefault(address => address is not null);
     }
 
     /// <summary>

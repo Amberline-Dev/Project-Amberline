@@ -8,8 +8,10 @@ using RtmpSharp.IO;
 
 namespace Amberline.Platform;
 
+/// <param name="reportedGameAddress">NOT RETAIL: the game address an account's remote player tool reported
+/// (<see cref="PlatformSessions.ReportedGameAddress"/>), or null to keep <paramref name="advertisedHost"/>.</param>
 public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager manager, string advertisedHost, TimeProvider? clock = null,
-    HostActivity? activity = null)
+    HostActivity? activity = null, Func<long, System.Net.IPAddress?>? reportedGameAddress = null)
 {
     /// <summary>
     /// DIAGNOSTICS: whether a human seat (by account id) may use the playtest cheat commands, asked as each game starts; bot seats never
@@ -1512,8 +1514,12 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         var seat = game.Members.IndexOf(member) + 1;
         // The platform is the authority for its own seats: their cheat rights were set from the session origin at launch.
         var join = manager.Join(Guest(member.Account), game.HostId!.Value, seat, local: true);
+        // NOT RETAIL: retail's platform always sent its own game server address. A friend whose player tool reported the IPv4 address it
+        // reached this host at gets that one (spec §7, the friend's view): the 2011 launcher's own Maestro starts the game with this start
+        // unchanged. The report only ever names this player's own server address; everyone else keeps the advertised host.
+        var serverIp = reportedGameAddress?.Invoke(member.Account.Id)?.ToString() ?? advertisedHost;
         return AirWire.Object(AirProtocolNames.PlayerCredentialsDto, ("gameId", (double)game.Id),
-            ("playerId", (double)join.PlayerId), ("serverIp", advertisedHost), ("serverPort", join.Port),
+            ("playerId", (double)join.PlayerId), ("serverIp", serverIp), ("serverPort", join.Port),
             ("encryptionKey", join.Key), ("observer", false), ("handshakeToken", ""));
     }
 

@@ -24,10 +24,12 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
     private volatile Copy? _copy;
 
     /// <summary>One copy: the folders picked, its latest progress, then how it ended (the lines for the host, or why nothing changed).</summary>
-    private sealed class Copy(string game, string air, bool delete, long bytes) : IProgress<InstallProgress>
+    private sealed class Copy(string game, string air, bool delete, long bytes, string? launcher) : IProgress<InstallProgress>
     {
         public string Game { get; } = game;
         public string Air { get; } = air;
+        /// <summary>NOT RETAIL (batch 761, task 8): the 2011 launcher's folder the page carried through the copy; it is never copied, it stays where it is.</summary>
+        public string? Launcher { get; } = launcher;
         public bool Delete { get; } = delete;
         /// <summary>Batch 652: the copy's size, for the page's first line before any progress came in.</summary>
         public long Bytes { get; } = bytes;
@@ -46,8 +48,10 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
 
     private static string Encode(string? text) => WebUtility.HtmlEncode(text ?? "");
 
-    private static string Hidden(string token, string? game, string? air) =>
-        $"{token}<input type=hidden name=game value=\"{Encode(game)}\"><input type=hidden name=air value=\"{Encode(air)}\">";
+    /// <summary>The folder fields the copy's pages post back: the game, the AIR client and (batch 761, task 8) the 2011 launcher, which must survive the copy.</summary>
+    private static string Hidden(string token, string? game, string? air, string? launcher) =>
+        $"{token}<input type=hidden name=game value=\"{Encode(game)}\"><input type=hidden name=air value=\"{Encode(air)}\">" +
+        $"<input type=hidden name=launcher value=\"{Encode(launcher)}\">";
 
     private ClientPlan Plan(FolderCheck game, FolderCheck air, bool delete) =>
         ClientPlan.Make(install, new(game.Folder, air.Folder, delete), loop.Folders.Records, (loop.Folders.GameSha256, loop.Folders.AirSha256), null);
@@ -66,7 +70,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
     /// things, and the delete question. Null when nothing would come in (both folders are inside the install, or it has its own copies).
     /// A <paramref name="problem"/> (a refused copy) shows in the error summary, beside the delete question when the host said yes.
     /// </summary>
-    public IResult? Offer(string token, FolderCheck game, FolderCheck air, string? problem = null, bool delete = false, int status = StatusCodes.Status200OK)
+    public IResult? Offer(string token, FolderCheck game, FolderCheck air, string? launcher, string? problem = null, bool delete = false, int status = StatusCodes.Status200OK)
     {
         ClientPlan? plan = null;
         try { plan = Plan(game, air, delete: false); }
@@ -100,7 +104,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
             {HostPages.Errors((problem, asked ? "delete" : null))}
             <p>Then everything of Amberline is in one folder.</p>
             {details}
-            <form method=post action={PagePath}>{Hidden(token, game.Folder, air.Folder)}{question}
+            <form method=post action={PagePath}>{Hidden(token, game.Folder, air.Folder, launcher)}{question}
             <div class=actions><a href={place.Path}>Back</a><button{(plan is null ? "" : " class=secondary")} formaction={place.Path} name=keep value=1>Use them where they are</button>{copy}</div></form>
             """, status, step: place.Step);
     }
@@ -131,17 +135,18 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
             if (_copy is { Running: true }) return Results.Redirect(PagePath);
             var game = HostFolders.Check(FolderKind.Game, form["game"].ToString(), loop.Folders);
             var air = HostFolders.Check(FolderKind.Air, form["air"].ToString(), loop.Folders);
-            if (!game.Ok || !air.Ok) return HostFolders.Form(token, loop, place, game, air, null, false, StatusCodes.Status400BadRequest);
-            if (place.Games?.Invoke() > 0) return HostFolders.Busy(token, loop, place, game, air);
+            var launcher = HostFolders.Picked(FolderKind.Launcher, form["launcher"].ToString(), loop.Folders);
+            if (!game.Ok || !air.Ok || !HostFolders.LauncherOk(launcher)) return HostFolders.Form(token, loop, place, game, air, launcher, null, false, StatusCodes.Status400BadRequest);
+            if (place.Games?.Invoke() > 0) return HostFolders.Busy(token, loop, place, game, air, launcher);
             var delete = form["delete"] == "yes";
             ClientPlan plan;
             try { plan = Plan(game, air, delete); }
             catch (Exception ex) when (ex is InstallRefusedException or IOException or UnauthorizedAccessException)
             {
-                return Offer(token, game, air, Readable(ex) + ClientPlan.Unchanged, delete, StatusCodes.Status400BadRequest) ?? Results.Redirect(place.Path);
+                return Offer(token, game, air, launcher.Folder, Readable(ex) + ClientPlan.Unchanged, delete, StatusCodes.Status400BadRequest) ?? Results.Redirect(place.Path);
             }
             if (plan.Moves.Count == 0) return Results.Redirect(place.Path);
-            var copy = new Copy(game.Folder!, air.Folder!, plan.Delete, plan.Bytes);
+            var copy = new Copy(game.Folder!, air.Folder!, plan.Delete, plan.Bytes, launcher.Folder);
             lock (_gate)
             {
                 if (_copy is { Running: true }) return Results.Redirect(PagePath);
@@ -204,7 +209,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
             return HostMode.Page($"""
                 <h1>{HostFolders.Heading(place, "Your game files were not copied")}</h1>
                 {HostPages.Errors((problem, null))}
-                <form method=post action={place.Path}{Checking}>{Hidden(token, copy.Game, copy.Air)}
+                <form method=post action={place.Path}{Checking}>{Hidden(token, copy.Game, copy.Air, copy.Launcher)}
                 <div class=actions><a href={place.Path}>Back</a><button class=secondary name=keep value=1>Use them where they are</button><button>Try again</button></div></form>
                 """, step: place.Step);
         if (copy.Lines is { } lines)
@@ -212,7 +217,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
                 <h1>{HostFolders.Heading(place, "Your game files are in " + here)}</h1>
                 <p class=notice>{(place.Games is null ? "Done." : $"Done: the game files are in {here} now.")}</p>
                 {(copy.Delete ? "" : "<p>The folders you picked are as they were.</p>")}{string.Concat(lines.Select(line => $"<p>{Encode(line)}</p>"))}
-                <form method=post action={place.Path}{Checking}>{Hidden(token, copy.Inside, copy.InsideAir)}<div class=actions><button>Continue</button></div></form>
+                <form method=post action={place.Path}{Checking}>{Hidden(token, copy.Inside, copy.InsideAir, copy.Launcher)}<div class=actions><button>Continue</button></div></form>
                 """, step: place.Step);
         var (phase, detail) = Split(copy);
         var percent = copy.Now?.Percent ?? 0;

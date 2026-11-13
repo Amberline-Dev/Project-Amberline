@@ -44,8 +44,12 @@ internal static class FolderMove
         "mod_ser.dat", "version.txt", "lol.properties", "locale.properties", "lol.properties.stock", "locale.properties.stock",
     ];
 
-    /// <summary>A folder to move: the whole <paramref name="Source"/>, or only its <paramref name="Entries"/> (names directly inside it).</summary>
-    internal sealed record Move(string Label, string Source, string Target, IReadOnlyList<string>? Entries = null);
+    /// <summary>
+    /// A folder to move: the whole <paramref name="Source"/>, or only its <paramref name="Entries"/> (names directly inside it). A
+    /// <paramref name="KeepSource"/> move is copied and checked, and its original is never removed: NOT RETAIL (the classic launcher, design
+    /// 2026-11-12 §1), for a folder under a RADS root (<see cref="InProjects"/>), so an old install is never changed.
+    /// </summary>
+    internal sealed record Move(string Label, string Source, string Target, IReadOnlyList<string>? Entries = null, bool KeepSource = false);
 
     /// <summary>DIAGNOSTICS: test seams of the move. SameDrive replaces the drive test; AfterCopy runs on each copied file.</summary>
     internal sealed record MoveOptions(Func<string, string, bool>? SameDrive = null, Action<string>? AfterCopy = null);
@@ -106,7 +110,7 @@ internal static class FolderMove
         var copies = new Dictionary<Move, string>();
         var undo = new Stack<Action>();
         var asides = new List<string>();
-        var copied = moves.Where(move => !deleteOriginals || !sameDrive(move.Source, move.Target)).ToList();
+        var copied = moves.Where(move => !deleteOriginals || move.KeepSource || !sameDrive(move.Source, move.Target)).ToList();
         var meter = new Meter(progress, 2 * copied.Sum(CopyBytes));
         try
         {
@@ -141,7 +145,7 @@ internal static class FolderMove
                     }
                     continue;
                 }
-                if (deleteOriginals)
+                if (deleteOriginals && !move.KeepSource)
                     foreach (var (item, _) in Items(move, partial))
                     {
                         var aside = Unused(item + ".amberline-moved");
@@ -425,6 +429,12 @@ internal static class FolderMove
         return string.Equals(child, parent, StringComparison.OrdinalIgnoreCase) ||
             child.StartsWith(parent.EndsWith('\\') ? parent : parent + '\\', StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// NOT RETAIL (the classic launcher, design 2026-11-12 §1): whether <paramref name="path"/> lies inside a RADS root, that is, has a path component
+    /// named <c>projects</c> (<c>...\RADS\projects\lol_launcher\releases\0.0.0.49\deploy</c>). Such a folder is copied, never moved.
+    /// </summary>
+    internal static bool InProjects(string path) => Full(path).Split('\\').Any(part => part.Equals("projects", StringComparison.OrdinalIgnoreCase));
 
     internal static bool Overlaps(string first, string second) => Inside(first, second) || Inside(second, first);
 }

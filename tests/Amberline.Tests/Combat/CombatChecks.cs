@@ -2468,12 +2468,15 @@ public static class CombatChecks
         }
     }
 
-    [Check("combat.protection-releases-are-one-way")]
-    public static void HqTowerAndNexusReleasesSurviveDampenerRespawn()
+    [Check("combat.protection-relocks-when-every-dampener-is-back")]
+    public static void HqTowersAndNexusRelockWhenEveryDampenerIsBack()
     {
-        // Map1/LevelScript.luaobj: HandleDestroyedObject (proto 0.14) releases the HQ towers when any dampener
-        // dies and DeactivateCorrectStructure (proto 0.7) releases the nexus when both HQ towers are dead;
-        // BarrackReactiveEvent (proto 0.13) only restores the dampener, so nothing re-protects them.
+        // Map1/LevelScript.luaobj: HandleDestroyedObject (proto 0.14) releases the HQ towers when a dampener dies,
+        // DeactivateCorrectStructure (proto 0.7) releases the nexus when both HQ towers are dead, and the respawn
+        // handler (proto 0.13) runs ApplyBarracksRespawnReductions (proto 0.12), which re-locks the HQ and every standing
+        // HQ tower once the team's barracks count is back to 3 (pc 0147-0198 and 0340-0390). Batch 764: the ladder
+        // kept the releases for good (the 16 October one-way latch), so after the dampeners returned the nexus and its
+        // towers stayed open to minions and heroes.
         foreach (var team in new[] { Team.Order, Team.Chaos })
         {
             var side = team == Team.Order ? "T1" : "T2";
@@ -2483,37 +2486,46 @@ public static class CombatChecks
             var first = Add(1, EntityKind.Turret, UnitType.Turret, $"Turret_{side}_C_01");
             var second = Add(2, EntityKind.Turret, UnitType.Turret, $"Turret_{side}_C_02");
             var inhibitor = Add(3, EntityKind.Inhibitor, UnitType.Structure, $"Barracks_{side}_C1");
+            var other = Add(5, EntityKind.Inhibitor, UnitType.Structure, $"Barracks_{side}_L1");
             var nexus = Add(4, EntityKind.Nexus, UnitType.Structure, team == Team.Order ? "HQ_T1" : "HQ_T2");
             var combat = new CombatService(world, new TestHooks(), new TestTransport(), new FixedRandomSource(0.5));
             // Batch 314: the map script arms the dampener's return (SetDisableMinionSpawn, 300 s); this bare service has none.
             combat.BarracksChanged = (barracks, destroyed) => { if (destroyed) combat.ArmInhibitorReturn(barracks, 300.0); };
+            void Wait(double seconds)
+            {
+                combat.CombatTick(seconds, regenerate: false);
+                combat.ProcessRespawns();
+            }
             combat.EngageProtection();
             TestAssert.True(first.Protected && second.Protected && nexus.Protected, $"{team} starts fully protected");
 
             TestAssert.True(combat.Kill(inhibitor, 0));
-            TestAssert.False(first.Protected, "a dampener death releases the first HQ tower");
-            TestAssert.False(second.Protected, "a dampener death releases the second HQ tower");
+            TestAssert.False(first.Protected || second.Protected, "a dampener death releases both HQ towers");
             TestAssert.True(nexus.Protected, "the nexus waits for both HQ towers");
-
-            combat.CombatTick(300.0, regenerate: false);
-            combat.ProcessRespawns();
+            Wait(300.0);
             TestAssert.True(inhibitor.Alive, "the dampener respawned");
-            TestAssert.False(first.Protected, "the respawn does not re-protect the first HQ tower");
-            TestAssert.False(second.Protected, "the respawn does not re-protect the second HQ tower");
+            TestAssert.True(first.Protected && second.Protected, "every dampener is back: the HQ towers are locked again");
+            TestAssert.True(nexus.Protected);
 
+            // Two dampeners down; the first one back is not enough.
+            TestAssert.True(combat.Kill(inhibitor, 0));
+            Wait(100.0);
+            TestAssert.True(combat.Kill(other, 0));
             TestAssert.True(combat.Kill(first, 0));
             TestAssert.True(nexus.Protected, "one HQ tower down: the nexus stays protected");
             TestAssert.True(combat.Kill(second, 0));
             TestAssert.False(nexus.Protected, "both HQ towers down: the nexus is vulnerable");
+            Wait(200.0);
+            TestAssert.True(inhibitor.Alive && !other.Alive, "the first dampener is back, the second is not");
+            TestAssert.False(nexus.Protected, "a dampener is still down: the nexus stays open");
+            Wait(100.0);
+            TestAssert.True(other.Alive, "the second dampener is back");
+            TestAssert.True(nexus.Protected, "every dampener is back: the nexus is locked again with both HQ towers gone");
+            TestAssert.False(first.Protected || second.Protected, "a fallen HQ tower is not re-locked (GetTurret answers Nil)");
 
-            // A second dampener cycle (death, respawn) and a recompute leave every release in place.
-            TestAssert.True(combat.Kill(inhibitor, 0));
-            combat.CombatTick(300.0, regenerate: false);
-            combat.ProcessRespawns();
-            combat.RecomputeProtection();
-            TestAssert.True(inhibitor.Alive);
-            TestAssert.False(nexus.Protected, "the nexus release is permanent");
-            TestAssert.False(first.Protected || second.Protected, "the HQ tower release is permanent");
+            // The next dampener death opens the nexus again: both HQ towers are gone (proto 0.14 pc 0094-0110).
+            TestAssert.True(combat.Kill(other, 0));
+            TestAssert.False(nexus.Protected, "a dampener down with both HQ towers gone: the nexus is vulnerable again");
         }
     }
 
@@ -2787,10 +2799,9 @@ public static class CombatChecks
         changes.Clear();
         inhibitor.Alive = true;
         ProtectionRules.Recompute(world, true, Changed);
-        // Map1/LevelScript.luaobj BarrackReactiveEvent (proto 0.13) only restores the dampener itself, so a
-        // respawn does not re-protect the HQ tower. This check used to expect (turret, true) here.
-        TestAssert.Equal(0, changes.Count, "a dampener respawn emits no protection change");
-        TestAssert.False(turret.Protected, "the released HQ tower stays vulnerable after the respawn");
+        // Map1/LevelScript.luaobj ApplyBarracksRespawnReductions (proto 0.12, run by the respawn handler proto 0.13) re-locks
+        // the standing HQ towers once every dampener of the team is back (batch 764; the 16 October latch had expected no change here).
+        TestAssert.Equal(new[] { (turret.NetId, true) }, changes.ToArray(), "the last dampener back re-locks the HQ tower");
     }
 
 

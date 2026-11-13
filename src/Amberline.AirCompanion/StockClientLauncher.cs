@@ -54,10 +54,11 @@ public sealed class StockClientLauncher
     /// <summary>
     /// NOT RETAIL: retail's platform always sent the game server's number address. A host may give players a name (a domain on a
     /// rented server), which the stock client cannot use: it fails with "Enet could not connect! Status - 7" (owner, 12 November
-    /// 2026, batch 749). A name is resolved to its IPv4 address at each launch, so a changed DNS record counts for the next game.
+    /// 2026, batch 749). A name is resolved to its IPv4 address at each launch, so a changed DNS record counts for the next game. An IPv4
+    /// address goes out in its canonical form: "010.0.0.1" is 8.0.0.1 here and to the stock client, and the platform refuses a leading zero.
     /// </summary>
     public static string GameAddress(string host) =>
-        IPAddress.TryParse(host, out _) ? host
+        IPAddress.TryParse(host, out var address) ? (address.AddressFamily == AddressFamily.InterNetwork ? address.ToString() : host)
             : Dns.GetHostAddresses(host, AddressFamily.InterNetwork).FirstOrDefault()?.ToString()
               ?? throw new IOException($"The game server name {host} has no IPv4 address.");
 

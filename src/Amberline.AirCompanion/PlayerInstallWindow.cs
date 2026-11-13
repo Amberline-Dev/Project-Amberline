@@ -80,8 +80,38 @@ internal static class PlayerInstallWindow
         return close;
     }
 
+    /// <summary>
+    /// NOT RETAIL (the classic start, design 2026-11-12 §2): the last classic start ended without the game client opening, so this start asks
+    /// once, before anything opens. True for <see cref="ClassicAgain"/> (the default); <see cref="UsualWay"/>, Escape or closing the dialog
+    /// start the usual way, for this start only.
+    /// </summary>
+    internal static bool AskClassic(string title)
+    {
+        var again = false;
+        OnWindowsThread(() =>
+        {
+            var classic = new TaskDialogButton(ClassicAgain);
+            var page = new TaskDialogPage
+            {
+                Caption = title,
+                Heading = "Last time the classic launcher did not open the game client.",
+                Text = "Open the classic launcher again, or start the usual way this time?",
+                Icon = TaskDialogIcon.Information,
+                AllowCancel = true,
+                SizeToContent = true,
+            };
+            page.Buttons.Add(classic);
+            page.Buttons.Add(new TaskDialogButton(UsualWay));
+            page.DefaultButton = classic;
+            again = TaskDialog.ShowDialog(page) == classic;
+        });
+        return again;
+    }
+
     internal const string TryAgainButton = "Try again";
     internal const string CloseAndStart = "Close and start";
+    internal const string ClassicAgain = "Open the classic launcher again";
+    internal const string UsualWay = "Start the usual way this time";
 
     /// <summary>Windows' dialogs need a single-threaded apartment, which the companion's Main does not have.</summary>
     internal static void OnWindowsThread(Action action)
@@ -249,15 +279,15 @@ internal static class PlayerInstallWindow
         private readonly string tool;
         private readonly ClientPins pins;
         private readonly Font bold;
-        private readonly Label airText, gameText, downloadText, installText, spaceText, status, progressText, percent, cancelNote, doneHeading, doneText;
-        private readonly Button airButton, gameButton, downloadButton, installButton, start, cancel, open, close;
+        private readonly Label airText, gameText, launcherText, downloadText, installText, spaceText, status, progressText, percent, cancelNote, doneHeading, doneText;
+        private readonly Button airButton, gameButton, launcherButton, downloadButton, installButton, start, cancel, open, close;
         private PlayerDownload.Offer? offer;
         private bool downloading;
         private readonly ProgressBar progress;
         private readonly FlowLayoutPanel bar;
         private readonly TableLayoutPanel setup, done;
         private bool installKept;
-        private string? air, game;
+        private string? air, game, launcher;
         private bool airFound, gameFound;
         private string install;
         private PlayerInstall.Plan? plan;
@@ -295,6 +325,8 @@ internal static class PlayerInstallWindow
             (airFound, gameFound) = (air is not null, game is not null);
             installKept = existing is not null;
             install = existing?.Install ?? DefaultInstall(profile, game);
+            // NOT RETAIL (classic start, design §1): an install that already holds its 2011 launcher keeps it; a new install has none until chosen.
+            launcher = existing is null ? null : InstalledLauncher(existing.Install, this.pins);
 
             var heading = Line("Welcome", $"Welcome to {name}.", width);
             heading.Font = UiFont(FontStyle.Bold, 2);
@@ -306,6 +338,7 @@ internal static class PlayerInstallWindow
             intro.AccessibleDescription = intro.Text;
             airText = Line("AIR client folder", "", width);
             gameText = Line("Game client folder", "", width);
+            launcherText = Line("2011 launcher folder (optional)", "", width);
             downloadText = Line("Download from the server", "", width);
             installText = Line("Install folder", "", width);
             spaceText = Line("Free space", "", width);
@@ -321,6 +354,8 @@ internal static class PlayerInstallWindow
             bar.Controls.Add(percent);
             airButton = Action("Change…", "Change the AIR client folder", "Choose the folder that holds the assets folder.");
             gameButton = Action("Change…", "Change the game client folder", "Choose the folder that holds DATA and LEVELS.");
+            // NOT RETAIL (classic start, design §1): the optional third folder, the 2011 launcher; the install works without it.
+            launcherButton = Action("Change…", "Change the 2011 launcher folder", "Choose the folder of the 2011 launcher (optional): its program and its files.");
             downloadButton = Action($"&Download the game from {name}", $"Download the game from {name}",
                 $"Downloads the game and the AIR client from {name} into the install folder and adds {name} to your desktop.");
             installButton = Action("Change…", "Change the install folder", "Choose where setup puts the game.");
@@ -330,7 +365,7 @@ internal static class PlayerInstallWindow
             close = Action("Close", "Close", "Closes setup.");
             foreach (var control in new Control[] { progressText, cancelNote, downloadText, downloadButton }) control.Visible = false;
 
-            setup = Rows((heading, null), (intro, null), (airText, airButton), (gameText, gameButton), (downloadText, downloadButton),
+            setup = Rows((heading, null), (intro, null), (airText, airButton), (gameText, gameButton), (launcherText, launcherButton), (downloadText, downloadButton),
                 (installText, installButton), (spaceText, null),
                 (status, null), (bar, null), (progressText, null), (cancelNote, null), (Buttons(cancel, start), null));
             Named(setup, "Setup", AccessibleDescription);
@@ -355,6 +390,11 @@ internal static class PlayerInstallWindow
                 RetailClients.GameProblem(folder, this.pins.Game) is { } problem
                     ? Wrong("This is not the 1.0.0.126 game client.", "Choose the 2011 game's folder (with DATA and LEVELS).", problem) : null,
                 folder => (game, gameFound) = (folder, false));
+            // NOT RETAIL (classic start, design §1): the launcher folder is checked by the launcher check; its own sentence is the refusal.
+            launcherButton.Click += (_, _) => Pick("Choose the folder of your 2011 launcher (its program and its files)", launcher, folder =>
+                ClassicLauncherFiles.Problem(folder, this.pins.Launcher) is { } problem
+                    ? Wrong("This is not the 2011 launcher.", "Choose the folder that holds the 2011 launcher's program and its files.", problem) : null,
+                folder => launcher = folder);
             installButton.Enabled = !installKept;
             installButton.Click += (_, _) => Pick("Choose where to install (a new or empty folder is best)", install, _ => null,
                 folder => install = InstallFolder(folder), allowNew: true);
@@ -368,15 +408,23 @@ internal static class PlayerInstallWindow
             PerformLayout();
         }
 
-        /// <summary>Batch 681: a player without a copy of their own asks the server whether it shares the game.</summary>
+        /// <summary>
+        /// Batch 681: a player without a copy of their own asks the server whether it shares the game. NOT RETAIL (classic start, batch 761): an
+        /// install without its 2011 launcher asks for the launcher alone, which the server offers when it shares one.
+        /// </summary>
         protected override async void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
-            if (installKept || (air is not null && game is not null)) return;
+            if (installKept ? launcher is not null : (air is not null && game is not null)) return;
             try
             {
                 using var client = PlayerDownload.Client(connection, out var origin);
-                if (await PlayerDownload.OfferAsync(client, origin, pins, CancellationToken.None) is { } offered && !IsDisposed) ShowOffer(offered);
+                if (await PlayerDownload.OfferAsync(client, origin, pins, CancellationToken.None) is { } offered && !IsDisposed)
+                {
+                    if (!installKept) ShowOffer(offered);
+                    else if (PlayerDownload.Subset(offered, path => path.StartsWith("launcher/", StringComparison.Ordinal)) is { Files.Count: > 0 } launcherOnly)
+                        ShowLauncherOffer(launcherOnly);
+                }
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             { PlayerInstall.Log(profile, "download: the server offers no game files: " + exception.Message); }
@@ -386,8 +434,27 @@ internal static class PlayerInstallWindow
         internal void ShowOffer(PlayerDownload.Offer offered)
         {
             offer = offered;
-            downloadText.Text = $"No copy of your own? {name} can send you the game and the AIR client ({FolderMove.Gigabytes(offered.Bytes)} GB).";
+            // NOT RETAIL (classic start, batch 761): a list that has the 2011 launcher says so.
+            var what = offered.Files.Any(entry => entry.Path.StartsWith("launcher/", StringComparison.Ordinal))
+                ? "the game, the AIR client and the 2011 launcher" : "the game and the AIR client";
+            downloadText.Text = $"No copy of your own? {name} can send you {what} ({FolderMove.Gigabytes(offered.Bytes)} GB).";
             downloadText.AccessibleDescription = downloadText.Text;
+            downloadText.Visible = downloadButton.Visible = true;
+            UpdateText();
+        }
+
+        /// <summary>
+        /// NOT RETAIL (classic start, batch 761): an install set up before its 2011 launcher, on a server that shares the launcher: the download button
+        /// fetches the launcher alone into the install's <c>launcher</c> folder, and the text and the button say so.
+        /// </summary>
+        internal void ShowLauncherOffer(PlayerDownload.Offer launcherOnly)
+        {
+            offer = launcherOnly;
+            downloadText.Text = $"Add the 2011 launcher: {name} can send you its copy ({launcherOnly.Bytes / 1e6:0} MB). The game stays as it is.";
+            downloadText.AccessibleDescription = downloadText.Text;
+            downloadButton.Text = $"&Download the 2011 launcher from {name}";
+            downloadButton.AccessibleName = $"Download the 2011 launcher from {name}";
+            downloadButton.AccessibleDescription = $"Downloads the 2011 launcher from {name} into the install folder.";
             downloadText.Visible = downloadButton.Visible = true;
             UpdateText();
         }
@@ -398,9 +465,21 @@ internal static class PlayerInstallWindow
         /// </summary>
         private async Task DownloadAsync()
         {
-            if (offer is not { } offered) return;
+            if (offer is not { } listed) return;
+            // NOT RETAIL (classic start, review round 1): an install set up before its launcher keeps the AIR and game folders its record names, read again
+            // here; the download then adds the launcher only.
+            var kept = installKept ? PlayerInstall.ExistingInstall(profile, pins) : null;
+            if (installKept && kept is null)
+            {
+                status.Font = bold;
+                status.Text = status.AccessibleDescription = "The game and the AIR client are not in place any more, so the 2011 launcher is not added. " +
+                    "Double-click the Play file again to repair the setup.";
+                return;
+            }
+            // NOT RETAIL (classic start, batch 761): a launcher folder the player picked is the install's own; the list's launcher files are not fetched then.
+            var offered = launcher is null ? listed : PlayerDownload.Subset(listed, path => !path.StartsWith("launcher/", StringComparison.Ordinal));
             PlayerInstall.Plan chosen;
-            try { chosen = PlayerDownload.Plan(install, offered); }
+            try { chosen = PlayerDownload.Plan(install, offered, kept, profile, launcher, pins); }
             catch (InstallRefusedException refused)
             {
                 status.Font = bold;
@@ -470,7 +549,14 @@ internal static class PlayerInstallWindow
             gameText.Text = game is null ? "Game client: not found. Choose its folder (with DATA and LEVELS)."
                 : (gameFound ? "Game client (found):\r\n" : "Game client:\r\n") + game;
             installText.Text = "Install folder:\r\n" + install;
-            foreach (var label in new[] { airText, gameText, installText }) label.AccessibleDescription = label.Text;
+            // NOT RETAIL (classic start, design §1, batch 761): the optional 2011 launcher; a new install starts without one, an install without its own asks.
+            var launcherLabel = launcher is null
+                ? (installKept
+                    ? $"Add the 2011 launcher (optional): this install does not have it yet. Choose its folder to add it, or download it from {name} when that server shares it."
+                    : "2011 launcher (optional): not chosen. Choose its folder to start the game with the 2011 launcher, or leave it out to start the usual way.")
+                : (FolderMove.Same(launcher, Path.Combine(install, PlayerInstall.LauncherFolder)) ? "2011 launcher (in your install):\r\n" : "2011 launcher (optional):\r\n") + launcher;
+            launcherText.Text = launcherLabel;
+            foreach (var label in new[] { airText, gameText, launcherText, installText }) label.AccessibleDescription = label.Text;
             plan = null;
             spaceText.Text = "";
             status.Font = Font;
@@ -479,7 +565,7 @@ internal static class PlayerInstallWindow
             {
                 try
                 {
-                    plan = PlayerInstall.MakePlan(profile, air, game, install, pins);
+                    plan = PlayerInstall.MakePlan(profile, air, game, install, pins, launcher);
                     var root = Path.GetPathRoot(install)!;
                     var free = new DriveInfo(root).AvailableFreeSpace;
                     spaceText.Text = $"Free space on {root.TrimEnd('\\')}: {free / 1e9:0.0} GB. " + (plan.CopyBytes > 0
@@ -543,7 +629,7 @@ internal static class PlayerInstallWindow
         private void SetBusy(bool on)
         {
             busy = on;
-            foreach (var control in new Control[] { airButton, gameButton, downloadButton, start }) control.Enabled = !on;
+            foreach (var control in new Control[] { airButton, gameButton, launcherButton, downloadButton, start }) control.Enabled = !on;
             installButton.Enabled = !on && !installKept;
             cancel.Enabled = true;
             foreach (var control in new Control[] { bar, progressText, cancelNote }) control.Visible = on;
@@ -604,6 +690,7 @@ internal static class PlayerInstallWindow
             if (PlayerInstall.ExistingInstall(profile, pins) is { } now)
             {
                 (air, game, install, airFound, gameFound) = (now.Air, now.Game, now.Install, false, false);
+                launcher = InstalledLauncher(now.Install, pins);
                 installKept = true;
                 installButton.Enabled = false;
             }
@@ -642,6 +729,13 @@ internal static class PlayerInstallWindow
             Close();
         }
 
+        /// <summary>NOT RETAIL (classic start, design §1): the install's own 2011 launcher folder when it passes the launcher check; else null.</summary>
+        private static string? InstalledLauncher(string install, ClientPins pins)
+        {
+            var folder = Path.Combine(install, PlayerInstall.LauncherFolder);
+            return Directory.Exists(folder) && ClassicLauncherFiles.Problem(folder, pins.Launcher) is null ? folder : null;
+        }
+
         /// <summary>The default install folder: on the game client's drive when that is not the system drive (a rename there), else the user's programs folder.</summary>
         private static string DefaultInstall(PlayerProfile profile, string? game)
         {
@@ -674,8 +768,13 @@ internal static class PlayerInstallWindow
         private readonly TableLayoutPanel servers;
         private readonly CheckBox alsoGame;
         private readonly Button removeAll, close;
+        // NOT RETAIL (classic start): the 2011 launcher's row, present only while the install has the launcher's folder.
+        private readonly Label? launcherLine;
+        private readonly Button? removeLauncher;
         private readonly long gameBytes, toolBytes;
         private const string RemoveAllText = "&Remove Amberline…";
+        private const string LauncherChoice = "Remove the 2011 launcher";
+        private const string LauncherText = "Removes the 2011 launcher's files. Amberline then starts the game the usual way.";
 
         internal UninstallWindow(PlayerProfile profile, PlayerInstall.Record record, string tool)
         {
@@ -695,6 +794,9 @@ internal static class PlayerInstallWindow
             AutoSize = true;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
             width = (int)(560 * Font.SizeInPoints / 10F);
+            // NOT RETAIL (classic start): the 2011 launcher's folder is one of the game files (PlayerUninstall.GameFolders), so its size is in gameBytes.
+            var launcher = Path.Combine(record.Install, PlayerInstall.LauncherFolder);
+            var withLauncher = Directory.Exists(launcher);
             gameBytes = PlayerUninstall.GameFolders(record).Sum(PlayerUninstall.Size);
             toolBytes = new[] { Path.Combine(record.Install, PlayerInstall.ToolFolder), Path.Combine(record.Install, "servers"), profile.PlayerFolder, profile.OldPlayerFolder }
                 .Sum(PlayerUninstall.Size);
@@ -708,19 +810,34 @@ internal static class PlayerInstallWindow
             serversHeading.Text = "Servers on this PC";
             servers = Named(new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Margin = Padding.Empty },
                 "Server list", "Each server with its Remove button. Removing one deletes its shortcut and connection; the game stays.");
+            var rows = new List<(Control Text, Control? Button)> { (heading, null), (serversHeading, null), (servers, null) };
+            if (withLauncher)
+            {
+                // NOT RETAIL (classic start, design §2): the choice for a player who wants the usual start for good. It asks first.
+                launcherLine = Line("2011 launcher", LauncherText, width - 160);
+                launcherLine.Text = LauncherText;
+                removeLauncher = Action("Remove the 2011 &launcher…", LauncherChoice, "Asks first, then removes the 2011 launcher's files and its classic start.");
+                removeLauncher.Click += (_, _) => RemoveLauncher();
+                rows.Add((launcherLine, removeLauncher));
+            }
             var allHeading = Line("Remove Amberline from this PC", "Removes every server, the player tool and its settings.", width);
             allHeading.Font = serversHeading.Font;
             allHeading.Text = "Remove Amberline from this PC";
             var allText = Line("What it removes", "", width);
             allText.Text = $"Removes every Amberline shortcut, the player tool and its settings ({record.Install} and your user folder).";
             allText.AccessibleDescription = allText.Text;
+            // NOT RETAIL (classic start): the 2011 launcher's folder is named among the game files when the install has it.
+            var clients = withLauncher ? "the AIR client, the game client and the 2011 launcher" : "the AIR client and the game client";
             alsoGame = Named(new CheckBox { AutoSize = true, UseMnemonic = false, MaximumSize = new Size(width, 0), Enabled = gameBytes > 0, Margin = new Padding(0, 6, 0, 6) },
-                "Also delete the game files", "Deletes the AIR client and the game client in the install folder too.");
-            alsoGame.Text = $"Also delete the game files (the AIR client and the game client in {record.Install}, {FolderMove.Gigabytes(gameBytes)} GB)";
+                "Also delete the game files", $"Deletes {clients} in the install folder too.");
+            alsoGame.Text = $"Also delete the game files ({clients} in {record.Install}, {FolderMove.Gigabytes(gameBytes)} GB)";
             removeAll = Action(RemoveAllText, "Remove Amberline", "Asks first, then removes Amberline from this PC.");
             close = Action("Close", "Close", "Closes this window.");
-            var page = Rows((heading, null), (serversHeading, null), (servers, null), (allHeading, null), (allText, null), (alsoGame, null),
-                (Buttons(close, removeAll), null));
+            rows.Add((allHeading, null));
+            rows.Add((allText, null));
+            rows.Add((alsoGame, null));
+            rows.Add((Buttons(close, removeAll), null));
+            var page = Rows(rows.ToArray());
             Named(page, Text, AccessibleDescription);
             Controls.Add(page);
             CancelButton = close;
@@ -772,6 +889,30 @@ internal static class PlayerInstallWindow
             FillServers();
         }
 
+        /// <summary>
+        /// NOT RETAIL (classic start, design §2): "Remove the 2011 launcher", after a question. Its files and the classic layout go, and the next start
+        /// is the usual start. A refusal (a link, a file still in use) is shown with what to do, and the row stays so the choice can be made again.
+        /// </summary>
+        private void RemoveLauncher()
+        {
+            if (launcherLine is null || removeLauncher is null) return;
+            if (!Confirm(this, Text, "Remove the 2011 launcher?",
+                "Deletes the 2011 launcher's files in " + Path.Combine(record.Install, PlayerInstall.LauncherFolder) +
+                " and the files the classic start built for it on this PC. The next start is the usual start.", "Remove the 2011 launcher")) return;
+            try
+            {
+                PlayerUninstall.RemoveLauncher(record, GameManagedLayout.ResolveRoot(), line => PlayerInstall.Log(profile, line));
+                PlayerInstall.Log(profile, "uninstall: removed the 2011 launcher");
+                launcherLine.Text = "The 2011 launcher is removed. Amberline starts the game the usual way.";
+                launcherLine.AccessibleDescription = launcherLine.Text;
+                removeLauncher.Enabled = false;
+            }
+            catch (InstallRefusedException refused)
+            {
+                Problem(this, new(Text, "The 2011 launcher was not removed.", refused.Message, PlayerProblem.Describe(refused), profile.InstallLog), null);
+            }
+        }
+
         private async Task RemoveAllAsync()
         {
             var withGame = alsoGame.Checked;
@@ -782,13 +923,14 @@ internal static class PlayerInstallWindow
             if (!Confirm(this, Text, "Remove Amberline from this PC?", text, "Remove Amberline")) return;
             // This program's own folder may be one it deletes: it must not keep it as its working folder.
             Environment.CurrentDirectory = Path.GetTempPath();
-            var controls = new Control[] { removeAll, close, alsoGame, servers };
+            var controls = new List<Control> { removeAll, close, alsoGame, servers };
+            if (removeLauncher is not null) controls.Add(removeLauncher);
             foreach (var control in controls) control.Enabled = false;
             // Batch 653: removing several GB takes a moment; the button says what it is doing meanwhile.
             removeAll.Text = "Removing…";
             UseWaitCursor = true;
             PlayerUninstall.Removal removal;
-            try { removal = await Task.Run(() => PlayerUninstall.RemoveAll(profile, record, withGame, tool)); }
+            try { removal = await Task.Run(() => PlayerUninstall.RemoveAll(profile, record, withGame, tool, GameManagedLayout.ResolveRoot())); }
             catch (Exception exception) when (exception is InstallRefusedException or IOException or UnauthorizedAccessException)
             {
                 UseWaitCursor = false;

@@ -78,6 +78,19 @@ public static class GameLanguagePack
         return DefaultLocale;
     }
 
+    /// <summary>
+    /// NOT RETAIL: retail's game used the language its launcher wrote into <c>DATA\CFG\defaults\locale.cfg</c>; the usual start has no language
+    /// choice, so it puts <see cref="DefaultLocale"/> back. Written as the launcher writes it: a <c>[General]</c> section with that one line.
+    /// Only where the file exists: true when it was written, and a missing file is never created.
+    /// </summary>
+    public static bool ResetLocaleCfg(string gameDirectory)
+    {
+        var path = Path.Combine(gameDirectory, "DATA", "CFG", "defaults", "locale.cfg");
+        if (!File.Exists(path)) return false;
+        File.WriteAllText(path, $"[General]\r\nLanguageLocaleRegion={DefaultLocale}\r\n");
+        return true;
+    }
+
     public static LanguagePackResult Ensure(string gameDirectory, string locale, LinkFile? link = null)
     {
         link ??= NativeLink;

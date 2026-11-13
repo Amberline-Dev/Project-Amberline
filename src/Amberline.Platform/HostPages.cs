@@ -702,6 +702,26 @@ public static class HostPages
             }
             show('champions-none', shown === 0);
           });
+          // NOT RETAIL (batch 761): Settings' Launcher news counter, live as the host types. It counts what LauncherNews.Bytes counts (each date at its
+          // widest, "Sep 30"), so the budget shown here is the one Save checks; keep the arithmetic in step with LauncherNews.
+          const news = document.querySelector('form[data-news-budget]');
+          if (news) news.addEventListener('input', () => {
+            const limit = Number(news.dataset.newsBudget);
+            const titles = news.querySelectorAll('input[name=title]');
+            const links = news.querySelectorAll('input[name=link]');
+            let used = 28;
+            let rows = 0;
+            titles.forEach((title, index) => {
+              const name = title.value.trim();
+              const link = links[index].value.trim();
+              if (name === '' && link === '') return;
+              rows++;
+              used += 37 + name.length + link.replace(/\//g, '\\/').length;
+            });
+            if (rows > 1) used += rows - 1;
+            const left = limit - used;
+            text('news-budget', left >= 0 ? `${left} bytes left of ${limit}.` : `${-left} bytes over the ${limit}-byte limit.`);
+          });
           if (byId('status')) { refresh(); setInterval(refresh, 5000); }
           if (byId('online-table')?.hasAttribute('data-live')) setInterval(online, 5000);
           if (byId('update-bar')) setTimeout(update, 1000);

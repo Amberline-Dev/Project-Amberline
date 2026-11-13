@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Antiforgery;
 
 namespace Amberline.Platform;
 
-public enum FolderKind { Game, Air }
+public enum FolderKind { Game, Air, Launcher }
 
 /// <summary>A folder searched to its limits: how many levels below it, and how many folders in all.</summary>
 public sealed record SearchPlace(string Folder, int Depth, int Folders);
@@ -36,6 +36,9 @@ public sealed record FolderSetup
     public string GameSha256 { get; init; } = RetailClients.GameExecutableSha256;
 
     public string AirSha256 { get; init; } = RetailClients.LolClientSha256;
+
+    /// <summary>DIAGNOSTICS: test seam. The SHA-256 the 2011 launcher's LoLLauncher.exe must have (<see cref="ClassicLauncherFiles"/>); checks pass their fixtures' own.</summary>
+    public string LauncherSha256 { get; init; } = ClassicLauncherFiles.LauncherSha256;
 
     /// <summary>DIAGNOSTICS: test seam. Runs on each file the folder step copies into a one-folder install (<see cref="HostFolderCopy"/>).</summary>
     public Action<string>? AfterCopy { get; init; }
@@ -137,7 +140,12 @@ public static class HostFolders
         AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint,
     };
 
-    private static string Label(FolderKind kind) => kind == FolderKind.Game ? "game folder" : "AIR client folder";
+    private static string Label(FolderKind kind) => kind switch
+    {
+        FolderKind.Game => "game folder",
+        FolderKind.Air => "AIR client folder",
+        _ => "2011 launcher folder",
+    };
 
     /// <summary>
     /// Checks a folder the host chose (window, pasted address or the saved setting): the folder itself, else the first folder inside it
@@ -145,6 +153,7 @@ public static class HostFolders
     /// </summary>
     public static FolderCheck Check(FolderKind kind, string? chosen, FolderSetup setup)
     {
+        if (kind == FolderKind.Launcher) return CheckLauncher(chosen, setup);
         var folder = Clean(chosen);
         if (folder is null || !Directory.Exists(folder))
             return new(null, $"Amberline cannot find that {Label(kind)}. Check its address, or choose the folder. (A-FILES-01)", []);
@@ -162,6 +171,31 @@ public static class HostFolders
         }
         return first!;
     }
+
+    /// <summary>
+    /// NOT RETAIL (batch 761, task 8): the host's optional 2011 launcher folder, read in place like the game and AIR folders (design §1). It is the
+    /// folder itself, never searched inside: it must hold the release's files with the accepted EXE (<see cref="ClassicLauncherFiles.Problem"/>), and
+    /// it must not sit inside an Amberline installation, where a player's copy of it would be refused instead of copied.
+    /// </summary>
+    private static FolderCheck CheckLauncher(string? chosen, FolderSetup setup)
+    {
+        var folder = Clean(chosen);
+        if (folder is null || !Directory.Exists(folder))
+            return new(null, "Amberline cannot find that 2011 launcher folder. Check its address, or choose the folder.", []);
+        if (FolderMove.HostInstallation(folder) is not null)
+            return new(folder, "The 2011 launcher folder is inside an Amberline installation. Choose your own copy of the 2011 launcher, outside that folder.", []);
+        return new(folder, ClassicLauncherFiles.Problem(folder, setup.LauncherSha256), []);
+    }
+
+    /// <summary>A folder row's value from the page: empty is a row not chosen (<see cref="FolderCheck.NotFound"/>), anything else is checked.</summary>
+    internal static FolderCheck Picked(FolderKind kind, string? value, FolderSetup setup) =>
+        string.IsNullOrWhiteSpace(value) ? FolderCheck.NotFound : Check(kind, value, setup);
+
+    /// <summary>
+    /// The 2011 launcher row never blocks a save while it is not chosen (or was stopped using); a folder that is chosen must pass its check, so a
+    /// refused one blocks the save until it is chosen again or stopped using.
+    /// </summary>
+    internal static bool LauncherOk(FolderCheck launcher) => launcher.Folder is null || launcher.Ok;
 
     /// <summary>The A-FILES-05 sentence when a saved folder is gone since the last start, else null.</summary>
     public static string? Gone(string game, string air) =>
@@ -264,6 +298,10 @@ public static class HostFolders
     {
         var folder = Clean(saved);
         if (folder is null) return FolderCheck.NotFound;
+        // NOT RETAIL (batch 761, task 8): a gone 2011 launcher folder names no A-FILES code; the row says so and a save clears it (nothing is blocked by it).
+        if (kind == FolderKind.Launcher)
+            return Directory.Exists(folder) ? CheckLauncher(folder, setup)
+                : new(null, $"The 2011 launcher folder you chose is gone (it was at {folder}). Choose it again.", []);
         if (!Directory.Exists(folder))
             return new(null, $"The {Label(kind)} you chose is gone (it was at {folder}). Choose it again. (A-FILES-05)", []);
         return Inspect(kind, folder, setup);
@@ -376,8 +414,13 @@ public static class HostFolders
         var setup = loop.Folders;
         var saved = HostMode.ReadOrDefault(loop.Paths.Settings);
         // Setup mode looks at once; Settings looks at the saved folders when the page is first opened.
-        Task<(FolderCheck Game, FolderCheck Air)>? first = null;
-        Task<(FolderCheck Game, FolderCheck Air)> Looked() => first ??= Task.Run(() => Look(setup, saved.DataRoot, saved.AirRoot));
+        // The 2011 launcher row (batch 761, task 8) is the saved folder, checked where the look is (the look is the slow part, and it runs there too).
+        Task<(FolderCheck Game, FolderCheck Air, FolderCheck Launcher)>? first = null;
+        Task<(FolderCheck Game, FolderCheck Air, FolderCheck Launcher)> Looked() => first ??= Task.Run(() =>
+        {
+            var (game, air) = Look(setup, saved.DataRoot, saved.AirRoot);
+            return (game, air, Saved(FolderKind.Launcher, saved.LauncherRoot, setup));
+        });
         if (place.Games is null) Looked();
         // Batch 642: a one-folder install offers to copy the picked folders in before they are saved (Settings' folder page too).
         var copy = HostFolderCopy.For(loop, place);
@@ -389,8 +432,8 @@ public static class HostFolders
             if (await Task.WhenAny(look, Task.Delay(TimeSpan.FromSeconds(3))) != look)
                 return HostMode.Page($"<h1>{Heading(place, "Your game files")}</h1><p>Looking for your game folders. This takes up to " +
                     $"{(int)setup.SearchTime.TotalSeconds} seconds.</p>", refresh: place.Path, step: place.Step);
-            var (game, air) = await look;
-            return Form(Program.RegistrationToken(context, antiforgery), loop, place, game, air, null, looked: setup.Places.Count > 0);
+            var (game, air, launcher) = await look;
+            return Form(Program.RegistrationToken(context, antiforgery), loop, place, game, air, launcher, null, looked: setup.Places.Count > 0);
         });
         app.MapPost(place.Path, async (HttpContext context, IAntiforgery antiforgery) =>
         {
@@ -403,45 +446,58 @@ public static class HostFolders
             }
             catch (AntiforgeryValidationException)
             {
-                var (g, a) = await Looked();
-                return Form(token, loop, place, g, a, "The page expired. Please try again.", false, StatusCodes.Status400BadRequest);
+                var (g, a, l) = await Looked();
+                return Form(token, loop, place, g, a, l, "The page expired. Please try again.", false, StatusCodes.Status400BadRequest);
             }
-            // The rows come back in hidden fields; an empty one is a row not chosen yet.
-            FolderCheck Row(FolderKind kind, string value) => string.IsNullOrWhiteSpace(value) ? FolderCheck.NotFound : Check(kind, value, setup);
+            // The rows come back in hidden fields; an empty one is a row not chosen yet (the 2011 launcher's row is optional, batch 761 task 8).
+            FolderCheck Row(FolderKind kind, string value) => Picked(kind, value, setup);
             var game = Row(FolderKind.Game, form["game"].ToString());
             var air = Row(FolderKind.Air, form["air"].ToString());
+            var launcher = Row(FolderKind.Launcher, form["launcher"].ToString());
             if (form.ContainsKey("choose"))
             {
-                var kind = form["choose"] == "air" ? FolderKind.Air : FolderKind.Game;
+                var kind = form["choose"].ToString() switch { "air" => FolderKind.Air, "launcher" => FolderKind.Launcher, _ => FolderKind.Game };
                 if (setup.Choose is not { } choose)
-                    return Form(token, loop, place, game, air, "Paste the folder's address instead.", false, StatusCodes.Status400BadRequest);
+                    return Form(token, loop, place, game, air, launcher, "Paste the folder's address instead.", false, StatusCodes.Status400BadRequest);
                 string? picked;
-                try { picked = choose(kind == FolderKind.Game ? "Choose the game folder" : "Choose the AIR client folder"); }
-                catch (InvalidOperationException ex) { return Form(token, loop, place, game, air, ex.Message, false); }
-                if (picked is not null && kind == FolderKind.Game) game = Check(kind, picked, setup);
-                else if (picked is not null) air = Check(kind, picked, setup);
-                return Form(token, loop, place, game, air, null, false);
+                try { picked = choose(kind switch { FolderKind.Game => "Choose the game folder", FolderKind.Air => "Choose the AIR client folder", _ => "Choose the 2011 launcher folder" }); }
+                catch (InvalidOperationException ex) { return Form(token, loop, place, game, air, launcher, ex.Message, false); }
+                if (picked is not null)
+                {
+                    var check = Check(kind, picked, setup);
+                    if (kind == FolderKind.Game) game = check;
+                    else if (kind == FolderKind.Air) air = check;
+                    else launcher = check;
+                }
+                return Form(token, loop, place, game, air, launcher, null, false);
             }
+            // NOT RETAIL (batch 761, task 8): Stop using this folder forgets the 2011 launcher's folder on the page; the save of the page is what saves it.
+            if (form.ContainsKey("clear"))
+                return Form(token, loop, place, game, air, FolderCheck.NotFound, null, false);
             if (form.ContainsKey("paste"))
             {
-                // One address for both rows: a row changes when the address holds (or contains) that kind of folder.
+                // One address for both rows: a row changes when the address holds (or contains) that kind of folder. The 2011 launcher's own folder is
+                // the one that holds its program file (LoLLauncher.exe), so only such an address fills its row.
                 var pastedGame = Check(FolderKind.Game, form["paste"], setup);
                 var pastedAir = Check(FolderKind.Air, form["paste"], setup);
+                var pastedLauncher = Clean(form["paste"]) is { } pastedFolder && File.Exists(Path.Combine(pastedFolder, "LoLLauncher.exe"))
+                    ? Check(FolderKind.Launcher, pastedFolder, setup) : null;
                 if (pastedGame.Folder is not null) game = pastedGame;
                 if (pastedAir.Folder is not null) air = pastedAir;
-                var note = pastedGame.Folder is not null || pastedAir.Folder is not null ? null
+                if (pastedLauncher is not null) launcher = pastedLauncher;
+                var note = pastedGame.Folder is not null || pastedAir.Folder is not null || pastedLauncher is not null ? null
                     : Clean(form["paste"]) is { } pasted && Directory.Exists(pasted)
                         ? "This folder contains neither the game nor its AIR client. Choose the folder you downloaded them into. (A-FILES-01)"
                         : "Amberline cannot find that folder. Check its address. (A-FILES-01)";
-                return Form(token, loop, place, game, air, note, false, note is null ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
+                return Form(token, loop, place, game, air, launcher, note, false, note is null ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest);
             }
             if (game == FolderCheck.NotFound) game = game with { Problem = "Choose the game folder first." };
             if (air == FolderCheck.NotFound) air = air with { Problem = "Choose the AIR client folder first." };
-            if (!game.Ok || !air.Ok) return Form(token, loop, place, game, air, null, false, StatusCodes.Status400BadRequest);
-            if (place.Games?.Invoke() > 0) return Busy(token, loop, place, game, air);
+            if (!game.Ok || !air.Ok || !LauncherOk(launcher)) return Form(token, loop, place, game, air, launcher, null, false, StatusCodes.Status400BadRequest);
+            if (place.Games?.Invoke() > 0) return Busy(token, loop, place, game, air, launcher);
             // "Use them where they are" (keep) saves the picked folders as they are.
-            if (copy is not null && !form.ContainsKey("keep") && copy.Offer(token, game, air) is { } offer) return offer;
-            HostMode.Change(loop.Paths.Settings, saved => saved with { DataRoot = game.Folder!, AirRoot = air.Folder, ServerExecutable = null! });
+            if (copy is not null && !form.ContainsKey("keep") && copy.Offer(token, game, air, launcher.Folder) is { } offer) return offer;
+            HostMode.Change(loop.Paths.Settings, saved => saved with { DataRoot = game.Folder!, AirRoot = air.Folder, LauncherRoot = launcher.Folder, ServerExecutable = null! });
             context.Response.OnCompleted(() => { loop.Restart(); return Task.CompletedTask; });
             // Batch 649: Settings' folders come back to Settings with a notice; setup's come back to the first-run steps, as before.
             return HostMode.Page("<h1>Starting Amberline</h1><p>This page comes back by itself in a few seconds.</p>",
@@ -450,17 +506,19 @@ public static class HostFolders
     }
 
     /// <summary>Settings' refusal while a game runs: the folders' save restarts Amberline, and so may their copy's end.</summary>
-    internal static IResult Busy(string token, HostLoop loop, FolderPlace place, FolderCheck game, FolderCheck air) =>
-        Form(token, loop, place, game, air, null, false, StatusCodes.Status409Conflict,
+    internal static IResult Busy(string token, HostLoop loop, FolderPlace place, FolderCheck game, FolderCheck air, FolderCheck launcher) =>
+        Form(token, loop, place, game, air, launcher, null, false, StatusCodes.Status409Conflict,
             "A game is running. Change the folders when it has ended.");
 
+    /// <param name="launcher">The 2011 launcher row (optional, batch 761 task 8): its folder, or <see cref="FolderCheck.NotFound"/> when none is chosen.</param>
     /// <param name="problem">A problem with no field of its own (a running game), first in the summary.</param>
-    internal static IResult Form(string token, HostLoop loop, FolderPlace place, FolderCheck game, FolderCheck air, string? note, bool looked,
-        int status = StatusCodes.Status200OK, string? problem = null)
+    internal static IResult Form(string token, HostLoop loop, FolderPlace place, FolderCheck game, FolderCheck air, FolderCheck launcher, string? note,
+        bool looked, int status = StatusCodes.Status200OK, string? problem = null)
     {
         string Encode(string? text) => WebUtility.HtmlEncode(text ?? "");
         var choose = loop.Folders.Choose is not null;
-        var hidden = $"{token}<input type=hidden name=game value=\"{Encode(game.Folder)}\"><input type=hidden name=air value=\"{Encode(air.Folder)}\">";
+        var hidden = $"{token}<input type=hidden name=game value=\"{Encode(game.Folder)}\"><input type=hidden name=air value=\"{Encode(air.Folder)}\">" +
+            $"<input type=hidden name=launcher value=\"{Encode(launcher.Folder)}\">";
         // A row's problem is fixed with its Choose button, or with the pasted address when this PC has no folder window.
         string Target(string name) => choose ? name + "-choose" : "paste";
         string Row(string name, string title, FolderCheck check)
@@ -478,17 +536,39 @@ public static class HostFolders
                 : string.Concat(check.Warnings.Select(warning => $"<p class=warn>{Encode(warning)}</p>"));
             return $"<section class=folder aria-labelledby={name}-title><h2 id={name}-title>{title}</h2><p>{state}</p>{below}{button}</section>";
         }
+        // NOT RETAIL (batch 761, task 8): the optional row for the 2011 launcher. Not chosen, it never blocks the page; a folder that was picked and fails its
+        // check shows its problem and blocks the save until it is chosen again or stopped using. Stopping forgets the folder only (nothing is deleted), and
+        // the save of the page is what saves any change.
+        string LauncherRow()
+        {
+            var state = launcher.Ok ? $"<span class=ok><span aria-hidden=true>&#10003;</span> Found:</span> {Encode(launcher.Folder)}"
+                : launcher.Folder is not null ? $"<span class=no><span aria-hidden=true>&#10007;</span> Not usable:</span> {Encode(launcher.Folder)}"
+                : "<span>Not chosen. Without it, Play on this PC starts the game the usual way, and file sharing sends no launcher.</span>";
+            var described = $"launcher-title{(launcher.Problem is null ? "" : " launcher-error")}";
+            var pick = choose
+                ? $"<form method=post action={place.Path}{HostPages.Wait("Opening the folder window. It may open behind this browser window.")}>{hidden}" +
+                  $"<button id=launcher-choose class=secondary name=choose value=launcher aria-describedby=\"{described}\">Choose folder…</button></form>"
+                : "";
+            var stop = launcher.Folder is not null || launcher.Problem is not null
+                ? $"<form method=post action={place.Path}{HostPages.Wait("Checking the folders. This takes a few seconds.")}>{hidden}" +
+                  "<button class=secondary name=clear value=launcher>Stop using this folder</button></form>"
+                : "";
+            return "<section class=folder aria-labelledby=launcher-title><h2 id=launcher-title>2011 launcher (optional)</h2>" +
+                $"<p class=hint>Amberline reads it where it is; nothing is moved or copied.</p><p>{state}</p>" +
+                HostPages.FieldError("launcher", launcher.Problem) + pick + stop + "</section>";
+        }
         // The start's problem stands, but one about the saved folders (none yet, or gone) goes once both rows are usable (batch 643).
         var aboutFolders = loop.Problem is HostPaths.NoFolders || loop.Problem?.EndsWith("(A-FILES-05)", StringComparison.Ordinal) == true;
         var top = problem ?? (loop.Problem is { } start && !(aboutFolders && game.Ok && air.Ok) && start != game.Problem && start != air.Problem ? start : null);
         return HostMode.Page($$"""
             <h1>{{Heading(place, "Your game files")}}</h1>
             <p>{{(looked ? "Amberline looked for them on this PC." : "Choose the 2011 game and its AIR client.")}}</p>
-            {{HostPages.Errors((top, null), (game.Problem, Target("game")), (air.Problem, Target("air")), (note, "paste"))}}
+            {{HostPages.Errors((top, null), (game.Problem, Target("game")), (air.Problem, Target("air")), (launcher.Problem, Target("launcher")), (note, "paste"))}}
             {{Row("game", "Game folder", game)}}
             {{Row("air", "AIR client folder", air)}}
+            {{LauncherRow()}}
             <form method=post action={{place.Path}}{{HostPages.Wait("Looking in that folder. This takes a few seconds.")}}>{{hidden}}
-            {{HostPages.Field("paste", "Or paste a folder's address", "Any folder that holds the game or the AIR client.",
+            {{HostPages.Field("paste", "Or paste a folder's address", "Any folder that holds the game, the AIR client or the 2011 launcher.",
                 note, "maxlength=260 placeholder=\"for example C:\\Games\\2011 game\"", required: null)}}
             <p><button class=secondary>Check</button></p></form>
             {{(place.Games is null ? "" : "<p class=tip>Saving restarts Amberline for a few seconds.</p>")}}

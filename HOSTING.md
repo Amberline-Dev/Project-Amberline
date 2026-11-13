@@ -180,7 +180,8 @@ letters, digits, spaces, dots, `-` or `_`, starting and ending with a letter or 
 
 ### Step 2 of 4: Your game folders
 
-The page shows two rows, **Game folder** and **AIR client folder**.
+The page shows two rows, **Game folder** and **AIR client folder**, and an optional third, **2011 launcher (optional)**, for the
+original 2011 launcher's folder: see [The 2011 launcher](#the-2011-launcher).
 
 - **Found:** shows the folder Amberline found; **Not found yet** shows none. Each row has **Choose folder…**: a Windows folder
   window opens, and it may open behind your browser (the button says so while it waits).
@@ -386,6 +387,7 @@ leaves it without saving; after **Save** Settings says **Saved.**
   champion greyed out after they next sign in. **Tutorials keep their own champions**: the tutorial's three fixed champions stay
   available there even when they are turned off (the list marks them). If too few champions are on for a queue's bots, players are
   told that queue cannot start (see [Queues](TROUBLESHOOTING.md#queues)).
+- **Launcher news**: up to five headlines that the 2011 launcher shows when it opens: see [Launcher news](#launcher-news).
 - **Sign-ups**: see below.
 - **Game files**: see below.
 - **Cheat commands**: every login on your server, yours included (marked **(you)**), with a box each. A ticked login can use the
@@ -423,6 +425,39 @@ the sign-up page uses. The page is there whether or not sign-ups are open.
 - A wrong username or password gets the same message, **That name and password do not match.**, whichever one is wrong.
 - Your own login can change its password on that page, but it cannot be deleted there.
 
+### The 2011 launcher
+
+Your folder does two things. It switches **Play on this PC** to the original 2011 launcher: the launcher opens first, as in 2011, shows
+your news and your server's status, and its **Play** starts the game client and the game. With **Share the game files with players**
+on, it also lets your players download the launcher along with the game. A player's own start follows that player's install, not your
+folder: it uses the launcher when the player picked one in setup, added it by running the Play file again, or downloaded it when you
+share it. A player whose install has no launcher starts the usual way. Without a launcher folder, Play on this PC starts the game the
+usual way.
+
+- **The folder** holds the launcher's program and its files, with their `img` and `xml` folders. Amberline accepts only version
+  1.0.0.251 and checks the program's fingerprint. Any other version, or a folder with a file missing, is refused and the row says why.
+  Amberline reads the folder where it is: nothing is moved or copied. **Stop using this folder** forgets it.
+- **Your players** can download the launcher with the game: with **Share the game files with players** on and the folder chosen, the
+  launcher's files are shared along with the game (see [Game files](#game-files)), and a player's setup offers them when the install
+  does not have the launcher yet.
+- **Regions and languages**: every region in the launcher leads to your server. The AIR client follows the language picked in the
+  launcher; the launcher and the game stay in English.
+- **Uninstall Amberline** leaves the files Amberline built for the launcher under `c:\rads`, where the game's own files are too. A new
+  install rebuilds what it needs.
+
+### Launcher news
+
+The 2011 launcher shows up to five headlines when it opens, each with an optional link, next to your server's status (online while your
+server answers). Settings' **Launcher news** box holds them:
+
+- Type a headline and, if you like, its link in each row, then choose **Save**. The counter under the box shows the bytes left: the
+  launcher shows at most 440 bytes of news.
+- Use plain letters, digits and punctuation: no quotation marks and no backslashes. A row with another character, or a headline with no
+  title, is refused, and the page names that headline. More than five headlines, or more than the counter allows, is refused too,
+  without naming one.
+- Until you save one, the launcher shows a welcome headline with your server's name.
+- A headline keeps its date while its title and link stay the same; a new or changed one is dated the day you save it.
+
 ### Game files
 
 **Share the game files with players** is off at first. Beside it Settings says: you share your own copy of the game, so make sure
@@ -431,7 +466,8 @@ of their own can then download yours with the Play file. Anyone with your Play f
 
 - Amberline first checks every file once, which takes a few minutes; Settings says so until it is done, then shows what it shares:
   the game folder and the AIR client folder, each with its size. The download uses your internet upload.
-- It shares exactly the game folder you chose (with its language files beside it) and the AIR client's own files. It never shares
+- It shares exactly the game folder you chose (with its language files beside it), the AIR client's own files and, when you chose a 2011
+  launcher folder, the launcher's own files (see [The 2011 launcher](#the-2011-launcher)). It never shares
   what the game and the AIR client write as they run (their logs, crash files and the last match's command line), anything else in
   those folders, or anything of Amberline's own (logins, settings, certificate).
 - A copy whose game or AIR client executable is not the 1.0.0.126 one, or a folder that holds a link, is not shared: Settings says
@@ -497,7 +533,8 @@ is a release, a build made there changes nothing. Your players' tool updates its
 
 **Play** opens the game client on this PC, connected to your own server. The button says **Starting…** at once; the client's
 window opens by itself, in up to a minute. Log in with your own login. The first time takes a few minutes, because Amberline
-makes its own copy of your AIR client (your AIR client folder is only read).
+makes its own copy of your AIR client (your AIR client folder is only read). With a 2011 launcher folder chosen (see [The 2011
+launcher](#the-2011-launcher)), Play opens that launcher first, as in 2011.
 
 ## Only your home network (LAN party)
 

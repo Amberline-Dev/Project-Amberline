@@ -106,12 +106,19 @@ public static class Program
         finally { Console.CancelKeyPress -= cancel; }
     }
 
+    /// <param name="LauncherRoot">NOT RETAIL: the folder of the player's or host's 2011 launcher files (the classic start, ClassicStart); null for
+    /// a stage that never takes the classic start.</param>
     public sealed record DesktopStage(string Root, string AirRoot, string StockExecutable,
         string PlatformExecutable, string PlatformData, int HttpPort, int MaestroPort,
-        AirRemoteInvitation? RemoteInvitation = null, string? AirSource = null, string? GameHost = null);
+        AirRemoteInvitation? RemoteInvitation = null, string? AirSource = null, string? GameHost = null, string? LauncherRoot = null);
 
-    /// <summary>The desktop launch; <paramref name="clientShown"/> runs once AIR's window shows (or AIR ends first): the shortcut's start window closes then.</summary>
-    internal static async Task<int> RunDesktopAsync(string stageRoot, int requestedMaestroPort, string? remoteInvitationPath, Action? clientShown = null)
+    /// <summary>
+    /// The desktop launch; <paramref name="clientShown"/> runs once AIR's window shows (or AIR ends first): the shortcut's start window closes then.
+    /// <paramref name="askClassic"/> asks after a classic start that never reached AIR (null: open the classic launcher again);
+    /// <paramref name="notice"/> shows the fallback's one line (null: the log line only, as for the host app's Play).
+    /// </summary>
+    internal static async Task<int> RunDesktopAsync(string stageRoot, int requestedMaestroPort, string? remoteInvitationPath, Action? clientShown = null,
+        Func<bool>? askClassic = null, Action<string>? notice = null)
     {
         var stage = LoadDesktopStage(stageRoot, requestedMaestroPort, remoteInvitationPath);
         if (string.IsNullOrWhiteSpace(stage.StockExecutable))
@@ -145,6 +152,9 @@ public static class Program
                     : $"Connected remote AIR platform; local proxy HTTP {remoteProxy.HttpPort}, RTMP 2099, chat 5222.");
             }
             else platform = await EnsurePlatformAsync(stage, stop.Token);
+            if (await ClassicAsync(stage, remoteProxy?.HttpPort ?? stage.HttpPort, clientShown, askClassic, notice, stop.Token) is { } classicExit)
+                return classicExit;
+            ResetLanguageToEnglish(stage);
             maestro = CreateMaestro(stage.MaestroPort, stage.StockExecutable, stage.RemoteInvitation?.Host ?? stage.GameHost);
             await maestro.StartAsync(stop.Token);
             var exitCode = await RunAirAsync(maestro, CreateAirStartInfo(stage.AirRoot), stop.Token, clientShown);
@@ -183,6 +193,37 @@ public static class Program
         }
     }
 
+    /// <summary>
+    /// NOT RETAIL: the classic start (ClassicStart; design 2026-11-12 §2, §5). Retail's 2011 launcher ran on Riot's update service and started
+    /// AIR and the game itself; here the player's own launcher runs on our stand-in for that service, with no Maestro of ours. The exit code once
+    /// the classic session has ended; null when the usual start runs instead: no launcher here, the player chose it this time, or a fallback,
+    /// whose reason is logged and told once through <paramref name="notice"/>.
+    /// </summary>
+    private static async Task<int?> ClassicAsync(DesktopStage stage, int newsPort, Action? clientShown, Func<bool>? askClassic, Action<string>? notice,
+        CancellationToken stop)
+    {
+        var root = GameManagedLayout.ResolveRoot();
+        var plan = ClassicStart.Decide(stage, root, port => PlayerMode.BusyPort([port]) is null, ClassicStart.MutexFree);
+        var reason = plan.Reason;
+        var takes = ClassicStart.Takes(plan, stage.Root, askClassic ?? (() => true));
+        if (plan.Use && !takes) Console.WriteLine("classic: the usual way this time (the player's choice)");
+        if (takes)
+        {
+            // The AIR lease and repairs come first, as AIR now starts later, from the launcher; the lease is held until the session ends.
+            using var lease = PrepareAirCopy(CreateAirStartInfo(stage.AirRoot));
+            if (lease is null) return 0;
+            // The stand-in's mutex, then the layout, inside RunAsync: one guard covers both.
+            reason = await ClassicStart.GuardedAsync(() => ClassicStart.RunAsync(stage, new(root!, stage.LauncherRoot!, stage.AirRoot,
+                Path.GetDirectoryName(stage.StockExecutable)!, newsPort), Console.WriteLine, clientShown, stop), stop);
+            if (reason is null) return 0;
+        }
+        if (reason is null) return null;
+        var message = ClassicStart.FallbackMessage(reason);
+        Console.WriteLine("classic: " + message);
+        notice?.Invoke(message);
+        return null;
+    }
+
     /// <summary>Everything about the picked game folder that is checked before AIR opens. Never blocks the launch.</summary>
     private static void PrepareGameFolder(string stockExecutable)
     {
@@ -215,6 +256,24 @@ public static class Program
         return true;
     }
 
+    /// <summary>
+    /// NOT RETAIL: the usual start of a player (the shortcut, --play, the fallback) or of the host's own Play runs in English (design 2026-11-12 §6).
+    /// Retail's game used whatever language its launcher wrote into AIR's locale.properties and the game's locale.cfg; the usual start offers no
+    /// language choice, so both go back to en_US before AIR opens. START-AIR (the operator's stage: no invitation and no AIR source) keeps its files,
+    /// as the spec's Non-goals say. The classic start never calls this: its launcher sets the player's language itself. A read-only or locked file
+    /// is logged and the start goes on.
+    /// </summary>
+    internal static void ResetLanguageToEnglish(DesktopStage stage)
+    {
+        if (stage.RemoteInvitation is null && stage.AirSource is null) return;
+        try { AirOverlay.SetLocale(stage.AirRoot); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { Console.WriteLine($"language: AIR's locale.properties is not set to English ({exception.GetType().Name}); AIR starts as it is"); }
+        try { GameLanguagePack.ResetLocaleCfg(Path.GetDirectoryName(Path.GetFullPath(stage.StockExecutable))!); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { Console.WriteLine($"language: the game's locale.cfg is not set to English ({exception.GetType().Name}); the game starts as it is"); }
+    }
+
     private static async Task<int> RunManageAsync(string stageRoot)
     {
         var stage = LoadDesktopStage(stageRoot);
@@ -241,7 +300,11 @@ public static class Program
         var stock = stockValue is null ? string.Empty : Path.GetFullPath(stockValue);
         var platformData = Path.Combine(root, "platform-data");
         // An installed player's server stage names the install's AIR folder, which all its servers share (PlayerInstall).
-        var airRoot = ReadOptionalString(stage, "airRoot") is { } air ? Path.GetFullPath(air) : Path.Combine(root, "air");
+        var installedAir = ReadOptionalString(stage, "airRoot");
+        var airRoot = installedAir is { } air ? Path.GetFullPath(air) : Path.Combine(root, "air");
+        // NOT RETAIL: the classic start's launcher folder. The stage may name it; an installed player's otherwise sits beside the install's
+        // AIR folder (<install>\launcher); the host app's stage names it or has none.
+        var launcherRoot = ReadOptionalString(stage, "launcherRoot") is { } launcher ? Path.GetFullPath(launcher) : null;
         var maestroPort = ReadOptionalInt(stage, "maestroPort") ?? requestedMaestroPort;
         if (maestroPort is < 1 or > 65535) throw new ArgumentException("maestroPort must be between 1 and 65535.");
         var connections = Path.Combine(root, "connections");
@@ -253,7 +316,9 @@ public static class Program
         {
             var invitation = ReadRemoteInvitation(configuredInvitation);
             return new DesktopStage(root, airRoot, stock,
-                Path.Combine(root, "platform", "Amberline.Platform.exe"), platformData, 8390, maestroPort, invitation);
+                Path.Combine(root, "platform", "Amberline.Platform.exe"), platformData, 8390, maestroPort, invitation,
+                LauncherRoot: installedAir is null ? null
+                    : launcherRoot ?? Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(airRoot)) ?? airRoot, "launcher"));
         }
         if (remoteInvitationPath is not null)
             throw new FileNotFoundException("The selected remote AIR connection was not found.", configuredInvitation);
@@ -267,7 +332,7 @@ public static class Program
             if (stagedPort is < 1 or > 65535) throw new ArgumentException("httpPort must be between 1 and 65535.");
             return new DesktopStage(root, airRoot, stock, Path.Combine(root, "platform", "Amberline.Platform.exe"), platformData, stagedPort,
                 maestroPort, AirSource: ReadOptionalString(stage, "airSource") is { } source ? Path.GetFullPath(source) : null,
-                GameHost: ReadOptionalString(stage, "gameHost"));
+                GameHost: ReadOptionalString(stage, "gameHost"), LauncherRoot: launcherRoot);
         }
         var platformSettings = ReadJson(Path.Combine(platformData, "platform.json"));
         var httpPort = ReadRequiredInt(platformSettings, "HttpPort");
@@ -341,33 +406,56 @@ public static class Program
         return maestro;
     }
 
-    private static async Task<int> RunAirAsync(MaestroServer maestro, ProcessStartInfo airStart, CancellationToken stop, Action? clientShown = null)
+    /// <summary>
+    /// What comes before AIR starts, ours or the classic launcher's: the lease, the running-copy check and the copy's repairs. Null when an
+    /// orphaned copy's hidden window was restored instead (start nothing, stop here); else the lease, which the caller holds until its start ends.
+    /// </summary>
+    internal static IDisposable? PrepareAirCopy(ProcessStartInfo airStart)
     {
         var airRoot = Path.GetFullPath(airStart.WorkingDirectory ?? Environment.CurrentDirectory);
         // Serialize launches for one staged copy and hold the lease until the
         // AIR process exits.  The path check catches a copy started by an
         // older companion that did not create this lease file.
-        using var airCopyLease = LeaverDataRepair.AcquireAirCopyLease(airRoot);
-        var runningCopies = LeaverDataRepair.RunningSameAirCopyProcessIds(airStart);
-        if (runningCopies.Count > 0)
+        var airCopyLease = LeaverDataRepair.AcquireAirCopyLease(airRoot);
+        try
         {
-            // An orphaned copy (its companion died) can sit hidden in the tray. Restore its window instead of
-            // refusing; no second copy is started, so this companion stops here.
-            if (AirWindowDiagnostics.RestoreHiddenWindows(runningCopies) > 0)
+            var runningCopies = LeaverDataRepair.RunningSameAirCopyProcessIds(airStart);
+            // NOT RETAIL (the classic start): its launcher starts AIR through the layout's junction, a second path to a copy on this PC.
+            if (runningCopies.Count == 0 && GameManagedLayout.ResolveRoot() is { } radsRoot)
+                runningCopies = LeaverDataRepair.RunningSameAirCopyProcessIds(new ProcessStartInfo(ClassicLauncherLayout.Images(radsRoot).Air));
+            if (runningCopies.Count > 0)
             {
-                Console.WriteLine("The AIR copy is already running; restored its hidden window and started no second copy.");
-                return 0;
+                // An orphaned copy (its companion died) can sit hidden in the tray. Restore its window instead of
+                // refusing; no second copy is started, so this companion stops here.
+                if (AirWindowDiagnostics.RestoreHiddenWindows(runningCopies) > 0)
+                {
+                    Console.WriteLine("The AIR copy is already running; restored its hidden window and started no second copy.");
+                    airCopyLease.Dispose();
+                    return null;
+                }
+                throw new InvalidOperationException("The AIR copy is already running; close it before starting another companion.");
             }
-            throw new InvalidOperationException("The AIR copy is already running; close it before starting another companion.");
+
+            var storyMigrationCount = AirOverlay.MigrateStoryPageUrl(airRoot);
+            if (storyMigrationCount != 0)
+                Console.WriteLine($"AIR story route migration: updated {storyMigrationCount} generated properties file(s).");
+
+            var preferenceRepair = LeaverDataRepair.RepairGlobalPreferences(airRoot);
+            var backupNote = preferenceRepair.BackupPath is null ? string.Empty : $"; backup={preferenceRepair.BackupPath}";
+            Console.WriteLine($"AIR preference repair: {preferenceRepair.Status} ({preferenceRepair.Reason}){backupNote}");
+            return airCopyLease;
         }
+        catch
+        {
+            airCopyLease.Dispose();
+            throw;
+        }
+    }
 
-        var storyMigrationCount = AirOverlay.MigrateStoryPageUrl(airRoot);
-        if (storyMigrationCount != 0)
-            Console.WriteLine($"AIR story route migration: updated {storyMigrationCount} generated properties file(s).");
-
-        var preferenceRepair = LeaverDataRepair.RepairGlobalPreferences(airRoot);
-        var backupNote = preferenceRepair.BackupPath is null ? string.Empty : $"; backup={preferenceRepair.BackupPath}";
-        Console.WriteLine($"AIR preference repair: {preferenceRepair.Status} ({preferenceRepair.Reason}){backupNote}");
+    private static async Task<int> RunAirAsync(MaestroServer maestro, ProcessStartInfo airStart, CancellationToken stop, Action? clientShown = null)
+    {
+        using var airCopyLease = PrepareAirCopy(airStart);
+        if (airCopyLease is null) return 0;
 
         using var air = new Process { StartInfo = airStart };
         air.OutputDataReceived += (_, output) => { if (output.Data is not null) Console.WriteLine("air: " + output.Data); };

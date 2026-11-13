@@ -173,8 +173,9 @@ public static class HarrowingUrfCampChecks
         TestAssert.False(urf.Buffs.Any(buff => buff.Name == "HalloweenUrfAppear"), "not the appear branch");
         TestAssert.True(shown, $"HalloweenUrfWarwick's stats hook shows the ghost (SetNoRender false); Urf packets [{opcodes}]");
         // What the owner's client was sent: the ghost enters its sight (0xC2), the buff's eight ghostUrf.troy glows (0x8C) and UrfSpell's
-        // cast (0x41, the "hit sound"; a unit's CastType 0 child, BbUnitCharacterModule.CastChild).
-        TestAssert.True(wire.Contains((byte)0xC2) && wire.Count(op => op == 0x8C) == 8 && wire.Contains((byte)0x41),
+        // cast. Batch 762: the cast is Urf's cast answer (0xBD), which plays UrfSpell's AnimationName Spell1 (Urf_attack1) and builds the
+        // flipper missile; the missile packet (0x41) it was before built the missile alone, with no slap clip (BbUnitCharacterModule.CastChild).
+        TestAssert.True(wire.Contains((byte)0xC2) && wire.Count(op => op == 0x8C) == 8 && wire.Contains((byte)0xBD) && !wire.Contains((byte)0x41),
             $"the Order client sees the ghost, his glows and the slap; Urf packets [{opcodes}]");
         TestAssert.Near(health, manatee.Health, 1e-9, "UrfSpell's empty TargetExecute deals no damage (script = retail)");
     }

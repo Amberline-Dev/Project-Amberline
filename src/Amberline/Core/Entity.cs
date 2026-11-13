@@ -511,12 +511,6 @@ public sealed partial class Entity
     /// CharacterData bubble (batch 310: the minion's creation makes that one whatever the size).
     /// </summary>
     public double VisibilitySize { get; set; }
-    /// <summary>
-    /// Monotonic: this structure has been observed dead at least once. LevelScript
-    /// HandleDestroyedObject releases HQ towers and the nexus permanently, so a
-    /// dampener respawn must not re-protect them (see ProtectionRules).
-    /// </summary>
-    public bool StructureFell { get; set; }
 
     // Inventory, buffs and champion state live in the typed partial files and
     // their owning modules; keep dynamic/object placeholders out of this state.

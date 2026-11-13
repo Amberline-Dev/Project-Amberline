@@ -133,14 +133,14 @@ public static class HostSettingsChecks
     /// Batch 751's checks share one Settings page: the page-only Settings with a store the check holds, and a browser signed in as the host.
     /// <paramref name="body"/> runs once the page is up. The environment is restored and the champion list checked after it.
     /// </summary>
-    private static async Task OnSettingsPageAsync(string prefix, Func<Home, HttpClient, PlatformAccounts, Task> body)
+    internal static async Task OnSettingsPageAsync(string prefix, Func<Home, HttpClient, PlatformAccounts, Task> body, Func<DateOnly>? today = null)
     {
         var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         // A full Platform reads the champion list; read it the suite's way first (see HostPagesChecks).
         var champions = ChampionCatalog.All.Count;
         var home = Home.Create(prefix);
         using var accounts = new PlatformAccounts(home.Loop.Paths.Data);
-        var run = Task.Run(async () => await RunSettingsAsync(home, () => 0, accounts) ? 1 : 0);
+        var run = Task.Run(async () => await RunSettingsAsync(home, () => 0, accounts, today) ? 1 : 0);
         try
         {
             using var browser = home.Client();
@@ -665,7 +665,7 @@ public static class HostSettingsChecks
     }
 
     /// <summary>A page-only Settings on the home's page port (the gate, the shell, the steps without logins, Settings), until Stop or Restart.</summary>
-    internal static async Task<bool> RunSettingsAsync(Home home, Func<int> games, PlatformAccounts? accounts = null)
+    internal static async Task<bool> RunSettingsAsync(Home home, Func<int> games, PlatformAccounts? accounts = null, Func<DateOnly>? today = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
         builder.Logging.ClearProviders();
@@ -685,7 +685,11 @@ public static class HostSettingsChecks
         HostPages.Use(app, home.Loop, () => steps.ServerName, nav: true);
         // Batch 656: the sign-up's switch, saved off; this page-only Settings serves no friends' port and makes no login (no account store).
         using var signUp = new HostSelfRegistration(home.Loop, null!, home.RemotePort, new string('A', 64), on: false);
-        HostSettingsPage.Map(app, home.Loop, steps, games, signUp, accounts);
+        // The day the news is dated and read as: the local day, unless a check injects another (Program.RunAsync reads the local day).
+        var clock = today ?? (() => LauncherNews.LocalDay());
+        HostSettingsPage.Map(app, home.Loop, steps, games, signUp, accounts, today: clock);
+        // NOT RETAIL (batch 761): the launcher's news beside Settings, as Program.RunAsync maps it on the full Platform (LauncherNews).
+        if (accounts is not null) LauncherNews.Map(app, () => accounts.Controls.LauncherNews, () => steps.ServerName, clock);
         return await home.Loop.RunAsync(app, home.Port);
     }
 

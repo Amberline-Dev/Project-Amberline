@@ -390,6 +390,16 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
             AirRemoteProxy.ValidateCertificate(certificate, errors, certificateFingerprint);
         try
         {
+            // NOT RETAIL: retail's platform always sent its own game server address in the game start. This tunnel tells the host the IPv4
+            // address this PC reaches it at (the Play file's host, resolved as for the usual start), so the host can put it in this player's
+            // game start: the 2011 launcher's own Maestro starts the game with that start unchanged. Every remote start sends it (the usual
+            // start keeps its own substitution); a failed lookup sends none. Resolved off the accept loop.
+            try
+            {
+                socket.Options.SetRequestHeader(AirRemoteProxy.GameAddressHeader,
+                    await Task.Run(() => StockClientLauncher.GameAddress(invitation.Host), stop.Token).ConfigureAwait(false));
+            }
+            catch (Exception error) when (error is IOException or SocketException or ArgumentException) { }
             await socket.ConnectAsync(websocketUri, stop.Token).ConfigureAwait(false);
             using var stream = connection.GetStream();
             await AirRemoteProxy.PumpAsync(stream, socket, stop.Token).ConfigureAwait(false);
@@ -468,6 +478,8 @@ public static class AirRemoteProxy
     // every guest client lost them. The largest shipped asset is under 1 MiB.
     internal const int MaxResponseBytes = 4 * 1024 * 1024;
     private const int MaxWebSocketMessageBytes = 256 * 1024;
+    /// <summary>The platform's <c>AirRemoteTunnel.GameAddressHeader</c>: the IPv4 address this PC reached the host at (spec §7).</summary>
+    internal const string GameAddressHeader = "X-Game-Address";
     /// <summary>The HTTPS client for the host: it accepts only the invitation's certificate and follows no redirects, cookies or proxies.</summary>
     internal static HttpClient CreatePinnedClient(byte[] fingerprint)
     {
@@ -559,8 +571,9 @@ public static class AirRemoteProxy
     {
         if (path is null) return false;
         // Playtest B3 #11: /register is not proxied; the host creates accounts.
+        // NOT RETAIL (batch 761): the 2011 launcher's news (LauncherNews.Route) reaches its player through this proxy.
         if (path is "/" or "/health" or "/ip" or "/landing" or "/story" or "/ladder" or
-            "/login-queue/rest/queue/authenticate") return true;
+            "/login-queue/rest/queue/authenticate" or "/launcher/news") return true;
         if (path.StartsWith("/status/", StringComparison.Ordinal) ||
             path.StartsWith("/rss/", StringComparison.Ordinal) ||
             path.StartsWith("/store/", StringComparison.Ordinal) ||

@@ -73,33 +73,28 @@ public static class ProtectionRules
             Set(inhibitor, protectedState, changed);
         }
 
-        // Map1/LevelScript.luaobj HandleDestroyedObject (proto 0.14) and its dampener
-        // BarrackReactiveEvent respawn handler (proto 0.13): the releases are one-way.
-        // Any dampener death makes the team's two HQ towers (HQ_TOWER1/2) vulnerable for
-        // good, and DeactivateCorrectStructure (proto 0.7) makes the nexus vulnerable once
-        // both HQ towers have died. A dampener respawn only restores the dampener itself
-        // (SetInvulnerable(false)/SetTargetable(true)), so nothing re-protects the towers
-        // or the nexus. StructureFell is the per-structure monotonic latch; it is set here
-        // because Kill recomputes protection on every structure death.
-        foreach (var structure in byName.Values)
-            if (!structure.Alive) structure.StructureFell = true;
-
+        // Map1/LevelScript.luaobj (Map4's has the same three steps for its one HQ tower):
+        // HandleDestroyedObject (proto 0.14) releases the team's HQ towers (HQ_TOWER1/2) when a
+        // dampener dies, and the nexus too when both HQ towers are already gone; DeactivateCorrectStructure
+        // (proto 0.7) releases the nexus when the second HQ tower dies; and the dampener respawn
+        // handler (proto 0.13) runs ApplyBarracksRespawnReductions (proto 0.12), which re-locks the HQ
+        // and every standing HQ tower once the team's barracks count is back to 3 (pc 0147-0198 and
+        // 0340-0390). So the HQ towers are locked while every dampener stands, and the nexus while every
+        // dampener stands or an HQ tower does. A fallen HQ tower is never re-locked: GetTurret answers Nil
+        // for it. Batch 764: the 16 October latch read proto 0.13 alone and kept the releases for good.
         foreach (var team in new[] { Team.Order, Team.Chaos })
         {
             var inhibitors = world.Entities.Values
                 .Where(entity => entity.Kind == EntityKind.Inhibitor && entity.Team == team)
                 .ToArray();
-            var dampenerFell = inhibitors.Any(entity => entity.StructureFell);
+            // A world without dampeners has nothing to guard its HQ towers.
+            var dampenersStand = inhibitors.Length > 0 && inhibitors.All(entity => entity.Alive);
             var nexusTurrets = world.Entities.Values.Where(entity => IsTurret(entity) &&
                 entity.Team == team && MapDefinitions.TurretTiers.TryGetValue(entity.Name, out var tier) &&
                 tier == TurretTier.Nexus).ToArray();
-            // A world without dampeners has nothing to guard its HQ towers (unchanged).
-            foreach (var turret in nexusTurrets) Set(turret, inhibitors.Length > 0 && !dampenerFell, changed);
+            foreach (var turret in nexusTurrets) Set(turret, turret.Alive && dampenersStand, changed);
 
-            // A world without HQ towers falls back to the dampener latch (previous behaviour).
-            var nexusProtected = nexusTurrets.Length > 0
-                ? !nexusTurrets.All(entity => entity.StructureFell)
-                : inhibitors.Length > 0 && !dampenerFell;
+            var nexusProtected = dampenersStand || nexusTurrets.Any(entity => entity.Alive);
             foreach (var nexus in world.Entities.Values.Where(entity => entity.Kind == EntityKind.Nexus && entity.Team == team))
                 Set(nexus, nexusProtected, changed);
         }

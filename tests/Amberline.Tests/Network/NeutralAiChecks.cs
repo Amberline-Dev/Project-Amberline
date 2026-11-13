@@ -24,6 +24,107 @@ public static partial class NeutralAiChecks
 {
 
 
+    /// <summary>
+    /// Batch 762 (owner, 12 November 2026: the Baron "has no attack animations, just points where the enemy is standing and spawns
+    /// particles"). The Worm cannot swing (its character script sets SetCanAttack false on every poll); each of its attacks is a
+    /// <c>BBSpellCast</c> of its own spell slot. The client plays a cast's <c>AnimationName</c> only from a SpellCaster, and only the
+    /// cast answer (0xBD) builds one; the missile packet (0x41) builds the missile alone. So each scripted cast must reach the client
+    /// as the Worm's 0xBD: its own slot (below 42), no auto-attack or force bit, the spell's cast time, and for WormAttack the missile
+    /// the cast then launches, with no separate 0x41. Record: docs/maintenance/2026-11-12-batch-762-baron-attack-animation.md.
+    /// </summary>
+    [Check("neutral.baron-casts-reach-the-client-as-cast-answers")]
+    public static void BaronCastsReachTheClientAsCastAnswers()
+    {
+        using var runtime = MatchRuntime.CreateProduction(NavigationGrid.LoadDefault(), GameData.Default,
+            random: new ConstantRandomSource(.99));
+        runtime.World.Clock.SetVirtual();
+        runtime.Session.CreateWorld();
+        var hero = runtime.Session.Participants[0].Hero!;
+        hero.Position = new Position2(7000, 7000);
+        hero.Created = true;
+        hero.HeroAutoAcquire = false;
+        hero.MaxHealth = hero.Health = 100000;
+        var capture = new NeutralEffectCapture();
+        var observer = new ReplicationObserver(1, hero.Team, hero.NetId, capture, ready: true);
+        runtime.Delivery.AddObserver(observer);
+        var scheduler = new JungleScheduler(runtime.World, GameData.Default, campIds: [12]);
+        scheduler.BindUnitCharacter = (unit, character) => runtime.Spells.UnitScripts!.BindUnit(unit, character);
+        scheduler.Start();
+        scheduler.Tick(900);
+        var worm = scheduler.Members.Values.Single().Entity;
+        worm.Position = hero.Position + new Position2(150, 0);
+        worm.Created = true;
+        observer.View.Known.Add(worm.NetId);
+        observer.View.Visible.Add(worm.NetId);
+        var clips = File.ReadAllLines(GameData.Default.Paths.Data("Characters/Worm/Animations.list"))
+            .Select(line => line.Split(';')[0].Split(' ', '\t', StringSplitOptions.RemoveEmptyEntries))
+            .Where(fields => fields.Length > 0).Select(fields => fields[0]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        void Step(double seconds)
+        {
+            for (var t = 0.0; t < seconds - 1e-9; t += .05)
+            {
+                runtime.World.Clock.Advance(.05);
+                runtime.Spells.Tick(.05);
+                foreach (var unit in runtime.World.Entities.Values.ToArray()) runtime.Buffs.TickBuffs(unit, .05);
+                runtime.Combat.CombatTick(.05, regenerate: false);
+                runtime.Delivery.Flush();
+            }
+        }
+        // The Worm's 0xBD naming the spell: cast info at 9; hash at +2, missile at +19, target count at +47, then 17 bytes a target, the
+        // designer cast time, and the flags and slot 20 and 21 bytes after it (SpellPackets.BuildCastInfo).
+        void AssertAnnounced(string spell, int slot, uint target)
+        {
+            var hash = SpellSystem.ProtocolHash(spell);
+            var answers = capture.Packets.Select(packet => packet.Plaintext.ToArray()).Where(bytes => bytes.Length > 60 &&
+                bytes[0] == SpellPackets.CastSpellAnswerOpcode && BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(1)) == worm.NetId &&
+                BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(11)) == hash).ToList();
+            var missilePackets = capture.Packets.Count(packet => packet.Plaintext.Span.Length > 120 && packet.Plaintext.Span[0] == 0x41 &&
+                BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[(98 + 2)..]) == hash);
+            TestAssert.True(answers.Count >= 1,
+                $"{spell}: the client gets the Worm's cast answer (0xBD); got none, and {missilePackets} missile packets (0x41) naming it");
+            var info = answers[0].AsSpan(9);
+            var count = info[47];
+            var after = 48 + 17 * count;
+            var data = GameData.Default.Spell(spell, 5);
+            TestAssert.Equal(spell, runtime.Spells.UnitScripts!.SlotSpellName(worm, slot), $"{spell} is the Worm's Spell{slot + 1}");
+            TestAssert.Equal((byte)slot, info[after + 21], $"{spell}: the cast names the Worm's own slot, so the client builds a SpellCaster");
+            TestAssert.Equal((byte)0, (byte)(info[after + 20] & 0x05), $"{spell}: no auto-attack or force bit");
+            TestAssert.Near(data.CastDelay, BinaryPrimitives.ReadSingleLittleEndian(info[after..]), 1e-5, $"{spell}: the cast time the clip plays over");
+            TestAssert.True(data.CastDelay > 0.0, $"{spell} has a windup");
+            TestAssert.True(clips.Contains(data.RawText("SpellData*AnimationName")),
+                $"{spell}: its AnimationName {data.RawText("SpellData*AnimationName")} is a Worm clip");
+            if (target != 0)
+                TestAssert.True(count >= 1 && BinaryPrimitives.ReadUInt32LittleEndian(info[48..]) == target, $"{spell}: the cast names its target");
+            TestAssert.Equal(data.MissileSpeed > 0.0, BinaryPrimitives.ReadUInt32LittleEndian(info[19..]) != 0,
+                $"{spell}: a missile id exactly when the spell flies one");
+            var missiles = answers.Select(bytes => BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(9 + 19))).Where(id => id != 0).ToHashSet();
+            TestAssert.False(capture.Packets.Any(packet => packet.Plaintext.Span.Length > 120 && packet.Plaintext.Span[0] == 0x41 &&
+                    missiles.Contains(BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[(98 + 19)..]))),
+                $"{spell}: the cast builds the missile, no separate 0x41 for it");
+        }
+
+        // The hit wakes the Worm: CharOnPreDamage faces the attacker and casts its slot 3, WormAttack, at it.
+        runtime.Delivery.Flush();
+        capture.Packets.Clear();
+        TestAssert.True(runtime.Combat.ApplyHit(hero.NetId, worm.NetId, 1.0, DamageType.Physical, DamageSourceKind.Basic));
+        runtime.Delivery.Flush();
+        // The cast frame is 0.5 s (WormAttack's cast time) and the 150 units take the missile 0.12 s: by 1 s it has launched and landed
+        // (its debuff is on the hero).
+        Step(1.0);
+        TestAssert.True(hero.Alive && hero.Buffs.Any(buff => buff.Name == "WormAttack"), "the announced WormAttack lands");
+        AssertAnnounced("WormAttack", 3, hero.NetId);
+        // SweepTimer casts slot 0, SweepingBlow, with a unit within 200; WrathTimer casts slot 2, WrathoftheAncients.
+        hero.Position = worm.Position + new Position2(100, 0);
+        capture.Packets.Clear();
+        TestAssert.True(NeutralWormScriptView.Trigger(runtime.Spells.UnitScripts!, runtime.Buffs, worm, NeutralWormAction.Sweep));
+        runtime.Delivery.Flush();
+        AssertAnnounced("SweepingBlow", 0, 0);
+        capture.Packets.Clear();
+        TestAssert.True(NeutralWormScriptView.Trigger(runtime.Spells.UnitScripts!, runtime.Buffs, worm, NeutralWormAction.Wrath));
+        runtime.Delivery.Flush();
+        AssertAnnounced("WrathoftheAncients", 2, 0);
+    }
+
     [Check("neutral.b6-wraith-landed-hit-effect")]
     public static void WraithLandedHitEffect()
     {
