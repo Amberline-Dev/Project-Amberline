@@ -303,7 +303,8 @@ public static class Program
         var installedAir = ReadOptionalString(stage, "airRoot");
         var airRoot = installedAir is { } air ? Path.GetFullPath(air) : Path.Combine(root, "air");
         // NOT RETAIL: the classic start's launcher folder. The stage may name it; an installed player's otherwise sits beside the install's
-        // AIR folder (<install>\launcher); the host app's stage names it or has none.
+        // AIR folder (<install>\launcher); the host app's stage names it or has none; so does the operator's (START-AIR; owner, 13 November
+        // 2026: "update my desktop START-AIR to open the launcher first").
         var launcherRoot = ReadOptionalString(stage, "launcherRoot") is { } launcher ? Path.GetFullPath(launcher) : null;
         var maestroPort = ReadOptionalInt(stage, "maestroPort") ?? requestedMaestroPort;
         if (maestroPort is < 1 or > 65535) throw new ArgumentException("maestroPort must be between 1 and 65535.");
@@ -338,7 +339,7 @@ public static class Program
         var httpPort = ReadRequiredInt(platformSettings, "HttpPort");
         if (httpPort is < 1 or > 65535) throw new ArgumentException("platform.json HttpPort must be between 1 and 65535.");
         return new DesktopStage(root, airRoot, stock,
-            Path.Combine(root, "platform", "Amberline.Platform.exe"), platformData, httpPort, maestroPort);
+            Path.Combine(root, "platform", "Amberline.Platform.exe"), platformData, httpPort, maestroPort, LauncherRoot: launcherRoot);
     }
 
     public static bool IsReadyHealth(string json)

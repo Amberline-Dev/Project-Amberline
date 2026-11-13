@@ -27,7 +27,7 @@ internal static class ClassicStart
     internal static ClassicPlan Decide(Program.DesktopStage stage, string? root, Func<int, bool> portFree, Func<string, bool> mutexFree,
         string sha256 = ClassicLauncherFiles.LauncherSha256)
     {
-        // Not a reason: an install without the launcher, or a stage that never takes the classic start (the operator's START-AIR).
+        // Not a reason: an install without the launcher, or a stage that names none (the operator's START-AIR without launcherRoot).
         if (stage.LauncherRoot is not { } folder || !Directory.Exists(folder)) return new(false, null);
         if (ClassicLauncherFiles.Problem(folder, sha256) is { } problem) return new(false, problem);
         if (root is null) return new(false, "The RADS folder named in the registry is not a full path.");

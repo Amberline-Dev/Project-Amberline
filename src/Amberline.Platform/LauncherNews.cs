@@ -18,18 +18,26 @@ public static class LauncherNews
     public const string Route = "/launcher/news";
     public const int MaxHeadlines = 5, MaxBytes = 440;
 
+    /// <summary>
+    /// The spaces after the JSON. The 2011 launcher drops the last few bytes of the news it downloads (owner's START-AIR run, 13 November 2026:
+    /// of an 87-byte body RADS.swf read 77 to 83 bytes, and its log's "Missing news" lines match exactly that cut; the spike's "cut near byte
+    /// 461" was the same tail loss on a longer body), so the body ends with spaces its reader never needs. Not part of <see cref="MaxBytes"/>.
+    /// </summary>
+    public const int TailLength = 32;
+
     // "Sep 30" is the widest date the body shows (6 bytes): a set that fits with it fits on every day of the year.
     private static readonly DateOnly Widest = new(2000, 9, 30);
 
     /// <summary>
-    /// The body the launcher reads: its status, then the headlines in order, or the welcome headline while there are none. The headlines are what
-    /// <see cref="Usable"/> keeps, and the trailing ones go until the body is within <see cref="MaxBytes"/>.
+    /// The body the launcher reads: its status, then the headlines in order, or the welcome headline while there are none, then
+    /// <see cref="TailLength"/> spaces. The headlines are what <see cref="Usable"/> keeps, and the trailing ones go until the JSON is within
+    /// <see cref="MaxBytes"/>.
     /// </summary>
     public static string Body(IReadOnlyList<LauncherHeadline> news, string? serverName, DateOnly today)
     {
         var shown = Fit(Usable(news));
         IReadOnlyList<LauncherHeadline> listed = shown.Count > 0 ? shown : [Welcome(serverName, today)];
-        return Serialize(listed);
+        return Serialize(listed) + new string(' ', TailLength);
     }
 
     /// <summary>Null when the headlines can be saved; else the host's words for why not.</summary>
@@ -109,11 +117,20 @@ public static class LauncherNews
         return new LauncherHeadline($"Welcome to {name[..Math.Min(name.Length, room)]}", null, today);
     }
 
-    /// <summary>The JSON <c>{"serverStatus":1,"news":[{"title","url","date"},...]}</c>: only what <see cref="Usable"/> keeps is written, and a link's slashes are written <c>\/</c>.</summary>
-    private static string Serialize(IEnumerable<LauncherHeadline> news) =>
-        "{\"serverStatus\":1,\"news\":[" + string.Join(",", Usable(news).Select(item =>
+    /// <summary>
+    /// The JSON <c>{"serverStatus":1,"news":[{"title","url","date"},...]}</c>: only what <see cref="Usable"/> keeps is written, and a link's slashes
+    /// are written <c>\/</c>. Always <see cref="MaxHeadlines"/> items, the missing ones blank: RADS.swf's handleHTTPResponse reads exactly five
+    /// "title", "url" and "date" values by searching on from the last one (batch 753's REPORT section 5), so a shorter list made it read pieces
+    /// of the body as rows ("e", "ate", "date" in the owner's run of 13 November 2026). A blank row shows nothing.
+    /// </summary>
+    private static string Serialize(IEnumerable<LauncherHeadline> news)
+    {
+        var items = Usable(news).Select(item =>
             $"{{\"title\":\"{item.Title}\",\"url\":\"{(item.Link ?? "").Replace("/", "\\/", StringComparison.Ordinal)}\"," +
-            $"\"date\":\"{item.Saved.ToString("MMM d", CultureInfo.InvariantCulture)}\"}}")) + "]}";
+            $"\"date\":\"{item.Saved.ToString("MMM d", CultureInfo.InvariantCulture)}\"}}").ToList();
+        while (items.Count < MaxHeadlines) items.Add("{\"title\":\"\",\"url\":\"\",\"date\":\"\"}");
+        return "{\"serverStatus\":1,\"news\":[" + string.Join(",", items) + "]}";
+    }
 
     /// <summary>The UTF-8 bytes of the body that <paramref name="news"/> makes.</summary>
     private static int Size(IEnumerable<LauncherHeadline> news) => Encoding.UTF8.GetByteCount(Serialize(news));

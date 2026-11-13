@@ -703,7 +703,8 @@ public static class HostPages
             show('champions-none', shown === 0);
           });
           // NOT RETAIL (batch 761): Settings' Launcher news counter, live as the host types. It counts what LauncherNews.Bytes counts (each date at its
-          // widest, "Sep 30"), so the budget shown here is the one Save checks; keep the arithmetic in step with LauncherNews.
+          // widest, "Sep 30"), so the budget shown here is the one Save checks; keep the arithmetic in step with LauncherNews. Batch 766: the
+          // body always holds five items, the missing ones blank (31 bytes each), with a comma between each two.
           const news = document.querySelector('form[data-news-budget]');
           if (news) news.addEventListener('input', () => {
             const limit = Number(news.dataset.newsBudget);
@@ -718,7 +719,7 @@ public static class HostPages
               rows++;
               used += 37 + name.length + link.replace(/\//g, '\\/').length;
             });
-            if (rows > 1) used += rows - 1;
+            used += Math.max(0, 5 - rows) * 31 + Math.max(rows, 5) - 1;
             const left = limit - used;
             text('news-budget', left >= 0 ? `${left} bytes left of ${limit}.` : `${-left} bytes over the ${limit}-byte limit.`);
           });

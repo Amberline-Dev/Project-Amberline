@@ -448,7 +448,7 @@ public static class ClassicLauncherChecks
     }
 
     /// <summary>
-    /// When the classic start runs (design §2): a stage without a launcher folder, or one that never takes it (the operator's), has no classic
+    /// When the classic start runs (design §2): a stage without a launcher folder (an operator's without launcherRoot) has no classic
     /// start and nothing to tell; wrong files, an unusable RADS root, a busy launcher Maestro port (8393, 8394, 8395) and a held update-service
     /// mutex each give the reason the player is told, in the fallback sentence; everything in order takes it.
     /// </summary>
@@ -479,7 +479,7 @@ public static class ClassicLauncherChecks
             }
             var held = ClassicStart.Decide(stage, root, Free, name => name != RadsKernelStandIn.MutexName, sha);
             TestAssert.True(!held.Use && !string.IsNullOrEmpty(held.Reason), $"the update service's mutex is held: {held.Reason}");
-            TestAssert.Equal(new ClassicPlan(false, null), ClassicStart.Decide(stage with { LauncherRoot = null }, root, Free, MutexFree, sha), "the operator's stage never takes it");
+            TestAssert.Equal(new ClassicPlan(false, null), ClassicStart.Decide(stage with { LauncherRoot = null }, root, Free, MutexFree, sha), "a stage without a launcher folder never takes it");
             TestAssert.Equal(new ClassicPlan(true, null), ClassicStart.Decide(stage, root, Free, MutexFree, sha), "everything in order: the classic start");
 
             TestAssert.Equal("The classic launcher didn't open: The classic launcher is not version 1.0.0.251. Starting the usual way.",
@@ -511,7 +511,8 @@ public static class ClassicLauncherChecks
 
     /// <summary>
     /// The stage's launcher folder (design §1, §9): an installed player's server stage names it or derives &lt;install&gt;\launcher beside the
-    /// install's air\; the host app's stage reads launcherRoot (none without it); the operator's stage and the legacy play-mode stage have none.
+    /// install's air\; the host app's stage and the operator's (START-AIR; owner, 13 November 2026) read launcherRoot (none without it); the
+    /// legacy play-mode stage has none.
     /// </summary>
     [Check("server.classic-launcher-stage")]
     public static void StageNamesTheLauncherFolder()
@@ -543,9 +544,11 @@ public static class ClassicLauncherChecks
 
             var operatorStage = Path.Combine(temp, "operator");
             Directory.CreateDirectory(Path.Combine(operatorStage, "platform-data"));
-            File.WriteAllText(Path.Combine(operatorStage, "stage.json"), Json(("stockExecutable", game), ("launcherRoot", hostLauncher)));
             File.WriteAllText(Path.Combine(operatorStage, "platform-data", "platform.json"), "{\"HttpPort\":8390}");
-            TestAssert.Equal<string?>(null, Amberline.AirCompanion.Program.LoadDesktopStage(operatorStage).LauncherRoot, "the operator's stage never has one");
+            File.WriteAllText(Path.Combine(operatorStage, "stage.json"), Json(("stockExecutable", game)));
+            TestAssert.Equal<string?>(null, Amberline.AirCompanion.Program.LoadDesktopStage(operatorStage).LauncherRoot, "the operator's stage without launcherRoot");
+            File.WriteAllText(Path.Combine(operatorStage, "stage.json"), Json(("stockExecutable", game), ("launcherRoot", hostLauncher)));
+            TestAssert.Equal<string?>(hostLauncher, Amberline.AirCompanion.Program.LoadDesktopStage(operatorStage).LauncherRoot, "the operator's stage reads launcherRoot");
 
             var legacy = Path.Combine(temp, "legacy");
             PlayerMode.WriteStage(legacy, Path.GetDirectoryName(game)!, Path.Combine(temp, "player-air"), new AirRemoteInvitation("one.example.test", 8391, "", pin));
@@ -1039,23 +1042,77 @@ public static class ClassicLauncherChecks
     public static void NewsBodyIsStatusFirstAndWithinItsBudget()
     {
         var today = new DateOnly(2026, 11, 20);
-        TestAssert.Equal("{\"serverStatus\":1,\"news\":[{\"title\":\"Welcome to Test\",\"url\":\"\",\"date\":\"Nov 20\"}]}",
-            LauncherNews.Body([], "Test", today), "no headline: the welcome headline, dated today");
-        TestAssert.Equal("{\"serverStatus\":1,\"news\":[{\"title\":\"Patch day\",\"url\":\"http:\\/\\/a.b\\/c\",\"date\":\"Nov 12\"}]}",
+        // Batch 766: always five items, the missing ones blank, and the tail of spaces the launcher may drop.
+        const string Blank = ",{\"title\":\"\",\"url\":\"\",\"date\":\"\"}";
+        var blanks4 = string.Concat(Enumerable.Repeat(Blank, 4));
+        var tail = new string(' ', LauncherNews.TailLength);
+        TestAssert.Equal("{\"serverStatus\":1,\"news\":[{\"title\":\"Welcome to Test\",\"url\":\"\",\"date\":\"Nov 20\"}" + blanks4 + "]}" + tail,
+            LauncherNews.Body([], "Test", today), "no headline: the welcome headline, dated today, then four blank items and the tail");
+        TestAssert.Equal("{\"serverStatus\":1,\"news\":[{\"title\":\"Patch day\",\"url\":\"http:\\/\\/a.b\\/c\",\"date\":\"Nov 12\"}" + blanks4 + "]}" + tail,
             LauncherNews.Body([new LauncherHeadline("Patch day", "http://a.b/c", new DateOnly(2026, 11, 12))], "Test", today),
             "a link's slashes are written \\/, and the date is the day the headline was saved");
-        TestAssert.Equal("{\"serverStatus\":1,\"news\":[{\"title\":\"Welcome to ABTest\",\"url\":\"\",\"date\":\"Nov 20\"}]}",
+        TestAssert.Equal("{\"serverStatus\":1,\"news\":[{\"title\":\"Welcome to ABTest\",\"url\":\"\",\"date\":\"Nov 20\"}" + blanks4 + "]}" + tail,
             LauncherNews.Body([], "A\"B\\Test", today), "a name's quotation marks and backslashes are left out");
 
         var five = Enumerable.Range(1, 5).Select(i => new LauncherHeadline($"Server news {i}", $"http://a.b/{i}", new DateOnly(2026, 11, 12))).ToArray();
         var body = LauncherNews.Body(five, "Test", today);
         TestAssert.True(body.StartsWith("{\"serverStatus\":1,\"news\":[{\"title\":\"Server news 1\"", StringComparison.Ordinal),
             "five headlines: the status first, then the headlines in order");
-        TestAssert.True(Encoding.ASCII.GetByteCount(body) <= LauncherNews.MaxBytes, $"five headlines stay within {LauncherNews.MaxBytes} bytes: {body.Length}");
+        TestAssert.False(body.Contains("\"title\":\"\"", StringComparison.Ordinal), "five headlines: no blank item");
+        TestAssert.True(Encoding.ASCII.GetByteCount(NewsJson(body)) <= LauncherNews.MaxBytes, $"five headlines stay within {LauncherNews.MaxBytes} bytes: {body.Length}");
 
         // A 200-letter name fits as it is; one longer than the room left after the fixed text is cut to fit exactly.
-        TestAssert.Equal(276, Encoding.ASCII.GetByteCount(LauncherNews.Body([], new string('L', 200), today)), "a 200-letter server name fits");
-        TestAssert.Equal(LauncherNews.MaxBytes, Encoding.ASCII.GetByteCount(LauncherNews.Body([], new string('L', 400), today)), "a longer name is cut to the budget");
+        TestAssert.Equal(404, Encoding.ASCII.GetByteCount(NewsJson(LauncherNews.Body([], new string('L', 200), today))), "a 200-letter server name fits");
+        TestAssert.Equal(LauncherNews.MaxBytes, Encoding.ASCII.GetByteCount(NewsJson(LauncherNews.Body([], new string('L', 400), today))), "a longer name is cut to the budget");
+
+        // What RADS.swf's handleHTTPResponse reads (batch 753 REPORT section 5): five rows, each found by searching on from the last one, then the
+        // status. The welcome body gives one row and four blank ones, also when the launcher drops the last bytes of what it downloaded.
+        foreach (var dropped in new[] { 0, 10, LauncherNews.TailLength })
+        {
+            var (titles, dates, status) = LauncherReads(LauncherNews.Body([], "Test", today)[..^dropped]);
+            TestAssert.Equal("Welcome to Test||||", string.Join("|", titles), $"the launcher's titles with the last {dropped} bytes dropped");
+            TestAssert.Equal("Nov 20||||", string.Join("|", dates), $"the launcher's dates with the last {dropped} bytes dropped");
+            TestAssert.Equal('1', status, "the status the launcher reads");
+        }
+        var (fiveTitles, _, _) = LauncherReads(body);
+        TestAssert.Equal("Server news 1|Server news 2|Server news 3|Server news 4|Server news 5", string.Join("|", fiveTitles), "five headlines read as five rows");
+    }
+
+    /// <summary>The JSON of a news body, without its tail of spaces.</summary>
+    private static string NewsJson(string body)
+    {
+        TestAssert.True(body.EndsWith(new string(' ', LauncherNews.TailLength), StringComparison.Ordinal), "the body ends with its tail of spaces");
+        return body[..^LauncherNews.TailLength];
+    }
+
+    /// <summary>
+    /// RADS.swf's handleHTTPResponse (2011 launcher 1.0.0.251; batch 753 avm1_http.txt) as it reads a body: five times "title", "url" and
+    /// "date", each the text from just after <c>"name":"</c> (StringUtil.getCharAfter: -1 when not found) to the next quotation mark, searching
+    /// on from the last position (ActionScript substring: a negative end counts as 0, and the ends swap), then the digit after "serverStatus":.
+    /// </summary>
+    private static (string[] Titles, string[] Dates, char Status) LauncherReads(string body)
+    {
+        static int After(string needle, string text) => text.IndexOf(needle, StringComparison.Ordinal) is var at && at < 0 ? -1 : at + needle.Length;
+        string Piece(int start, int end)
+        {
+            int Clamp(int value) => Math.Clamp(value, 0, body.Length);
+            var (a, b) = (Clamp(start), Clamp(end));
+            return a <= b ? body[a..b] : body[b..a];
+        }
+        string Read(ref int position, string needle)
+        {
+            position += After(needle, body[Math.Clamp(position, 0, body.Length)..]);
+            return Piece(position, body.IndexOf('"', Math.Clamp(position, 0, body.Length)));
+        }
+        var (titles, dates, at) = (new string[5], new string[5], 0);
+        for (var row = 0; row < 5; row++)
+        {
+            titles[row] = Read(ref at, "\"title\":\"");
+            Read(ref at, "\"url\":\"");
+            dates[row] = Read(ref at, "\"date\":\"");
+        }
+        var status = After("\"serverStatus\":", body);
+        return (titles, dates, status >= 0 && status < body.Length ? body[status] : ' ');
     }
 
     /// <summary>
@@ -1079,17 +1136,18 @@ public static class ClassicLauncherChecks
             TestAssert.True(LauncherNews.Problem([(title, link)]) is not null, $"refused: '{title}' / '{link}'");
         // A fixed two-digit day: "Sep 30" is the widest date (6 bytes), so the budget is the same on every day of the year.
         var day = new DateOnly(2026, 9, 30);
-        TestAssert.Equal<string?>(null, LauncherNews.Problem([(new string('a', 375), (string?)null)]), "a set of exactly 440 bytes is accepted");
-        TestAssert.Equal(LauncherNews.MaxBytes, Encoding.ASCII.GetByteCount(LauncherNews.Body([new LauncherHeadline(new string('a', 375), null, day)], "Test", day)),
-            "and its body is exactly 440 bytes");
-        var over = LauncherNews.Problem([(new string('a', 376), (string?)null)]);
+        // Batch 766: one headline shares the 440 bytes with the four blank items that fill the five (4 x 31 bytes).
+        TestAssert.Equal<string?>(null, LauncherNews.Problem([(new string('a', 247), (string?)null)]), "a set of exactly 440 bytes is accepted");
+        TestAssert.Equal(LauncherNews.MaxBytes, Encoding.ASCII.GetByteCount(NewsJson(LauncherNews.Body([new LauncherHeadline(new string('a', 247), null, day)], "Test", day))),
+            "and its JSON is exactly 440 bytes");
+        var over = LauncherNews.Problem([(new string('a', 248), (string?)null)]);
         TestAssert.True(over is not null && over.Contains("440", StringComparison.Ordinal), $"one byte more is refused, and the message names the budget: {over}");
 
         await HostSettingsChecks.OnSettingsPageAsync("league-launcher-news", async (home, browser, accounts) =>
         {
             var settingsFile = home.Loop.Paths.Settings;
             var page = await GetPageAsync(browser, HostSettingsPage.PagePath);
-            Has(page, "<h2 id=news-title>Launcher news</h2>", $"action={HostSettingsPage.NewsPath}", "412 bytes left of 440.");
+            Has(page, "<h2 id=news-title>Launcher news</h2>", $"action={HostSettingsPage.NewsPath}", "253 bytes left of 440.");
             var box = page[page.IndexOf("<section class=folder aria-labelledby=news-title>", StringComparison.Ordinal)..];
             box = box[..box.IndexOf("</section>", StringComparison.Ordinal)];
             TestAssert.False(box.Contains("League", StringComparison.OrdinalIgnoreCase) || box.Contains("Riot", StringComparison.OrdinalIgnoreCase),
@@ -1130,7 +1188,7 @@ public static class ClassicLauncherChecks
             TestAssert.True(PlatformControls.From(JsonSerializer.Deserialize<PlatformSettings>(text, HostFiles.Json)!).LauncherNews.SequenceEqual(expected),
                 "a start from platform.json applies the same headlines");
             Has(await GetPageAsync(browser, HostSettingsPage.PagePath + "?saved=news"), "<p class=notice role=status>Saved. The 2011 launcher shows them the next time it opens.</p>",
-                "284 bytes left of 440.");
+                "188 bytes left of 440.");
             using var launcher = home.Client();
             using (var answer = await launcher.GetAsync(LauncherNews.Route))
             {
@@ -1175,12 +1233,14 @@ public static class ClassicLauncherChecks
         TestAssert.Equal(HttpStatusCode.Redirect, answer.StatusCode, await answer.Content.ReadAsStringAsync());
     }
 
-    /// <summary>A body that is valid JSON, within the budget, with <paramref name="headlines"/> headlines.</summary>
+    /// <summary>A body that is valid JSON, within the budget, with <paramref name="headlines"/> headlines and blank items up to five (batch 766).</summary>
     private static void AssertBodyWithin(string body, int headlines, string because)
     {
-        TestAssert.True(Encoding.ASCII.GetByteCount(body) <= LauncherNews.MaxBytes, $"{because}: {Encoding.ASCII.GetByteCount(body)} bytes");
+        TestAssert.True(Encoding.ASCII.GetByteCount(NewsJson(body)) <= LauncherNews.MaxBytes, $"{because}: {Encoding.ASCII.GetByteCount(body)} bytes");
         using var json = JsonDocument.Parse(body);
-        TestAssert.Equal(headlines, json.RootElement.GetProperty("news").GetArrayLength(), because);
+        var items = json.RootElement.GetProperty("news");
+        TestAssert.Equal(LauncherNews.MaxHeadlines, items.GetArrayLength(), $"{because}: always five items");
+        TestAssert.Equal(headlines, items.EnumerateArray().Count(item => item.GetProperty("title").GetString() is { Length: > 0 }), because);
     }
 
     /// <summary>
@@ -1224,7 +1284,7 @@ public static class ClassicLauncherChecks
             var file = JsonNode.Parse(File.ReadAllText(settingsFile))!.AsObject();
             file["launcherNews"] = null;
             File.WriteAllText(settingsFile, file.ToJsonString());
-            Has(await GetPageAsync(browser, HostSettingsPage.PagePath), "412 bytes left of 440.");
+            Has(await GetPageAsync(browser, HostSettingsPage.PagePath), "253 bytes left of 440.");
             await SaveAsync(browser, ("title", "Back to one"), ("link", ""));
             TestAssert.Equal(1, accounts.Controls.LauncherNews.Count, "a save after a null list stores what was saved");
         }, () => day);
@@ -1261,7 +1321,8 @@ public static class ClassicLauncherChecks
             },
         }), HostFiles.Json)!;
         var body = LauncherNews.Body(hostile.LauncherNews, null, day);
-        AssertBodyWithin(body, 3, "the stored list, cut to five and then to the budget, serves within 440 bytes");
+        // Batch 766: two headlines, not three, since the blank items that fill the five share the budget (three and two blanks: 459 bytes).
+        AssertBodyWithin(body, 2, "the stored list, cut to five and then to the budget, serves within 440 bytes");
         using (var json = JsonDocument.Parse(body))
             TestAssert.Equal("He said hi", json.RootElement.GetProperty("news")[0].GetProperty("title").GetString(), "the quotation mark is left out of the title");
 
@@ -1270,7 +1331,7 @@ public static class ClassicLauncherChecks
             var file = JsonNode.Parse(File.ReadAllText(home.Loop.Paths.Settings))!.AsObject();
             file["launcherNews"] = null;
             File.WriteAllText(home.Loop.Paths.Settings, file.ToJsonString());
-            Has(await GetPageAsync(browser, HostSettingsPage.PagePath), "412 bytes left of 440.");
+            Has(await GetPageAsync(browser, HostSettingsPage.PagePath), "253 bytes left of 440.");
             accounts.Controls = PlatformControls.From(hostile);
             using var launcher = home.Client();
             TestAssert.Equal(body, await launcher.GetStringAsync(LauncherNews.Route), "the launcher reads the same valid body");
