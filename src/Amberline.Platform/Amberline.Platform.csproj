@@ -18,6 +18,8 @@
     <Compile Include="..\Amberline.AirCompanion\FolderMove.cs" Link="Folders\FolderMove.cs" />
     <!-- Batch 761, task 8: the host's optional 2011 launcher folder (HostFolders' row) and its file sharing (HostFileShare) use the launcher's accepted files. -->
     <Compile Include="..\Amberline.AirCompanion\ClassicLauncherFiles.cs" Link="Folders\ClassicLauncherFiles.cs" />
+    <!-- Batch 765: the host's "Use the client zip" button and its command-line option unpack the client zip with the player installer's code. -->
+    <Compile Include="..\Amberline.AirCompanion\ClientZip.cs" Link="Folders\ClientZip.cs" />
     <ProjectReference Include="../Amberline.Host/Amberline.Host.csproj" />
     <ProjectReference Include="../Amberline.Rtmp/Amberline.Rtmp.csproj" />
   </ItemGroup>

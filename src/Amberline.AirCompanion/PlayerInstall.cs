@@ -406,6 +406,31 @@ internal static class PlayerInstall
     }
 
     /// <summary>
+    /// NOT RETAIL (batch 765): the install from the client zip (<see cref="ClientZip"/>). Retail installed the clients with Riot's patcher; here the
+    /// player may give the preserved client bundle zip instead of the three folders. What the install uses is unpacked into the staging folder beside
+    /// the install folder (<see cref="ClientZip.StagingFor"/>), and then installed exactly as picked folders are: <see cref="MakePlan"/> with its checks,
+    /// then <see cref="Install"/>, so the record and each server's stage are the same. The 2011 launcher is the picked one when the player chose one,
+    /// else the zip's when it has one. The staging folder is removed afterwards, also after a refusal, a failure or a cancel; the zip is only read.
+    /// </summary>
+    internal static Result InstallFromZip(PlayerProfile profile, string zip, string installFolder, ClientPins pins, string? launcherFolder,
+        AirRemoteInvitation connection, string serverName, string toolSource, IProgress<InstallProgress>? progress = null, CancellationToken cancel = default)
+    {
+        var install = Full(installFolder);
+        var staging = ClientZip.StagingFor(install);
+        Log(profile, $"install: the client zip {zip}, unpacked in {staging}");
+        try
+        {
+            var unpacked = ClientZip.Unpack(zip, staging, launcher: launcherFolder is null, progress, cancel);
+            var plan = MakePlan(profile, unpacked.Air, unpacked.Game, install, pins, launcherFolder ?? unpacked.Launcher);
+            return Install(profile, plan, connection, serverName, toolSource, progress, cancel: cancel);
+        }
+        finally
+        {
+            if (!ClientZip.Remove(staging)) Log(profile, $"install: {staging} could not be removed; the next install from the client zip removes it");
+        }
+    }
+
+    /// <summary>
     /// NOT RETAIL (classic launcher, design §1): the 2011 launcher's file list (<c>releasemanifest</c>) that lay beside a picked folder is copied into
     /// the launcher folder; a list the folder held came with the move. A copy that fails is logged, and the classic start then writes its own list.
     /// </summary>

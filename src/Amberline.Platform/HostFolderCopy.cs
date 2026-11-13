@@ -23,13 +23,20 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
     private Task _job = Task.CompletedTask;
     private volatile Copy? _copy;
 
-    /// <summary>One copy: the folders picked, its latest progress, then how it ended (the lines for the host, or why nothing changed).</summary>
-    private sealed class Copy(string game, string air, bool delete, long bytes, string? launcher) : IProgress<InstallProgress>
+    /// <summary>
+    /// One copy: the folders picked (none for the client zip), its latest progress, then how it ended (the lines for the host, or why nothing
+    /// changed). NOT RETAIL (batch 765): <paramref name="zip"/> is the client zip it unpacks first, null for picked folders.
+    /// </summary>
+    private sealed class Copy(string? game, string? air, bool delete, long bytes, string? launcher, string? zip = null) : IProgress<InstallProgress>
     {
-        public string Game { get; } = game;
-        public string Air { get; } = air;
-        /// <summary>NOT RETAIL (batch 761, task 8): the 2011 launcher's folder the page carried through the copy; it is never copied, it stays where it is.</summary>
-        public string? Launcher { get; } = launcher;
+        public string? Game { get; } = game;
+        public string? Air { get; } = air;
+        public string? Zip { get; } = zip;
+        /// <summary>
+        /// NOT RETAIL (batch 761, task 8): the 2011 launcher's folder the page carried through the copy; it is never copied, it stays where it is.
+        /// Batch 765: the client zip's launcher, placed beside the install, takes its place when the host had no working one.
+        /// </summary>
+        public string? Launcher { get; set; } = launcher;
         public bool Delete { get; } = delete;
         /// <summary>Batch 652: the copy's size, for the page's first line before any progress came in.</summary>
         public long Bytes { get; } = bytes;
@@ -61,6 +68,66 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
 
     /// <summary>What the copy says at once (batch 652): its size and that it takes a while.</summary>
     private static string Starting(long bytes) => $"Copying the game files ({FolderMove.Gigabytes(bytes)} GB). This takes several minutes.";
+
+    /// <summary>NOT RETAIL (batch 765): what the client zip's unpack says at once, before its first megabytes.</summary>
+    private const string Unpacking = "Unpacking the client zip. This takes about a minute.";
+
+    /// <summary>NOT RETAIL (batch 765): the end of a sentence about an unpack that stopped.</summary>
+    private const string ZipUnchanged = " Nothing came into the install folder, and the client zip is as it was.";
+
+    /// <summary>
+    /// NOT RETAIL (batch 765): the client zip into the install (retail's patcher installed its clients). The game and the AIR client are unpacked into
+    /// the staging folder beside the install (<see cref="ClientZip.StagingFor"/>), then moved in with the copy's own code (<see cref="ClientPlan"/>,
+    /// renames on that drive) and named in <c>platform.json</c>; the copy's progress page follows it. Round 2 (owner, 13 November 2026): its 2011
+    /// launcher goes beside the install, outside it, when the launcher row has no working one (<see cref="ClientPlan.PlaceZipLauncher"/>). One copy
+    /// at a time; the zip is only read.
+    /// </summary>
+    public IResult Unpack(string zip, string? launcher)
+    {
+        var copy = new Copy(null, null, delete: true, 0, launcher, zip);
+        lock (_gate)
+        {
+            if (_copy is { Running: true }) return Results.Redirect(PagePath);
+            _copy = copy;
+            _job = Task.Run(() => RunZip(zip, copy));
+        }
+        return Results.Redirect(PagePath);
+    }
+
+    /// <summary>The unpack, then the copy's moves (<see cref="Run"/>); the staging folder goes afterwards in every case.</summary>
+    private void RunZip(string zip, Copy copy)
+    {
+        var staging = ClientZip.StagingFor(install);
+        try
+        {
+            ClientPlan plan;
+            ClientZip.Unpacked unpacked;
+            try
+            {
+                // Round 2: its 2011 launcher too, beside the install (ClientPlan.PlaceZipLauncher), unless the page's launcher row has a working one.
+                var wanted = !ClientPlan.LauncherWorks(copy.Launcher, loop.Folders.LauncherSha256);
+                unpacked = ClientZip.Unpack(zip, staging, launcher: wanted, copy, _stop.Token);
+                plan = ClientPlan.Make(install, new(unpacked.Game, unpacked.Air, DeleteOriginals: true), loop.Folders.Records,
+                    (loop.Folders.GameSha256, loop.Folders.AirSha256), null);
+            }
+            catch (Exception ex) when (ex is InstallRefusedException or IOException or UnauthorizedAccessException or OperationCanceledException)
+            {
+                Console.Error.WriteLine($"Folder step, client zip: {ex}");
+                copy.Problem = ex switch
+                {
+                    InstallRefusedException => ex.Message,
+                    OperationCanceledException => "Amberline stopped before the client zip was unpacked.",
+                    _ => "Amberline could not unpack the client zip: the disk may be full, or a program uses its files.",
+                } + ZipUnchanged;
+                return;
+            }
+            Run(plan, copy, unpacked.Launcher);
+        }
+        finally
+        {
+            if (!ClientZip.Remove(staging)) Console.Error.WriteLine($"Folder step, client zip: {staging} could not be removed; the next unpack removes it.");
+        }
+    }
 
     /// <summary>The folder step's own forms wait while the folders are checked (their files are hashed).</summary>
     private static readonly string Checking = HostPages.Wait("Checking the folders. This takes a few seconds.");
@@ -133,6 +200,12 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
                 return HostMode.Page($"<h1>The page expired</h1><p><a href={place.Path}>Choose your game folders again.</a></p>", StatusCodes.Status400BadRequest, step: place.Step);
             var form = await context.Request.ReadFormAsync(context.RequestAborted);
             if (_copy is { Running: true }) return Results.Redirect(PagePath);
+            // NOT RETAIL (batch 765): Try again after a client zip's unpack stopped.
+            if (form["zip"].ToString() is { Length: > 0 } zip)
+            {
+                var kept = HostFolders.Picked(FolderKind.Launcher, form["launcher"].ToString(), loop.Folders);
+                return place.Games?.Invoke() > 0 ? HostFolders.Busy(token, loop, place, FolderCheck.NotFound, FolderCheck.NotFound, kept) : Unpack(zip, kept.Folder);
+            }
             var game = HostFolders.Check(FolderKind.Game, form["game"].ToString(), loop.Folders);
             var air = HostFolders.Check(FolderKind.Air, form["air"].ToString(), loop.Folders);
             var launcher = HostFolders.Picked(FolderKind.Launcher, form["launcher"].ToString(), loop.Folders);
@@ -161,8 +234,11 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
         app.MapGet(ScriptPath, () => Results.Text(Script(StatusPath), "text/javascript; charset=utf-8"));
     }
 
-    /// <summary>The copy on a thread of its own; a refusal or failure has rolled everything back by the time it is reported.</summary>
-    private void Run(ClientPlan plan, Copy copy)
+    /// <summary>
+    /// The copy on a thread of its own; a refusal or failure has rolled everything back by the time it is reported. Batch 765: then the client
+    /// zip's 2011 launcher (<paramref name="zipLauncher"/>, staged; null for picked folders) beside the install, before the page says it is done.
+    /// </summary>
+    private void Run(ClientPlan plan, Copy copy, string? zipLauncher = null)
     {
         IReadOnlyList<string> leftovers;
         try { leftovers = FolderMove.Execute(plan.Moves, plan.Delete, copy, new(AfterCopy: loop.Folders.AfterCopy), _stop.Token); }
@@ -180,7 +256,10 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
         try
         {
             (copy.Inside, copy.InsideAir) = (plan.Game, plan.Air);
-            copy.Lines = plan.Finish(leftovers, loop.Paths.Settings);
+            var lines = plan.Finish(leftovers, loop.Paths.Settings);
+            var (launcher, note) = ClientPlan.PlaceZipLauncher(zipLauncher, install, loop.Folders.LauncherSha256, loop.Paths.Settings);
+            if (launcher is not null) copy.Launcher = launcher;
+            copy.Lines = note is null ? lines : [.. lines, note];
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -189,12 +268,18 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
         }
     }
 
+    /// <summary>NOT RETAIL (batch 765): Try again after the client zip's unpack stopped: the same zip, and the 2011 launcher row as it was.</summary>
+    private string ZipAgain(string token, string zip, string? launcher) =>
+        $"<form method=post action={PagePath}>{Hidden(token, null, null, launcher)}<input type=hidden name=zip value=\"{Encode(zip)}\">" +
+        $"<div class=actions><a href={place.Path}>Back</a><button{HostPages.Wait(Unpacking)}>Try again</button></div></form>";
+
     /// <summary>
     /// The phase of a progress line ("Copying the game") for the live region, and its counts for the line below; before the first line,
     /// what the copy is and how long it takes (batch 652).
     /// </summary>
     private static (string Phase, string Detail) Split(Copy copy) =>
-        copy.Now?.Text.Split(':', 2) is [var phase, var detail] ? (phase, detail.Trim()) : (copy.Now?.Text ?? Starting(copy.Bytes), "");
+        copy.Now?.Text.Split(':', 2) is [var phase, var detail] ? (phase, detail.Trim())
+            : (copy.Now?.Text ?? (copy.Zip is null ? Starting(copy.Bytes) : Unpacking), "");
 
     private static object Status(Copy copy)
     {
@@ -209,8 +294,10 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
             return HostMode.Page($"""
                 <h1>{HostFolders.Heading(place, "Your game files were not copied")}</h1>
                 {HostPages.Errors((problem, null))}
+                {(copy.Zip is { } zip ? ZipAgain(token, zip, copy.Launcher) : $"""
                 <form method=post action={place.Path}{Checking}>{Hidden(token, copy.Game, copy.Air, copy.Launcher)}
                 <div class=actions><a href={place.Path}>Back</a><button class=secondary name=keep value=1>Use them where they are</button><button>Try again</button></div></form>
+                """)}
                 """, step: place.Step);
         if (copy.Lines is { } lines)
             return HostMode.Page($"""
@@ -222,7 +309,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
         var (phase, detail) = Split(copy);
         var percent = copy.Now?.Percent ?? 0;
         return HostMode.Page($"""
-            <h1>{HostFolders.Heading(place, "Copying your game files into " + here)}</h1>
+            <h1>{HostFolders.Heading(place, (copy.Zip is null ? "Copying your game files into " : "Unpacking the client zip into ") + here)}</h1>
             <p>Keep this page and the Amberline window open.</p>
             <div aria-live=polite><p id=copy-phase class=headline>{Encode(phase)}</p></div>
             <label for=copy-bar>Progress</label><progress id=copy-bar max=100 value={percent}>{percent}%</progress>

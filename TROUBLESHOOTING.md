@@ -339,8 +339,13 @@ When `Play.cmd` cannot finish, its window says **Play could not finish:** and wh
 - **Setup stopped: a file could not be copied or moved.** Check that the drive has free space and is still connected, then
   choose **Install** again.
 
-Your folders are always where they were, or complete in the install folder. **Copy** copies what happened, to send to
-your host.
+- **This zip has no game client in it** (or no AIR client, or more than one), **is not a zip file**, **holds an unsafe entry** or
+  **is damaged**: choose the client zip itself (`patch-1.0.0.126-client-bundle.zip`), or an undamaged copy of it.
+- **A folder named ... is in the way.** Setup unpacks the client zip into a folder beside the install folder. Move or rename the
+  folder it names, then choose **Use the client zip…** again.
+
+Your folders are always where they were, or complete in the install folder. The client zip is only read. **Copy** copies what
+happened, to send to your host.
 
 When your host shares their game ([Game files](HOSTING.md#game-files)) and setup finds no copy of your own, it offers **Download
 the game from** the server's name:

@@ -39,13 +39,17 @@ rented path; from the zip it says that the package is built from the source code
 On a PC with an Amberline (both ways) the guide asks neither step 1 nor step 2: it offers the update at once, and the install keeps
 its own game and AIR client (the build reads them, or the folders the install's settings name). A release zip of the installed
 version starts that Amberline instead.
+Batch 765 (NOT RETAIL; owner, 13 November 2026): in the release zip, the game question also takes the client zip
+(patch-1.0.0.126-client-bundle.zip), pasted or dragged into the window; the AIR question is then skipped and step 6 passes
+--client-zip instead of --game and --air (the release's first start unpacks it). A build from the source code reads the two folders,
+so there the zip is refused with a sentence that says so.
 
 .PARAMETER DryRun
 DIAGNOSTICS: prints the plan (what would be installed, built and started) and does none of it. No winget, no build, no start.
 
 .PARAMETER Answers
 DIAGNOSTICS: answers given in place of the questions, as JSON text or the path of a JSON file: where (1 or home, 2 or rented),
-gameRoot, airRoot, host, serverName, system (1 or windows, 2 or linux), useSaved and install (Y or N), installFolder,
+gameRoot (a folder, or in the release zip the client zip), airRoot, host, serverName, system (1 or windows, 2 or linux), useSaved and install (Y or N), installFolder,
 updateInstall and deleteOriginals (Y or N), packageFolder (a rented server's package). With -DryRun also
 missing: the tools to treat as missing (dotnet, pwsh, zig); without it a dry run looks for the tools. gameChoice and airChoice
 answer the numbered list of the search's finds.
@@ -204,14 +208,30 @@ function Select-Folder([string]$Title) {
     } catch { Write-Log "Folder window: $($_.Exception.Message)" }
     $null
 }
-# A folder pasted, or chosen in the window ($Kind: game or air); a parent folder resolves to the copy found inside it.
+# Batch 765: the client zip's full path when $Text names an existing .zip file (pasted, or the file dragged into this window), else $null.
+$clientZipName = 'patch-1.0.0.126-client-bundle.zip'
+function Get-ClientZip([string]$Text) {
+    $path = $Text.Trim().Trim('"')
+    try { if ($path -match '(?i)\.zip$' -and (Test-Path -LiteralPath $path -PathType Leaf)) { return (Resolve-Path -LiteralPath $path).Path } } catch { }
+    $null
+}
+# A folder pasted, or chosen in the window ($Kind: game or air); a parent folder resolves to the copy found inside it. Batch 765: for the
+# game, in the release zip, also the client zip (returned as it is); a build from the source code reads the folders, so it says why not.
 function Read-Folder([string]$Kind, [string]$Title) {
     $folder = Read-Valid "${Kind}Root" 'Press Enter to choose it in a window, or paste its path' {
         param($text)
         $path = $text.Trim().Trim('"')
         if (-not $path) { $path = Select-Folder $Title }
-        try { if ($path -and (Test-Path -LiteralPath $path -PathType Container)) { (Resolve-Path -LiteralPath $path).Path } } catch { $null }
-    } 'that folder was not found.'
+        try { if ($path -and (Test-Path -LiteralPath $path -PathType Container)) { return (Resolve-Path -LiteralPath $path).Path } } catch { }
+        if ($Kind -eq 'game' -and $path -and (Get-ClientZip $path)) {
+            if ($prebuilt) { return (Get-ClientZip $path) }
+            Say 'Try again: building Amberline from the source code reads the game and AIR client folders, so it cannot take the client zip. Unzip it, then give its folders.' 'Yellow'
+            return $null
+        }
+        Say 'Try again: that folder was not found.' 'Yellow'
+        $null
+    } ''
+    if (Get-ClientZip $folder) { return $folder }
     Resolve-Picked $Kind $folder
 }
 
@@ -338,7 +358,10 @@ function Select-Found([string]$Kind, [string]$Name, $Search, [string]$Title) {
         param($text)
         $number = 0
         if ([int]::TryParse($text.Trim(), [ref]$number) -and $number -ge 1 -and $number -le $last) { $number }
+        # Batch 765: the client zip pasted or dragged in here too (the release zip's game question).
+        elseif ($Kind -eq 'game' -and $prebuilt -and (Get-ClientZip $text)) { Get-ClientZip $text }
     } "type a number from 1 to $last."
+    if ($pick -is [string]) { return $pick }
     if ($pick -le $usable.Count) { return $usable[$pick - 1].Folder }
     if ($pick -eq $last - 1) { $picked = Select-Folder $Title; if ($picked) { return Resolve-Picked $Kind $picked } }
     Read-Folder $Kind $Title
@@ -491,8 +514,11 @@ function Invoke-Build($Parameters, [string]$Pwsh) {
 function Show-Choice($Choice) {
     if ($Choice.where -eq 'home') { Say '  Where: this PC' }
     else { Say "  Where: a rented $($Choice.system) server, address $($Choice.host), server name $($Choice.serverName)" }
-    Say "  Game folder: $($Choice.gameRoot)" -Whole
-    Say "  AIR client folder: $($Choice.airRoot)" -Whole
+    if ($Choice.clientZip) { Say "  Client zip: $($Choice.clientZip)" -Whole }
+    else {
+        Say "  Game folder: $($Choice.gameRoot)" -Whole
+        Say "  AIR client folder: $($Choice.airRoot)" -Whole
+    }
     if ($Choice.installFolder) { Say "  Install folder: $($Choice.installFolder)" -Whole }
     if ($Choice.deleteOriginals -eq 'Y') { Say '  The originals: deleted after copying' }
     if ($Choice.packageFolder) { Say "  Server package folder: $($Choice.packageFolder)" -Whole }
@@ -620,8 +646,8 @@ try {
     $last = $null
     if (-not $update -and (Test-Path -LiteralPath $savedFile)) {
         try { $last = Get-Content -LiteralPath $savedFile -Raw | ConvertFrom-Json } catch { $last = $null }
-        if ($last -and $last.where -and $last.gameRoot -and $last.airRoot) {
-            foreach ($name in 'installFolder', 'deleteOriginals', 'packageFolder') {
+        if ($last -and $last.where -and (($last.gameRoot -and $last.airRoot) -or ($prebuilt -and $last.clientZip))) {
+            foreach ($name in 'installFolder', 'deleteOriginals', 'packageFolder', 'clientZip') {
                 if ($last.PSObject.Properties.Name -notcontains $name) { $last | Add-Member -NotePropertyName $name -NotePropertyValue $null }
             }
             # Batch 637: after the last install the install's own copies take the place of the folders picked then.
@@ -642,7 +668,17 @@ try {
         $search = Find-GameAndAir $remembered
         Say
         Say 'Game folder (patch 1.0.0.126, with DATA and LEVELS):'
+        # Batch 765: in the release zip, the client zip answers for both folders.
+        if ($prebuilt) { Say "Or the client zip ($clientZipName) for both: paste its path, or drag the zip into this window." }
         $Target.gameRoot = Select-Found 'game' 'game folder' $search 'Choose the game folder (it holds DATA and LEVELS)'
+        if ($prebuilt -and (Get-ClientZip $Target.gameRoot)) {
+            $Target.clientZip = $Target.gameRoot
+            $Target.gameRoot = $null
+            Say 'Your client zip:'
+            SayPath $Target.clientZip
+            Say 'Amberline unpacks the game and the AIR client from it, so the AIR client folder is not asked.'
+            return
+        }
         Say 'Your game folder:'
         SayPath $Target.gameRoot
         Say
@@ -709,7 +745,7 @@ try {
         Say
         Say 'Steps 1 and 2 of 6: not needed. This PC has Amberline already.' 'Cyan'
         $choice = [pscustomobject]@{ where = 'home'; gameRoot = $null; airRoot = $null; host = $null; serverName = $null; system = $null
-            installFolder = $installed; deleteOriginals = 'N'; packageFolder = $null }
+            installFolder = $installed; deleteOriginals = 'N'; packageFolder = $null; clientZip = $null }
         foreach ($name in @(Use-OwnCopies $choice)) { Say "Using the install folder's own copy of the $name." }
         if (-not $prebuilt -and -not ($choice.gameRoot -and $choice.airRoot)) {
             # The build reads both folders: the install's own copies, else the folders its settings name, else step 2 asks.
@@ -741,7 +777,7 @@ try {
                 'For a Linux server: download the Amberline source code from GitHub on this PC and double-click its START-HERE.cmd. It builds the server package.')
         }
         $choice = [pscustomobject]@{ where = $where; gameRoot = $null; airRoot = $null; host = $null; serverName = $null; system = $null
-            installFolder = $null; deleteOriginals = $null; packageFolder = $null }
+            installFolder = $null; deleteOriginals = $null; packageFolder = $null; clientZip = $null }
         if ($where -eq 'rented') {
             Say
             Say 'Your server''s address (a name or a number address, without https:// or a port).'
@@ -794,7 +830,8 @@ try {
             SayPath $choice.installFolder
             foreach ($name in @(Use-OwnCopies $choice)) { Say "Using the install folder's own copy of the $name." }
             $choice.deleteOriginals = 'N'
-            $outside = @(@($choice.gameRoot, $choice.airRoot) | Where-Object { -not (Test-Inside $_ $choice.installFolder) })
+            $outside = @(@($choice.gameRoot, $choice.airRoot) | Where-Object { $_ -and -not (Test-Inside $_ $choice.installFolder) })
+            if ($choice.clientZip -and -not ($choice.gameRoot -and $choice.airRoot)) { Say 'Amberline unpacks the game and the AIR client from the client zip into it. The zip stays as it is.' }
             if ($outside.Count) {
                 $drive = [IO.Path]::GetPathRoot($choice.installFolder)
                 $bytes = 0L
@@ -852,11 +889,16 @@ try {
 
         Step 6 'Installing and starting Amberline'
         # The release's first start installs (HostInstall): the folder, the game and AIR client to bring in, and the delete answer.
+        $zipped = $choice.clientZip -and -not ($choice.gameRoot -and $choice.airRoot)
         $arguments = @(if ($choice.installFolder) {
             '--install-to', $choice.installFolder
-            if ($choice.gameRoot) { '--game', $choice.gameRoot }
-            if ($choice.airRoot) { '--air', $choice.airRoot }
-            if ($choice.deleteOriginals -eq 'Y') { '--delete-originals' }
+            # Batch 765: the client zip instead of the two folders, never with them (unless the install has its own copies of both).
+            if ($zipped) { '--client-zip', $choice.clientZip }
+            else {
+                if ($choice.gameRoot) { '--game', $choice.gameRoot }
+                if ($choice.airRoot) { '--air', $choice.airRoot }
+                if ($choice.deleteOriginals -eq 'Y') { '--delete-originals' }
+            }
         })
         Start-Amberline $unpacked $arguments $zip
         $copies = @(@($choice.gameRoot, $choice.airRoot) | Where-Object { $_ -and $choice.installFolder -and -not (Test-Inside $_ $choice.installFolder) }).Count
@@ -868,7 +910,7 @@ try {
                 'Then: its page opens in your web browser.') + $later) 'Install folder' $folder
         }
         Finish (@(
-            "Now: a new window named Amberline copies the program$(if ($copies) { ', the game and the AIR client' }) into that folder.$deletes Then its page opens in your web browser.",
+            "Now: a new window named Amberline copies the program$(if ($copies) { ', the game and the AIR client' }) into that folder$(if ($zipped) { ' and unpacks the game and the AIR client from the client zip into it' }).$deletes Then its page opens in your web browser.",
             'On that page: set up your server, then choose Users and Add a user.') + $later) 'Install folder' $folder
     } else {
         $output = $choice.packageFolder

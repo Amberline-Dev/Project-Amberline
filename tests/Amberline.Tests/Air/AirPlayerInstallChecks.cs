@@ -500,9 +500,10 @@ public static class AirPlayerInstallChecks
             AssertAccessible(window);
             var setup = Find(window, "Setup");
             // Batch 681: the server's download (hidden until the server offers one) sits under the client folders. Batch 761: the optional
-            // 2011 launcher row comes after the game folder, as the third folder.
-            TestAssert.Equal(new[] { "Change the AIR client folder", "Change the game client folder", "Change the 2011 launcher folder", "Download the game from Alpha", "Change the install folder", "Install", "Cancel" },
+            // 2011 launcher row comes after the game folder, as the third folder. Batch 765: the client zip comes first, the folders are the other way.
+            TestAssert.Equal(new[] { "Use the client zip", "Change the AIR client folder", "Change the game client folder", "Change the 2011 launcher folder", "Download the game from Alpha", "Change the install folder", "Install", "Cancel" },
                 TabOrder(setup).ToArray());
+            TestAssert.True(Find(window, "Client zip").Text.Contains(ClientZip.BundleName, StringComparison.Ordinal), "the client zip's row names it: " + Find(window, "Client zip").Text);
             TestAssert.Equal("Install", ((System.Windows.Forms.Control)window.AcceptButton!).AccessibleName);
             TestAssert.Equal("Cancel", ((System.Windows.Forms.Control)window.CancelButton!).AccessibleName);
             TestAssert.True(Find(window, "Install").Enabled, "the found clients do not make a plan: " + Find(window, "Notes").Text);

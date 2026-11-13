@@ -230,6 +230,73 @@ public static class HostFolderCopyChecks
         });
     }
 
+    /// <summary>
+    /// NOT RETAIL (batch 765): "Use the client zip…" in a one-folder install: the page offers it with the install folder, a closed file window
+    /// changes nothing, a zip without the AIR client is refused with Try again for the same zip, and the client zip's game and AIR client are
+    /// unpacked beside the install, moved in and named in platform.json; the zip is byte-identical and no staging folder is left. The zips are
+    /// small synthetic ones made from the check's own stand-ins (<see cref="ClientZipChecks.Bundle"/>). Round 2: the zip's 2011 launcher goes beside
+    /// the install, platform.json names it, and Continue carries it.
+    /// </summary>
+    [Check("server.host-folder-copy-client-zip", TimeoutSeconds = 180)]
+    public static void TheClientZipIsUnpackedIntoTheInstall() => ClientZipAsync().GetAwaiter().GetResult();
+
+    private static async Task ClientZipAsync()
+    {
+        var picks = new Queue<string?>();
+        var launcherSha = "";
+        var folder = OneFolder.Create("league-copy-zip", downloads =>
+        {
+            launcherSha = ClassicLauncherChecks.WriteLauncherFiles(Path.Combine(downloads, "launcher"));
+            Write(Path.Combine(downloads, "launcher", "releasemanifest"), "file list");
+            return Download(downloads);
+        }, chooseZip: _ => picks.Dequeue(), launcherSha256: () => launcherSha);
+        var zip = ClientZipChecks.Bundle(Path.Combine(folder.Downloads, "client bundle.zip"), "x/", folder.Game, [folder.Language], folder.Air,
+            Path.Combine(folder.Downloads, "launcher"));
+        var half = ClientZipChecks.Bundle(Path.Combine(folder.Downloads, "half.zip"), "", folder.Game, [folder.Language], null, null);
+        var zipSha = RetailClients.Sha256(zip);
+        var originals = Snapshot(Path.Combine(folder.Downloads, "League 2011"));
+        await folder.RunAsync(async browser =>
+        {
+            var page = await browser.Client.GetStringAsync("/setup");
+            TestAssert.True(page.Contains("<button id=zip-choose name=choose value=zip aria-describedby=zip-hint>Use the client zip…</button>", StringComparison.Ordinal) &&
+                page.Contains($"into {Encode(folder.Install)}; the zip stays as it is.", StringComparison.Ordinal), "the page offers the client zip: " + page);
+
+            picks.Enqueue(null);
+            var closed = await browser.PostAsync("/setup", ("game", ""), ("air", ""), ("choose", "zip"));
+            TestAssert.True(closed.Status == HttpStatusCode.OK && closed.Page.Contains("<h1>Your game files</h1>", StringComparison.Ordinal), "a closed window: " + closed.Page);
+
+            picks.Enqueue(half);
+            var refused = await browser.PostAsync("/setup", ("game", ""), ("air", ""), ("choose", "zip"));
+            TestAssert.Equal(HttpStatusCode.Redirect, refused.Status, refused.Page);
+            var failed = await browser.EndAsync();
+            TestAssert.True(failed.Contains($"This zip has no AIR client in it, so it is not the client zip ({ClientZip.BundleName}). Nothing came into the install folder, " +
+                "and the client zip is as it was.", StringComparison.Ordinal) && failed.Contains($"name=zip value=\"{Encode(half)}\"", StringComparison.Ordinal) &&
+                failed.Contains("Try again</button>", StringComparison.Ordinal), "the refusal and its Try again: " + failed);
+
+            picks.Enqueue(zip);
+            var started = await browser.PostAsync("/setup", ("game", ""), ("air", ""), ("choose", "zip"));
+            TestAssert.Equal(HttpStatusCode.Redirect, started.Status, started.Page);
+            var done = await browser.EndAsync();
+            var inside = Path.Combine(folder.Install, @"game\projects\lol_game_client\releases\0.0.0.51");
+            TestAssert.True(done.Contains($"<h1>Your game files are in {Encode(folder.Install)}</h1>", StringComparison.Ordinal) &&
+                done.Contains($"name=game value=\"{Encode(inside)}\"", StringComparison.Ordinal), "the done page carries the folders inside: " + done);
+            TestAssert.Equal(Snapshot(folder.Game), Snapshot(inside), "the game came in from the zip");
+            TestAssert.Equal(Snapshot(folder.Language), Snapshot(Path.Combine(folder.Install, @"game\projects\lol_game_client_en_us")), "its language project");
+            TestAssert.Equal(Snapshot(folder.Air), Snapshot(Path.Combine(folder.Install, "air")), "the AIR client came in from the zip");
+            folder.Names(inside, Path.Combine(folder.Install, "air"));
+            var beside = folder.Install + "-launcher";
+            TestAssert.True(File.Exists(Path.Combine(beside, "LoLLauncher.exe")) && done.Contains($"name=launcher value=\"{Encode(beside)}\"", StringComparison.Ordinal) &&
+                done.Contains($"The client zip&#39;s 2011 launcher is in {Encode(beside)}, beside the install folder.", StringComparison.Ordinal),
+                "the launcher beside the install, and Continue carries it: " + done);
+            using (var settings = JsonDocument.Parse(File.ReadAllText(folder.Settings)))
+                TestAssert.Equal(beside, settings.RootElement.GetProperty("launcherRoot").GetString(), "platform.json names the launcher beside the install");
+            folder.NothingHalfDone();
+            TestAssert.False(Directory.Exists(folder.Install + ".client-zip"), "no staging folder is left");
+            TestAssert.Equal(zipSha, RetailClients.Sha256(zip), "the zip is byte-identical");
+            TestAssert.Equal(originals, Snapshot(Path.Combine(folder.Downloads, "League 2011")), "the folders the zip was made from are untouched");
+        });
+    }
+
     private const string HostFolderCopyPath = "/setup/copy";
 
     /// <summary>
@@ -264,13 +331,17 @@ public static class HostFolderCopyChecks
         public Action<string> AfterCopy { get; set; } = _ => { };
         public Task<int>? Run { get; private set; }
 
-        public static OneFolder Create(string prefix, Func<string, (string Game, string Air)> layout, Func<string, IReadOnlyList<string>>? records = null)
+        /// <param name="chooseZip">Batch 765: the file window's stand-in for "Use the client zip…"; null offers no client zip.</param>
+        /// <param name="launcherSha256">Batch 765, round 2: the 2011 launcher's pin, read once the layout is made; null keeps the real one.</param>
+        public static OneFolder Create(string prefix, Func<string, (string Game, string Air)> layout, Func<string, IReadOnlyList<string>>? records = null,
+            Func<string, string?>? chooseZip = null, Func<string>? launcherSha256 = null)
         {
             var downloads = AirBootstrapChecks.TemporaryDirectory(prefix + "-downloads");
             var (game, air) = layout(downloads);
             OneFolder? made = null;
             var home = HostModeChecks.Home.Create(prefix, root => HostFolderChecks.Pins(game, air) with
-                { Records = records?.Invoke(root) ?? [], AfterCopy = path => made!.AfterCopy(path) });
+                { Records = records?.Invoke(root) ?? [], AfterCopy = path => made!.AfterCopy(path), ChooseZip = chooseZip,
+                  LauncherSha256 = launcherSha256?.Invoke() ?? new FolderSetup().LauncherSha256 });
             File.WriteAllText(Path.Combine(home.Root, FolderMove.InstallMarker), "{}");
             HostModeChecks.Delete(Path.Combine(home.Root, "air"));
             return made = new() { Home = home, Downloads = downloads, Game = game, Air = air };
@@ -293,6 +364,10 @@ public static class HostFolderCopyChecks
                 await Home.StopAsync(Run);
                 HostModeChecks.Delete(Home.Root);
                 HostModeChecks.Delete(Downloads);
+                // Batch 765: a client zip's staging folder beside the install, should a check have stopped before it was removed, and the
+                // 2011 launcher it put beside the install.
+                HostModeChecks.Delete(Home.Root + ".client-zip");
+                HostModeChecks.Delete(Home.Root + "-launcher");
             }
         }
 

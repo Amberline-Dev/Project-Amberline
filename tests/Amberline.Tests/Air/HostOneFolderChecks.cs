@@ -234,6 +234,146 @@ public static class HostOneFolderChecks
         finally { HostModeChecks.Delete(root); }
     }
 
+    /// <summary>
+    /// NOT RETAIL (batch 765): <c>--client-zip</c>, for a host on a command line, instead of <c>--game</c> and <c>--air</c> (never with them): the
+    /// game and the AIR client are unpacked beside the install folder and moved in, platform.json names them, no staging folder is left and the zip
+    /// is byte-identical. The zip is a small synthetic one (<see cref="ClientZipChecks.Bundle"/>).
+    /// </summary>
+    [Check("server.host-one-folder-client-zip", TimeoutSeconds = 180)]
+    public static void TheClientZipComesInThroughItsOption() => ClientZipAsync().GetAwaiter().GetResult();
+
+    private static async Task ClientZipAsync()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = AirBootstrapChecks.TemporaryDirectory("league-one-folder-zip");
+        try
+        {
+            var request = HostMode.ParseInstall(["--install-to", @"D:\Amberline", "--client-zip", @"E:\Downloads\bundle.zip"]);
+            TestAssert.True(request is (@"D:\Amberline", { Game: null, Air: null, Zip: @"E:\Downloads\bundle.zip" }, false), $"{request}");
+            TestAssert.Equal(null, HostMode.ParseInstall(["--client-zip", "bundle.zip", "--game", @"E:\game"]), "with --game");
+            TestAssert.Equal(null, HostMode.ParseInstall(["--air", @"E:\air", "--client-zip", "bundle.zip"]), "with --air");
+            TestAssert.Equal(null, HostMode.ParseInstall(["--client-zip"]), "the zip is missing");
+
+            var clients = Clients.Make(Path.Combine(root, "downloads"), Path.Combine(root, "downloads", "lol_air_client"));
+            var zip = ClientZipChecks.Bundle(Path.Combine(root, "client bundle.zip"), "any top folder/", clients.Game, [clients.Language], clients.Air, null);
+            var zipSha = Sha256(zip);
+            var folder = Path.Combine(root, "My Amberline");
+            var screen = new StringWriter();
+            var install = Installer(root, HostInstallChecks.Release(Path.Combine(root, "zip-1.4.0"), "1.4.0"), folder, new(null, null, DeleteOriginals: false, Zip: zip),
+                screen, [], clients.Pins);
+            TestAssert.Equal(null, install.Check(), "the new folder is accepted");
+            TestAssert.Equal(0, await install.RunAsync(), screen.ToString());
+
+            var installedGame = Path.Combine(folder, @"game\projects\lol_game_client\releases\0.0.0.51");
+            TestAssert.Equal("READ ME.txt, Uninstall Amberline.cmd, air, amberline-install.json, app, data, game", Entries(folder), "the install folder holds only Amberline");
+            TestAssert.Equal(Snapshot(clients.Game), Snapshot(installedGame), "the game came in from the zip");
+            TestAssert.Equal(Snapshot(clients.Language), Snapshot(Path.Combine(folder, @"game\projects\lol_game_client_en_us")), "and its language project");
+            TestAssert.Equal(Snapshot(clients.Air), Snapshot(Path.Combine(folder, "air")), "the AIR client came in from the zip");
+            using (var settings = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "data", "platform.json"))))
+            {
+                TestAssert.True(Same(installedGame, settings.RootElement.GetProperty("dataRoot").GetString()), "platform.json names the game inside");
+                TestAssert.True(Same(Path.Combine(folder, "air"), settings.RootElement.GetProperty("airRoot").GetString()), "platform.json names the AIR client inside");
+            }
+            TestAssert.False(Directory.Exists(folder + ".client-zip"), "no staging folder is left");
+            TestAssert.Equal(zipSha, Sha256(zip), "the zip is byte-identical");
+            var lines = screen.ToString();
+            foreach (var phrase in new[] { $"Unpacking the game and the AIR client from the client zip into {folder}.", "Unpacking the client zip: ", $"Moving the game and the AIR client into {folder}." })
+                TestAssert.True(lines.Contains(phrase, StringComparison.Ordinal), $"the window says <{phrase}>: {lines}");
+        }
+        finally { HostModeChecks.Delete(root); }
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 765, round 2; owner, 13 November 2026: "Beside the install"): with <c>--client-zip</c>, the zip's 2011 launcher goes into
+    /// <c>&lt;install&gt;-launcher</c>, outside the installation, and platform.json's launcherRoot names it once it passes the launcher row's check.
+    /// A host's own working launcher stays, a folder of that name Amberline did not make is never touched, one it made from an earlier zip is
+    /// replaced, and a launcher that fails its check never fails the install. The zip with the two folders has a sentence of its own.
+    /// </summary>
+    [Check("server.host-one-folder-client-zip-launcher", TimeoutSeconds = 240)]
+    public static void TheClientZipsLauncherGoesBesideTheInstall() => ZipLauncherAsync().GetAwaiter().GetResult();
+
+    private static async Task ZipLauncherAsync()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = AirBootstrapChecks.TemporaryDirectory("league-one-folder-zip-launcher");
+        try
+        {
+            TestAssert.Equal("Give either the client zip (--client-zip) or the game and AIR client folders (--game and --air), not both.",
+                HostMode.OptionsProblem(["--install-to", @"D:\Amberline", "--client-zip", "bundle.zip", "--air", @"E:\air"]), "the zip with a folder");
+            TestAssert.Equal("Amberline does not know these options. Start it from its desktop icon or Start Amberline.cmd.", HostMode.OptionsProblem(["--bogus"]),
+                "an unknown option");
+
+            var clients = Clients.Make(Path.Combine(root, "downloads"), Path.Combine(root, "downloads", "lol_air_client"));
+            var launcher = Path.Combine(root, "downloads", "launcher");
+            var launcherSha = ClassicLauncherChecks.WriteLauncherFiles(launcher);
+            WriteFile(Path.Combine(launcher, "releasemanifest"), "file list");
+            var zip = ClientZipChecks.Bundle(Path.Combine(root, "client bundle.zip"), "", clients.Game, [clients.Language], clients.Air, launcher);
+            var zipSha = Sha256(zip);
+            var release = HostInstallChecks.Release(Path.Combine(root, "zip-1.4.0"), "1.4.0");
+            async Task<(string Folder, string Beside, string Screen)> InstallAsync(string name, string sha, Action<string>? before = null)
+            {
+                var folder = Path.Combine(root, name);
+                before?.Invoke(folder);
+                var screen = new StringWriter();
+                TestAssert.Equal(0, await Installer(root, release, folder, new(null, null, false, zip), screen, [], clients.Pins, launcherSha256: sha).RunAsync(),
+                    screen.ToString());
+                TestAssert.Equal(Snapshot(clients.Game), Snapshot(Path.Combine(folder, @"game\projects\lol_game_client\releases\0.0.0.51")), name + ": the game came in");
+                TestAssert.False(Directory.Exists(folder + ".client-zip") || Directory.Exists(Path.Combine(folder, "launcher")), name + ": no staging folder, no launcher inside");
+                return (folder, folder + "-launcher", screen.ToString());
+            }
+            void HasLauncher(string folder, string what)
+            {
+                foreach (var file in ClassicLauncherFiles.Required.Append("releasemanifest").Append("amberline-client-zip.txt"))
+                    TestAssert.True(File.Exists(Path.Combine(folder, file)), $"{what}: {file} beside the install");
+            }
+
+            // A new install: the launcher is beside it, whole, and platform.json names it.
+            var (fresh, beside, screen) = await InstallAsync("Fresh", launcherSha);
+            HasLauncher(beside, "a new install");
+            TestAssert.True(Same(beside, LauncherRoot(fresh)), "platform.json names the launcher beside the install: " + LauncherRoot(fresh));
+            TestAssert.True(screen.Contains($"The client zip's 2011 launcher is in {beside}, beside the install folder.", StringComparison.Ordinal), screen);
+
+            // The host's own working launcher stays, and nothing is put beside the install.
+            var (own, ownBeside, _) = await InstallAsync("Own", launcherSha, folder =>
+            {
+                WriteFile(Path.Combine(folder, FolderMove.InstallMarker), "{}");
+                WriteFile(Path.Combine(folder, "data", "platform.json"), JsonSerializer.Serialize(new { launcherRoot = launcher }));
+            });
+            TestAssert.True(Same(launcher, LauncherRoot(own)) && !Directory.Exists(ownBeside), "the host's own launcher stays: " + LauncherRoot(own));
+
+            // A folder of that name Amberline did not make is never touched; the game and the AIR client still come in.
+            var (foreign, foreignBeside, foreignScreen) = await InstallAsync("Foreign", launcherSha, folder => WriteFile(Path.Combine(folder + "-launcher", "mine.txt"), "the host's own"));
+            TestAssert.Equal("mine.txt", Entries(foreignBeside), "the folder in the way is untouched");
+            TestAssert.Equal(null, LauncherRoot(foreign), "no launcher is named");
+            TestAssert.True(foreignScreen.Contains($"{foreignBeside} holds other files, so Amberline did not put the client zip's 2011 launcher there; " +
+                "your 2011 launcher setting stays as it is.", StringComparison.Ordinal), foreignScreen);
+
+            // A launcher that fails its check never fails the install, and leaves nothing beside it.
+            var (failing, failingBeside, failingScreen) = await InstallAsync("Failing", new string('0', 64));
+            TestAssert.True(LauncherRoot(failing) is null && !Directory.Exists(failingBeside), "a failing launcher is not kept");
+            TestAssert.True(failingScreen.Contains("The client zip's 2011 launcher did not pass its check, so your 2011 launcher setting stays as it is.", StringComparison.Ordinal),
+                failingScreen);
+
+            // One Amberline made from an earlier zip (its marker) is replaced whole.
+            var (again, againBeside, _) = await InstallAsync("Again", launcherSha, folder =>
+            {
+                WriteFile(Path.Combine(folder + "-launcher", "amberline-client-zip.txt"), "made earlier");
+                WriteFile(Path.Combine(folder + "-launcher", "old.txt"), "from an earlier zip");
+            });
+            HasLauncher(againBeside, "a replaced launcher");
+            TestAssert.True(!File.Exists(Path.Combine(againBeside, "old.txt")) && Same(againBeside, LauncherRoot(again)), "the earlier launcher folder was replaced");
+            TestAssert.Equal(zipSha, Sha256(zip), "the zip is byte-identical");
+        }
+        finally { HostModeChecks.Delete(root); }
+    }
+
+    /// <summary>platform.json's launcherRoot in an install folder, or null.</summary>
+    private static string? LauncherRoot(string folder)
+    {
+        using var settings = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "data", "platform.json")));
+        return settings.RootElement.TryGetProperty("launcherRoot", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    }
+
     /// <summary>Synthetic stock clients: the AIR client at <c>air</c>, the game and its language project under <c>parent\live\projects</c>.</summary>
     private sealed record Clients(string Air, string Game, string Language, (string Game, string Air) Pins)
     {
@@ -253,7 +393,7 @@ public static class HostOneFolderChecks
     }
 
     private static HostInstall Installer(string root, string release, string? folder, HostClients? clients, StringWriter screen, List<string> started,
-        (string Game, string Air) pins, Func<string, string, bool>? sameDrive = null, InstallRules? rules = null) =>
+        (string Game, string Air) pins, Func<string, string, bool>? sameDrive = null, InstallRules? rules = null, string? launcherSha256 = null) =>
         new(HostPaths.Resolve(null, Local(root), Path.Combine(release, "platform") + Path.DirectorySeparatorChar), Local(root), Desktop(root), screen)
         {
             Folder = folder,
@@ -263,6 +403,7 @@ public static class HostOneFolderChecks
             Rules = rules ?? new([], []),
             Pins = pins,
             SameDrive = sameDrive,
+            LauncherSha256 = launcherSha256 ?? ClassicLauncherFiles.LauncherSha256,
         };
 
     private static string Local(string root) => Path.Combine(root, "profile", "Local");

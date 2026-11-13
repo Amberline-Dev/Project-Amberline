@@ -32,6 +32,12 @@ public sealed record FolderSetup
     /// <summary>The folder window: its title in, the chosen folder out, null when cancelled. Null: no window, the address field only.</summary>
     public Func<string, string?>? Choose { get; init; }
 
+    /// <summary>
+    /// NOT RETAIL (batch 765): the file window for the client zip: its title in, the chosen zip out, null when cancelled. Null: no window, and the
+    /// page offers no client zip (a host without one uses <c>--client-zip</c>).
+    /// </summary>
+    public Func<string, string?>? ChooseZip { get; init; }
+
     /// <summary>DIAGNOSTICS: test seam. The SHA-256 the two stock executables must have; checks pass their fixtures' own.</summary>
     public string GameSha256 { get; init; } = RetailClients.GameExecutableSha256;
 
@@ -71,6 +77,7 @@ public sealed record FolderSetup
             Records = [FolderMove.PointerPath(localAppData), .. FolderMove.PlayerRecords(localAppData)],
             Places = places.Where(place => place.Folder.Length > 0).ToList(),
             Choose = OperatingSystem.IsWindows() ? FolderDialog.Choose : null,
+            ChooseZip = OperatingSystem.IsWindows() ? FolderDialog.ChooseZip : null,
         };
     }
 }
@@ -454,6 +461,8 @@ public static class HostFolders
             var game = Row(FolderKind.Game, form["game"].ToString());
             var air = Row(FolderKind.Air, form["air"].ToString());
             var launcher = Row(FolderKind.Launcher, form["launcher"].ToString());
+            // NOT RETAIL (batch 765): "Use the client zip…" unpacks the client zip into this one-folder install.
+            if (form["choose"] == "zip") return ChooseZip(token, loop, place, copy, game, air, launcher);
             if (form.ContainsKey("choose"))
             {
                 var kind = form["choose"].ToString() switch { "air" => FolderKind.Air, "launcher" => FolderKind.Launcher, _ => FolderKind.Game };
@@ -503,6 +512,21 @@ public static class HostFolders
             return HostMode.Page("<h1>Starting Amberline</h1><p>This page comes back by itself in a few seconds.</p>",
                 refresh: place.Games is null ? loop.ReopenPath : loop.ReopenPathTo("settings"), nav: false);
         });
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 765): "Use the client zip…": the file window, then the unpack of the game and the AIR client into the one-folder install with
+    /// its progress page (<see cref="HostFolderCopy.Unpack"/>). A closed window changes nothing. Only offered in a one-folder install with a file window.
+    /// </summary>
+    private static IResult ChooseZip(string token, HostLoop loop, FolderPlace place, HostFolderCopy? copy, FolderCheck game, FolderCheck air, FolderCheck launcher)
+    {
+        if (copy is null || loop.Folders.ChooseZip is not { } choose)
+            return Form(token, loop, place, game, air, launcher, null, false, StatusCodes.Status400BadRequest, "Choose the folders instead.");
+        if (place.Games?.Invoke() > 0) return Busy(token, loop, place, game, air, launcher);
+        string? zip;
+        try { zip = choose($"Choose the client zip ({ClientZip.BundleName})"); }
+        catch (InvalidOperationException ex) { return Form(token, loop, place, game, air, launcher, null, false, problem: ex.Message); }
+        return zip is null ? Form(token, loop, place, game, air, launcher, null, false) : copy.Unpack(zip, launcher.Folder);
     }
 
     /// <summary>Settings' refusal while a game runs: the folders' save restarts Amberline, and so may their copy's end.</summary>
@@ -557,6 +581,14 @@ public static class HostFolders
                 $"<p class=hint>Amberline reads it where it is; nothing is moved or copied.</p><p>{state}</p>" +
                 HostPages.FieldError("launcher", launcher.Problem) + pick + stop + "</section>";
         }
+        // NOT RETAIL (batch 765): the client zip, first: unpacked into the one-folder install, so it needs one, and the file window.
+        var zipInto = loop.Folders.ChooseZip is null ? null : HostPaths.InstallFolder(loop.Paths.App);
+        var zipSection = zipInto is null ? "" :
+            "<section class=folder aria-labelledby=zip-title><h2 id=zip-title>The client zip</h2>" +
+            $"<p class=hint id=zip-hint>Have the client zip ({ClientZip.BundleName})? Amberline unpacks the game and the AIR client from it into " +
+            $"{Encode(zipInto)}; the zip stays as it is. Or choose the folders below.</p>" +
+            $"<form method=post action={place.Path}{HostPages.Wait("Opening the file window. It may open behind this browser window.")}>{hidden}" +
+            "<button id=zip-choose name=choose value=zip aria-describedby=zip-hint>Use the client zip…</button></form></section>";
         // The start's problem stands, but one about the saved folders (none yet, or gone) goes once both rows are usable (batch 643).
         var aboutFolders = loop.Problem is HostPaths.NoFolders || loop.Problem?.EndsWith("(A-FILES-05)", StringComparison.Ordinal) == true;
         var top = problem ?? (loop.Problem is { } start && !(aboutFolders && game.Ok && air.Ok) && start != game.Problem && start != air.Problem ? start : null);
@@ -564,6 +596,7 @@ public static class HostFolders
             <h1>{{Heading(place, "Your game files")}}</h1>
             <p>{{(looked ? "Amberline looked for them on this PC." : "Choose the 2011 game and its AIR client.")}}</p>
             {{HostPages.Errors((top, null), (game.Problem, Target("game")), (air.Problem, Target("air")), (launcher.Problem, Target("launcher")), (note, "paste"))}}
+            {{zipSection}}
             {{Row("game", "Game folder", game)}}
             {{Row("air", "AIR client folder", air)}}
             {{LauncherRow()}}

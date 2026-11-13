@@ -6,22 +6,30 @@ namespace Amberline.Platform;
 /// <summary>
 /// NOT RETAIL: the Windows folder window of the host's setup page: the shell's own FileOpenDialog in folder mode (IFileDialog with
 /// FOS_PICKFOLDERS, the window WinForms' FolderBrowserDialog shows), part of Windows. It runs on its own STA thread with no owner
-/// window, so it can open behind the browser; the page says so. One window at a time.
+/// window, so it can open behind the browser; the page says so. One window at a time. Batch 765: the same window picks the client
+/// zip as a file (<see cref="ChooseZip"/>, the filter <c>*.zip</c>).
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal static class FolderDialog
 {
-    private const uint PickFolders = 0x20, ForceFileSystem = 0x40, PathMustExist = 0x800;
+    private const uint PickFolders = 0x20, ForceFileSystem = 0x40, PathMustExist = 0x800, FileMustExist = 0x1000;
     private const uint FileSystemPath = 0x80058000;
     private const int Cancelled = unchecked((int)0x800704C7);
     private static int _open;
 
     /// <summary>The folder the host picked, or null when they closed the window.</summary>
     /// <exception cref="InvalidOperationException">A folder window is already open.</exception>
-    public static string? Choose(string title)
+    public static string? Choose(string title) => Pick(title, zip: false);
+
+    /// <summary>NOT RETAIL (batch 765): the client zip the host picked (a <c>.zip</c> file), or null when they closed the window.</summary>
+    /// <exception cref="InvalidOperationException">A folder or file window is already open.</exception>
+    public static string? ChooseZip(string title) => Pick(title, zip: true);
+
+    private static string? Pick(string title, bool zip)
     {
+        var what = zip ? "file" : "folder";
         if (Interlocked.Exchange(ref _open, 1) == 1)
-            throw new InvalidOperationException("A folder window is already open. It may be behind this browser window.");
+            throw new InvalidOperationException($"A {what} window is already open. It may be behind this browser window.");
         try
         {
             string? chosen = null;
@@ -29,24 +37,27 @@ internal static class FolderDialog
             var thread = new Thread(() =>
             {
                 // Every failure is carried back: an exception left on this thread would end the whole Platform.
-                try { chosen = Show(title); }
+                try { chosen = Show(title, zip); }
                 catch (Exception ex) { failure = ex; }
             }) { IsBackground = true };
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
             thread.Join();
-            return failure is null ? chosen : throw new InvalidOperationException($"The folder window did not open ({failure.Message}). Paste the folder's address instead.");
+            return failure is null ? chosen : throw new InvalidOperationException(zip
+                ? $"The file window did not open ({failure.Message}). Choose the folders instead."
+                : $"The folder window did not open ({failure.Message}). Paste the folder's address instead.");
         }
         finally { Volatile.Write(ref _open, 0); }
     }
 
-    private static string? Show(string title)
+    private static string? Show(string title, bool zip)
     {
         var dialog = (IFileDialog)new FileOpenDialog();
         try
         {
             dialog.GetOptions(out var options);
-            dialog.SetOptions(options | PickFolders | ForceFileSystem | PathMustExist);
+            dialog.SetOptions(options | ForceFileSystem | PathMustExist | (zip ? FileMustExist : PickFolders));
+            if (zip) dialog.SetFileTypes(1, [new FilterSpec { Name = "Client zip (*.zip)", Spec = "*.zip" }]);
             dialog.SetTitle(title);
             var result = dialog.Show(0);
             if (result == Cancelled) return null;
@@ -62,6 +73,14 @@ internal static class FolderDialog
         finally { Marshal.FinalReleaseComObject(dialog); }
     }
 
+    /// <summary>COMDLG_FILTERSPEC: one line of the window's file-type list.</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct FilterSpec
+    {
+        [MarshalAs(UnmanagedType.LPWStr)] public string Name;
+        [MarshalAs(UnmanagedType.LPWStr)] public string Spec;
+    }
+
     [ComImport, Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")]
     private class FileOpenDialog { }
 
@@ -70,7 +89,7 @@ internal static class FolderDialog
     private interface IFileDialog
     {
         [PreserveSig] int Show(nint parent);
-        void SetFileTypes(uint count, nint filters);
+        void SetFileTypes(uint count, [MarshalAs(UnmanagedType.LPArray)] FilterSpec[] filters);
         void SetFileTypeIndex(uint index);
         void GetFileTypeIndex(out uint index);
         void Advise(nint events, out uint cookie);

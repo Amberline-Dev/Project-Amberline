@@ -4,15 +4,16 @@ A game server for patch 1.0.0.126 (October 2011) of a MOBA and its Adobe AIR cli
 people you invite.
 
 **You need your own copy of the game.** Amberline includes no game or AIR client files. You and each player need the game on
-patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its folder holds `assets`), on Windows 10 or 11
-(64-bit). A host who may share their own copy can let their players download it from their server
+patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its folder holds `assets`), or the client zip
+(`patch-1.0.0.126-client-bundle.zip`) that holds both, on Windows 10 or 11 (64-bit). A host who may share their own copy can let their players download it from their server
 ([Game files](HOSTING.md#game-files)).
 
 ## Host a server
 
 1. **Download** `Amberline-<version>-win-x64.zip` from the
    [latest release](https://github.com/Amberline-Dev/Project-Amberline/releases/latest) and unzip it.
-2. **Double-click `START-HERE.cmd`.** It finds your game and AIR client folders and asks where to install (press Enter for
+2. **Double-click `START-HERE.cmd`.** It finds your game and AIR client folders (or takes the client zip: paste its path or drag it
+   into the window when it asks for the game folder) and asks where to install (press Enter for
    `C:\Amberline`). If Windows warns you, choose **More info**, then **Run anyway**.
 3. **Follow the page in your browser.** Name your server, check your game folders, make your login, then choose **Allow
    through Windows Firewall**.
@@ -23,7 +24,8 @@ From then on, start Amberline from its desktop icon, and keep its window open wh
 ## Join a server
 
 1. **Double-click the `Play.cmd`** your host sent you.
-2. **Check the two folders** it found (**Change…** picks others), then choose **Install**.
+2. **Choose Use the client zip…** and pick the client zip (`patch-1.0.0.126-client-bundle.zip`): setup unpacks it and installs.
+   Or **check the two folders** it found (**Change…** picks others), then choose **Install**.
 3. **Open the new desktop icon** with your host's server name, and log in with the username and password from your host.
 
 **Optional: the original 2011 launcher.** If you have that launcher's folder, choose it in the optional **2011 launcher folder** row

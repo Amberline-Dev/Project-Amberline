@@ -216,7 +216,7 @@ public static class HostMode
         var install = request is { } asked ? HostInstall.ForRelease(paths, localAppData, Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
             screen, asked.Folder, asked.Clients, asked.Confirmed) : null;
         var exit = install is null && options.Length > 0
-            ? Refuse(screen, "Amberline does not know these options. Start it from its desktop icon or Start Amberline.cmd.")
+            ? Refuse(screen, OptionsProblem(options))
             : install is { AsksFolder: true } && !install.AskFolder(Console.ReadLine) ? Refuse(screen, "Amberline was not installed.", 1)
             : install?.Check() is { } refused ? Refuse(screen, refused)
             : await RunHomeAsync(install is null ? paths : install.Target, install, screen);
@@ -270,11 +270,21 @@ public static class HostMode
     /// <summary>
     /// START-HERE's install request after <c>--home</c> (batch 637): <c>--install-to &lt;folder&gt;</c>, <c>--game &lt;folder&gt;</c>,
     /// <c>--air &lt;folder&gt;</c> and <c>--delete-originals</c>, each optional; batch 666, <see cref="HostInstall.ConfirmedOption"/> (only
-    /// Update now passes it: the host confirmed on the page). Null for anything else.
+    /// Update now passes it: the host confirmed on the page). NOT RETAIL (batch 765): <c>--client-zip &lt;zip&gt;</c>, the client zip instead
+    /// of <c>--game</c> and <c>--air</c> (for a host on a command line), never with them. Null for anything else.
     /// </summary>
+    /// <summary>
+    /// The refusal of options <see cref="ParseInstall"/> does not take. NOT RETAIL (batch 765): the client zip given with the two folders gets a
+    /// sentence of its own.
+    /// </summary>
+    public static string OptionsProblem(IReadOnlyList<string> options) =>
+        options.Contains("--client-zip") && (options.Contains("--game") || options.Contains("--air"))
+            ? "Give either the client zip (--client-zip) or the game and AIR client folders (--game and --air), not both."
+            : "Amberline does not know these options. Start it from its desktop icon or Start Amberline.cmd.";
+
     public static (string? Folder, HostClients? Clients, bool Confirmed)? ParseInstall(IReadOnlyList<string> options)
     {
-        string? folder = null, game = null, air = null;
+        string? folder = null, game = null, air = null, zip = null;
         var (delete, confirmed) = (false, false);
         for (var index = 0; index < options.Count; index++)
             switch (options[index])
@@ -282,11 +292,13 @@ public static class HostMode
                 case "--install-to" when index + 1 < options.Count: folder = options[++index]; break;
                 case "--game" when index + 1 < options.Count: game = options[++index]; break;
                 case "--air" when index + 1 < options.Count: air = options[++index]; break;
+                case "--client-zip" when index + 1 < options.Count: zip = options[++index]; break;
                 case "--delete-originals": delete = true; break;
                 case HostInstall.ConfirmedOption: confirmed = true; break;
                 default: return null;
             }
-        return (folder, game is null && air is null ? null : new HostClients(game, air, delete), confirmed);
+        if (zip is not null && (game is not null || air is not null)) return null;
+        return (folder, game is null && air is null && zip is null ? null : new HostClients(game, air, delete, zip), confirmed);
     }
 
     public static async Task<int> RunAsync(HostLoop loop)

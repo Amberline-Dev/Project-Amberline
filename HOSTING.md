@@ -186,6 +186,11 @@ original 2011 launcher's folder: see [The 2011 launcher](#the-2011-launcher).
 - **Found:** shows the folder Amberline found; **Not found yet** shows none. Each row has **Choose folder…**: a Windows folder
   window opens, and it may open behind your browser (the button says so while it waits).
 - You can also paste a folder's address into the field and choose **Check**.
+- **Use the client zip…** (in an install folder such as `C:\Amberline`): pick the client zip (`patch-1.0.0.126-client-bundle.zip`)
+  instead of the two folders. Amberline unpacks the game and the AIR client from it into the install folder, with a progress bar
+  (about a minute), and names them; the zip stays as it is. When you have no working 2011 launcher yet, the zip's launcher goes into a
+  folder beside the install folder (for example `C:\Amberline-launcher`) and the launcher row uses it. START-HERE also takes the zip:
+  at the game folder question, paste the zip's path or drag the zip into its window.
 - Choose **Continue** when both rows are right.
 
 Amberline checks each folder: the game must be patch 1.0.0.126 and complete, the AIR client the matching 2011 one. A folder that

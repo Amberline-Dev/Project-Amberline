@@ -594,6 +594,7 @@ public static class HostPagesChecks
     private static readonly Dictionary<string, string> Exceptions = new()
     {
         ["Choose folder…"] = "folder step: opens the Windows folder window (the ellipsis says a window follows)",
+        ["Use the client zip…"] = "folder step in a one-folder install (batch 765): opens the Windows file window for the client zip, then unpacks it into the install folder",
         ["Check"] = "folder step: looks inside a pasted folder; nothing is saved",
         ["Stop using this folder"] = "folder step's 2011 launcher row (batch 761): forgets that folder on the page; nothing is deleted and the save is what saves it",
         ["Copy the game files"] = "folder step's offer: copies the game and the AIR client into the install folder (not text: verb and object)",

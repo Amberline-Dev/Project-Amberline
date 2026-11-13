@@ -279,8 +279,8 @@ internal static class PlayerInstallWindow
         private readonly string tool;
         private readonly ClientPins pins;
         private readonly Font bold;
-        private readonly Label airText, gameText, launcherText, downloadText, installText, spaceText, status, progressText, percent, cancelNote, doneHeading, doneText;
-        private readonly Button airButton, gameButton, launcherButton, downloadButton, installButton, start, cancel, open, close;
+        private readonly Label zipText, airText, gameText, launcherText, downloadText, installText, spaceText, status, progressText, percent, cancelNote, doneHeading, doneText;
+        private readonly Button zipButton, airButton, gameButton, launcherButton, downloadButton, installButton, start, cancel, open, close;
         private PlayerDownload.Offer? offer;
         private bool downloading;
         private readonly ProgressBar progress;
@@ -336,6 +336,10 @@ internal static class PlayerInstallWindow
                 ? $"Setup puts your 1.0.0.126 AIR client and game client in one folder, adds \"{name}\" to your desktop, with a copy in that folder."
                 : $"Your game is set up in {existing.Install}. Setup adds \"{name}\" to your desktop, with a copy in that folder.";
             intro.AccessibleDescription = intro.Text;
+            // NOT RETAIL (batch 765): the client zip, the first choice; the three folders below stay the other way.
+            zipText = Line("Client zip", "", width);
+            zipText.Text = zipText.AccessibleDescription = $"Have the client zip ({ClientZip.BundleName})? Setup unpacks the AIR client, the game client and " +
+                "the 2011 launcher from it into the install folder below and installs them; the zip stays as it is. Or choose the folders below.";
             airText = Line("AIR client folder", "", width);
             gameText = Line("Game client folder", "", width);
             launcherText = Line("2011 launcher folder (optional)", "", width);
@@ -352,6 +356,7 @@ internal static class PlayerInstallWindow
                 "Progress bar", "The progress bar and its percentage.");
             bar.Controls.Add(progress);
             bar.Controls.Add(percent);
+            zipButton = Action("Use the client &zip…", "Use the client zip", $"Choose the client zip ({ClientZip.BundleName}); setup unpacks it and installs.");
             airButton = Action("Change…", "Change the AIR client folder", "Choose the folder that holds the assets folder.");
             gameButton = Action("Change…", "Change the game client folder", "Choose the folder that holds DATA and LEVELS.");
             // NOT RETAIL (classic start, design §1): the optional third folder, the 2011 launcher; the install works without it.
@@ -365,7 +370,7 @@ internal static class PlayerInstallWindow
             close = Action("Close", "Close", "Closes setup.");
             foreach (var control in new Control[] { progressText, cancelNote, downloadText, downloadButton }) control.Visible = false;
 
-            setup = Rows((heading, null), (intro, null), (airText, airButton), (gameText, gameButton), (launcherText, launcherButton), (downloadText, downloadButton),
+            setup = Rows((heading, null), (intro, null), (zipText, zipButton), (airText, airButton), (gameText, gameButton), (launcherText, launcherButton), (downloadText, downloadButton),
                 (installText, installButton), (spaceText, null),
                 (status, null), (bar, null), (progressText, null), (cancelNote, null), (Buttons(cancel, start), null));
             Named(setup, "Setup", AccessibleDescription);
@@ -398,6 +403,7 @@ internal static class PlayerInstallWindow
             installButton.Enabled = !installKept;
             installButton.Click += (_, _) => Pick("Choose where to install (a new or empty folder is best)", install, _ => null,
                 folder => install = InstallFolder(folder), allowNew: true);
+            zipButton.Click += async (_, _) => await ZipAsync();
             start.Click += async (_, _) => await InstallAsync();
             downloadButton.Click += async (_, _) => await DownloadAsync();
             cancel.Click += (_, _) => CancelClicked();
@@ -544,6 +550,8 @@ internal static class PlayerInstallWindow
 
         private void UpdateText()
         {
+            // NOT RETAIL (batch 765): an install that is set up already has its clients; the zip is for a new one.
+            zipText.Visible = zipButton.Visible = !installKept;
             airText.Text = air is null ? "AIR client: not found. Choose its folder (with its assets folder)."
                 : (airFound ? "AIR client (found):\r\n" : "AIR client:\r\n") + air;
             gameText.Text = game is null ? "Game client: not found. Choose its folder (with DATA and LEVELS)."
@@ -629,7 +637,7 @@ internal static class PlayerInstallWindow
         private void SetBusy(bool on)
         {
             busy = on;
-            foreach (var control in new Control[] { airButton, gameButton, launcherButton, downloadButton, start }) control.Enabled = !on;
+            foreach (var control in new Control[] { zipButton, airButton, gameButton, launcherButton, downloadButton, start }) control.Enabled = !on;
             installButton.Enabled = !on && !installKept;
             cancel.Enabled = true;
             foreach (var control in new Control[] { bar, progressText, cancelNote }) control.Visible = on;
@@ -653,6 +661,31 @@ internal static class PlayerInstallWindow
         {
             UpdateText();
             if (plan is not { } chosen) return;
+            await RunInstallAsync((report, stop) => PlayerInstall.Install(profile, chosen, connection, name, tool, report, cancel: stop));
+        }
+
+        /// <summary>
+        /// NOT RETAIL (batch 765): "Use the client zip…": Windows' file picker for the zip, then the install from it (<see cref="PlayerInstall.InstallFromZip"/>)
+        /// into the install folder shown, with the 2011 launcher the player picked, if any. The unpacking shows its megabytes and can be canceled.
+        /// </summary>
+        private async Task ZipAsync()
+        {
+            string zip;
+            using (var dialog = new OpenFileDialog
+            {
+                Title = $"Choose the client zip ({ClientZip.BundleName})", Filter = "Client zip (*.zip)|*.zip", CheckFileExists = true, Multiselect = false,
+            })
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.FileName)) return;
+                zip = dialog.FileName;
+            }
+            var picked = launcher;
+            await RunInstallAsync((report, stop) => PlayerInstall.InstallFromZip(profile, zip, install, pins, picked, connection, name, tool, report, stop));
+        }
+
+        /// <summary>An install on a worker thread, with the bar, Cancel while it can work, and the finish page or what stopped it.</summary>
+        private async Task RunInstallAsync(Func<IProgress<InstallProgress>, CancellationToken, PlayerInstall.Result> work)
+        {
             using var source = new CancellationTokenSource();
             canceling = source;
             SetBusy(true);
@@ -661,7 +694,7 @@ internal static class PlayerInstallWindow
             PlayerInstall.Result finished;
             try
             {
-                finished = await Task.Run(() => PlayerInstall.Install(profile, chosen, connection, name, tool, report, cancel: source.Token));
+                finished = await Task.Run(() => work(report, source.Token));
             }
             catch (OperationCanceledException)
             {

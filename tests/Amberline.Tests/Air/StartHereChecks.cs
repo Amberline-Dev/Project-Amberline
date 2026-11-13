@@ -514,6 +514,22 @@ public static class StartHereChecks
                 TestAssert.False(home.Output.Contains(gone, StringComparison.Ordinal), $"the zip's run shows <{gone}>:\n{home.Output}");
             AssertPlain(home.Output, root);
 
+            // Batch 765: the client zip answers the game question. The AIR client is not asked, step 3 asks nothing about copies or the
+            // originals, and step 6 passes --client-zip instead of --game and --air (the release's first start unpacks it).
+            var bundle = Path.Combine(root, "downloads", "patch-1.0.0.126-client-bundle.zip");
+            Directory.CreateDirectory(Path.GetDirectoryName(bundle)!);
+            File.WriteAllBytes(bundle, [0x50, 0x4B, 0x05, 0x06, .. new byte[18]]);
+            var zipped = Run(windowsPowerShell, guide, Path.Combine(root, "state-client-zip"), standIns, root, "zip-client-zip",
+                new { where = "1", gameRoot = bundle, installFolder }, ["-SearchRoots", Path.Combine(root, "stand-ins")]);
+            TestAssert.Equal(0, zipped.ExitCode, zipped.Output);
+            AssertHas(zipped.Output, "the client zip's plan", "Or the client zip (patch-1.0.0.126-client-bundle.zip) for both: paste its path, or drag the zip into this window.",
+                $"Your client zip: {bundle}", "Amberline unpacks the game and the AIR client from it, so the AIR client folder is not asked.",
+                "Amberline unpacks the game and the AIR client from the client zip into it. The zip stays as it is.",
+                $"DRY RUN: would start {starter} --install-to \"{installFolder}\" --client-zip \"{bundle}\" in a new window.",
+                $"Summary Install folder: {installFolder} Now: a new window named Amberline copies the program into that folder and unpacks the game and the AIR client from the client zip into it.");
+            foreach (var gone in new[] { "AIR client folder (with its assets folder)", "Delete the originals?", "--game", "--air" })
+                TestAssert.False(zipped.Output.Contains(gone, StringComparison.Ordinal), $"the client zip's run shows <{gone}>:\n{zipped.Output}");
+
             // A rented server: the zip builds no server package, so the guide says what to do instead and ends.
             var rented = Run(pwsh, guide, Path.Combine(root, "state-rented"), standIns, root, "zip-rented", new { where = "2" }, ["-SearchRoots", tree]);
             TestAssert.Equal(0, rented.ExitCode, rented.Output);

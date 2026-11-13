@@ -180,7 +180,8 @@ internal static class FolderMove
     internal static IReadOnlyList<string> Execute(IReadOnlyList<Move> moves, bool deleteOriginals, IProgress<string>? progress, MoveOptions? options = null) =>
         Execute(moves, deleteOriginals, progress is null ? null : new Lines(progress), options);
 
-    private sealed class Lines(IProgress<string> lines) : IProgress<InstallProgress>
+    /// <summary>A console's progress: each step as a line, a measured one only at every 10% (the host's client zip unpacking too, batch 765).</summary>
+    internal sealed class Lines(IProgress<string> lines) : IProgress<InstallProgress>
     {
         private int next;
 
@@ -276,11 +277,19 @@ internal static class FolderMove
         var project = releases?.Parent;
         var projects = project?.Parent;
         if (releases is null || project is null || projects is null || !releases.Name.Equals("releases", StringComparison.OrdinalIgnoreCase) ||
-            !project.Name.Equals("lol_game_client", StringComparison.OrdinalIgnoreCase)) return null;
-        var locale = GameLanguagePack.ResolveLocale(game);
-        if (!Regex.IsMatch(locale, "^[A-Za-z]{2}_[A-Za-z]{2}$", RegexOptions.CultureInvariant)) return null;
-        var language = Path.Combine(projects.FullName, "lol_game_client_" + locale.ToLowerInvariant());
+            !project.Name.Equals("lol_game_client", StringComparison.OrdinalIgnoreCase) || LanguageFolder(game) is not { } name) return null;
+        var language = Path.Combine(projects.FullName, name);
         return Directory.Exists(language) ? language : null;
+    }
+
+    /// <summary>
+    /// The name of the game's language project folder, <c>lol_game_client_&lt;locale&gt;</c> by the game's own locale; null when the locale is no
+    /// xx_YY name. <see cref="LanguageProject"/>'s rule, also the one the client zip (batch 765) unpacks its language project by.
+    /// </summary>
+    internal static string? LanguageFolder(string game)
+    {
+        var locale = GameLanguagePack.ResolveLocale(game);
+        return Regex.IsMatch(locale, "^[A-Za-z]{2}_[A-Za-z]{2}$", RegexOptions.CultureInvariant) ? "lol_game_client_" + locale.ToLowerInvariant() : null;
     }
 
     internal static void NotThere(string target, string label)

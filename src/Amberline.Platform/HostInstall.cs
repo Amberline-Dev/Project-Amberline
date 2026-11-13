@@ -37,8 +37,11 @@ public static class HostVersion
     }
 }
 
-/// <summary>The game and AIR client folders a one-folder install brings in (null: none), and whether their originals go.</summary>
-public sealed record HostClients(string? Game, string? Air, bool DeleteOriginals);
+/// <summary>
+/// The game and AIR client folders a one-folder install brings in (null: none), and whether their originals go. NOT RETAIL (batch 765):
+/// or <paramref name="Zip"/>, the client zip they are unpacked from instead (<c>--client-zip</c>, never with the two folders).
+/// </summary>
+public sealed record HostClients(string? Game, string? Air, bool DeleteOriginals, string? Zip = null);
 
 /// <summary>
 /// The picked game and AIR client brought into a one-folder install, with the player installer's move code (<see cref="FolderMove"/>):
@@ -119,6 +122,51 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
         if (bytes > new DriveInfo(drive).AvailableFreeSpace)
             throw new InstallRefusedException($"Drive {drive.TrimEnd('\\')} has not enough free space: the game and the AIR client need {FolderMove.Gigabytes(bytes)} GB.");
         return new(moves, notes, game, air, delete, bytes);
+    }
+
+    /// <summary>Whether <paramref name="folder"/> is a 2011 launcher the setup page's launcher row accepts (batch 761); false for none.</summary>
+    public static bool LauncherWorks(string? folder, string launcherSha256) =>
+        folder is not null && HostFolders.Check(FolderKind.Launcher, folder, new FolderSetup { LauncherSha256 = launcherSha256 }).Ok;
+
+    /// <summary>The folder beside an install that the client zip's 2011 launcher goes into (batch 765): <c>&lt;install&gt;-launcher</c>.</summary>
+    public static string LauncherBeside(string install) => FolderMove.Full(install) + "-launcher";
+
+    /// <summary>
+    /// NOT RETAIL (batch 765; owner, 13 November 2026: "Beside the install"): the client zip's 2011 launcher for a host. A host's launcher folder is
+    /// read where it is and may not lie inside an Amberline installation (the launcher row, batch 761), so the launcher unpacked with the clients
+    /// (<paramref name="staged"/>, in the staging folder; null when the zip has none or the host has a working one, <see cref="LauncherWorks"/>) is
+    /// renamed whole into <see cref="LauncherBeside"/>, outside the install on its drive: that folder is complete or not there. A folder of that name
+    /// that Amberline did not make (no <see cref="ClientZip.Marker"/>) is never touched; one it made earlier is replaced. Once the folder passes
+    /// the launcher row's check, <c>platform.json</c>'s <c>launcherRoot</c> names it, as the row's save does. The launcher is optional, so nothing
+    /// here fails the game and AIR install: a problem is logged, the launcher setting stays as it is, and the sentence says so. Like a folder the
+    /// host picked, Amberline's uninstall leaves it where it is. Returns the folder now used (null: none) and a sentence for the host (null: none).
+    /// </summary>
+    public static (string? Launcher, string? Note) PlaceZipLauncher(string? staged, string install, string launcherSha256, string settings)
+    {
+        if (staged is null || !Directory.Exists(staged)) return (null, null);
+        var target = LauncherBeside(install);
+        const string Stays = "your 2011 launcher setting stays as it is.";
+        try
+        {
+            if (File.Exists(target) || (Directory.Exists(target) && !File.Exists(Path.Combine(target, ClientZip.Marker))))
+                return (null, $"{target} holds other files, so Amberline did not put the client zip's 2011 launcher there; " + Stays);
+            File.WriteAllText(Path.Combine(staged, ClientZip.Marker), "Amberline put the 2011 launcher from the client zip here; it replaces this folder only while this file is in it.\r\n");
+            if (Directory.Exists(target) && !FolderMove.TryDeleteTree(target)) throw new IOException($"{target}, made from an earlier client zip, could not be replaced.");
+            Directory.Move(staged, target);
+            if (!LauncherWorks(target, launcherSha256))
+            {
+                Console.Error.WriteLine($"Client zip, 2011 launcher: {HostFolders.Check(FolderKind.Launcher, target, new FolderSetup { LauncherSha256 = launcherSha256 }).Problem}");
+                FolderMove.TryDeleteTree(target);
+                return (null, "The client zip's 2011 launcher did not pass its check, so " + Stays);
+            }
+            HostMode.Change(settings, saved => saved with { LauncherRoot = target });
+            return (target, $"The client zip's 2011 launcher is in {target}, beside the install folder.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Client zip, 2011 launcher: {ex}");
+            return (null, "The client zip's 2011 launcher could not be put beside the install folder, so " + Stays);
+        }
     }
 
     /// <summary>
@@ -216,6 +264,8 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     public (string Game, string Air) Pins { get; init; } = (RetailClients.GameExecutableSha256, RetailClients.LolClientSha256);
     /// <summary>Replaces the drive test of the client moves (a check forces the copy path on one drive).</summary>
     public Func<string, string, bool>? SameDrive { get; init; }
+    /// <summary>The SHA-256 of the 2011 launcher's LoLLauncher.exe (<see cref="ClassicLauncherFiles"/>) the client zip's launcher must have (batch 765).</summary>
+    public string LauncherSha256 { get; init; } = ClassicLauncherFiles.LauncherSha256;
 
     /// <summary>
     /// The installer when this program runs from an unpacked release (its <c>app\BUILD.json</c> names a version) other than an
@@ -452,9 +502,23 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     /// </summary>
     private string? BringClients()
     {
-        if (Folder is not { } folder || Clients is not { } clients || (clients.Game is null && clients.Air is null)) return null;
+        if (Folder is not { } folder || Clients is not { } clients || (clients.Game is null && clients.Air is null && clients.Zip is null)) return null;
+        // NOT RETAIL (batch 765): --client-zip unpacks the game and the AIR client into the staging folder beside the install (ClientZip), and
+        // they come in from there like picked folders whose originals go: renames on that drive. Its 2011 launcher goes beside the install
+        // (ClientPlan.PlaceZipLauncher). The staging folder goes afterwards.
+        var staging = clients.Zip is null ? null : ClientZip.StagingFor(folder);
+        string? zipLauncher = null;
         try
         {
+            if (clients.Zip is { } zip)
+            {
+                screen.WriteLine($"Unpacking the game and the AIR client from the client zip into {folder}. This takes about a minute.");
+                // Batch 765, round 2: its 2011 launcher too, beside the install (ClientPlan.PlaceZipLauncher), unless the host has a working one.
+                var wanted = !ClientPlan.LauncherWorks(HostMode.ReadOrDefault(Target.Settings).LauncherRoot, LauncherSha256);
+                var unpacked = ClientZip.Unpack(zip, staging!, launcher: wanted, new FolderMove.Lines(new Lines(screen)));
+                clients = new(unpacked.Game, unpacked.Air, DeleteOriginals: true);
+                zipLauncher = unpacked.Launcher;
+            }
             var plan = ClientPlan.Make(folder, clients, FolderMove.PlayerRecords(localAppData), Pins, SameDrive);
             IReadOnlyList<string> leftovers = [];
             if (plan.Moves.Count > 0)
@@ -466,6 +530,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
                 leftovers = FolderMove.Execute(plan.Moves, plan.Delete, new Lines(screen), new(SameDrive));
             }
             foreach (var line in plan.Finish(leftovers, Target.Settings)) screen.WriteLine(line);
+            if (ClientPlan.PlaceZipLauncher(zipLauncher, folder, LauncherSha256, Target.Settings).Note is { } note) screen.WriteLine(note);
             return null;
         }
         catch (InstallRefusedException refused) { return refused.Message + ClientPlan.Unchanged; }
@@ -473,6 +538,10 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
         {
             Console.Error.WriteLine($"Install, game and AIR client: {ex}");
             return "Amberline could not copy the game and the AIR client: the disk may be full, or a program uses their files." + ClientPlan.Unchanged;
+        }
+        finally
+        {
+            if (staging is not null && !ClientZip.Remove(staging)) Console.Error.WriteLine($"Install, client zip: {staging} could not be removed; the next unpack removes it.");
         }
     }
 

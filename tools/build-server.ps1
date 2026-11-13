@@ -331,10 +331,11 @@ ADMINISTRATION
 
 PLAYERS
   Send each player Play.cmd (the only file they need) and, privately, the login you created for them. Each player needs
-  Windows 10 or 11 and their own 1.0.0.126 game and AIR client folders. Play.cmd downloads the player tool from this server
-  (the server's certificate must match the pin, the archive its SHA-256) and opens a setup window: it finds or asks for the
-  two folders, moves them into one install folder the player picks (on another drive: copied, every file checked, then the
-  originals removed), and puts a shortcut named "{SERVERNAME}" on the desktop, with a copy in that folder. The shortcut asks this server for a newer
+  Windows 10 or 11 and their own 1.0.0.126 game and AIR client folders, or the client zip (patch-1.0.0.126-client-bundle.zip).
+  Play.cmd downloads the player tool from this server (the server's certificate must match the pin, the archive its SHA-256)
+  and opens a setup window: it unpacks the client zip the player chooses, or finds or asks for the two folders, and moves
+  them into one install folder the player picks (on another drive: copied, every file checked, then the originals removed),
+  and puts a shortcut named "{SERVERNAME}" on the desktop, with a copy in that folder. The shortcut asks this server for a newer
   player tool, updates it when there is one, and starts the AIR client, without a console window. A player who already
   installed for another server keeps that install: your Play.cmd only adds your server and its shortcut. Running Play.cmd
   again repairs the shortcut.
@@ -414,7 +415,8 @@ AMBERLINE {VERSION}: READ ME FIRST
 
 Amberline hosts the game on patch 1.0.0.126 (October 2011) on your PC for your players.
 This zip holds no game or AIR client file. You need your own game folder (with
-DATA and LEVELS) and AIR client folder (with its assets folder).
+DATA and LEVELS) and AIR client folder (with its assets folder), or the client zip
+(patch-1.0.0.126-client-bundle.zip).
 You need Windows 10 or 11, 64-bit, and nothing else.
 
 STARTING
@@ -426,6 +428,12 @@ STARTING
    delete the zip.
 4. Follow the setup page that opens in your browser.
 5. Keep the Amberline window open while players play.
+
+ONLY THE CLIENT ZIP?
+When START-HERE asks for your game folder, paste the zip's path or drag the zip into its
+window. Amberline unpacks the game and the AIR client from it into the install folder, and
+its 2011 launcher beside it. The zip stays as it is. The setup page also offers "Use the
+client zip" (and Settings, Change the folders, later).
 
 UPDATING
 Choose Update now on Amberline's page. Or unzip the new zip, double-click its
