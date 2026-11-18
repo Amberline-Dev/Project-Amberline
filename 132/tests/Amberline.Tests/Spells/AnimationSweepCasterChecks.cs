@@ -17,7 +17,7 @@ public static partial class ChampionLiveRegressionChecks
             match.CastGround(0, owner.Position + new Position2(250, 0));
             var gesture = match.Captures[0].Packets.Single(packet =>
                 packet.Plaintext.Span[0] == 0xB9);
-            AssertCasterGesture(gesture, owner.NetId, "Spell1", 0x208u);
+            AssertCasterGesture(gesture, owner.NetId, "Spell1", 0x80u);
 
             match.Clear();
             match.Cast(0, 0, owner);
@@ -124,7 +124,7 @@ public static partial class ChampionLiveRegressionChecks
 
             var packets = match.Captures[0].Packets;
             var gesture = packets.Single(packet => packet.Plaintext.Span[0] == 0xB9);
-            AssertCasterGesture(gesture, owner.NetId, "Spell3", 0x208u);
+            AssertCasterGesture(gesture, owner.NetId, "Spell3", 0x80u);
             TestAssert.False(packets.Any(packet => packet.Plaintext.Span[0] == 0xB9 &&
                 BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[1..]) == target.NetId &&
                 target != owner),

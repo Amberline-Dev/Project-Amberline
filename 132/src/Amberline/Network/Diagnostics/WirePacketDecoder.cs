@@ -336,11 +336,11 @@ public static class WirePacketDecoder
     }
 
     // PlayAnimation (0xB9, 126 0xB8; builder SpellPackets.PlayAnimation): [netid u32][flags u32][duration f32][NUL-terminated name at 13].
-    // The flags are the playback bits the handler reads: loop 2, replace 8, lock 0x40, no blending 0x200.
+    // The flags are the 132 AnimationComponent's bits (SpellPackets.PlayAnimation, batch 885): loop 0x10, lock 0x20, no blending 0x80, queue 8.
     private static Dictionary<string, object?> DecodePlayAnimation(byte[] p) => Fixed(p, 14, (d, o) => new()
     {
-        ["netid"] = U32(d, 1), ["flags"] = U32(d, 5), ["loop"] = (U32(d, 5) & 2) != 0, ["replace"] = (U32(d, 5) & 8) != 0,
-        ["lock"] = (U32(d, 5) & 0x40) != 0, ["blend"] = (U32(d, 5) & 0x200) == 0, ["duration"] = F32(d, 9), ["name"] = CString(d, 13, 64),
+        ["netid"] = U32(d, 1), ["flags"] = U32(d, 5), ["loop"] = (U32(d, 5) & 0x10) != 0, ["queue"] = (U32(d, 5) & 8) != 0,
+        ["lock"] = (U32(d, 5) & 0x20) != 0, ["blend"] = (U32(d, 5) & 0x80) == 0, ["duration"] = F32(d, 9), ["name"] = CString(d, 13, 64),
     });
 
     // OnEventWorld (0x4B, 126 0x4A; builder CombatPackets.OnEventWorld): [0 u32][event u8][source netid u32][other netid u32], and a map number i32

@@ -104,6 +104,19 @@ internal static class CompanionLine
         if (GameFolderReport.ShortNames(gameDirectory) == "off") write(NoShortNamesWarning);
     }
 
+    /// <summary>
+    /// NOT RETAIL (batch 889): the folder the game starts in (<see cref="StockClientLauncher.PlanStart"/>), spelt so that rads.dll reads no layout.
+    /// Retail ran this game managed from its own RADS root. rads.dll (1.0.0.132, RuntimeEnvironment 0x100782a0) takes its mode from the current
+    /// directory with a case-sensitive find: "projects/" loads <c>&lt;root&gt;\projects\&lt;name&gt;\releases\&lt;version&gt;\releasemanifest</c>
+    /// under the registry root or c:\rads, "solutions/" the solution manifest. A player install keeps this game in
+    /// <c>game\projects\lol_game_client\releases\0.0.0.51</c> (<see cref="FolderMove.GameRelease"/>), the release the 1.0.0.126 line's managed
+    /// layout fills in c:\rads, so the 1.0.0.132 game read 126's archives (white HUD bars, img:// names, no colourblind option, a Map 6 crash).
+    /// Those two words are given in capitals: the same folder to Windows, which keeps the spelling a start gives (nothing in the game or rads.dll
+    /// sets the directory again), so rads.dll finds neither and the game runs loose from its own files, as this line intends (batch 795).
+    /// </summary>
+    internal static string GameWorkingDirectory(string folder) =>
+        folder.Replace(@"projects\", @"PROJECTS\", StringComparison.Ordinal).Replace(@"solutions\", @"SOLUTIONS\", StringComparison.Ordinal);
+
     internal const string ManagedLayoutOff = "managed-layout: off (1.0.0.132: the game runs loose from its own folder; rads.dll reads no layout under this line's RADS root)";
 
     internal const string NoShortNamesWarning = "game.folder: WARNING this volume has no 8.3 short names: the loose 1.0.0.132 client builds no spell index without them and stops at hero creation (\"Avatar spell not found!\"). Keep the game on a volume with short names (C: has them).";

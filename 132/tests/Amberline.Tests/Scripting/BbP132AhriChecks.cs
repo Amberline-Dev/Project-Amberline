@@ -67,4 +67,123 @@ public static class BbP132AhriChecks
         TestAssert.True(Calls(counter, "BBSpellBuffAdd").Any(block => Named(block, "BuffName") == "AhriSoulCrusher"),
             "the ninth charge adds Essence Theft's next-spell buff (shipped AhriSoulCrusherCounter)");
     }
+
+    // Batch 891 (player report, 18 November 2026: "Ahri Q never gives passive charges after the first Essence Theft heal"). A Q cast with
+    // Essence Theft ready sets CharVars.OrbofDeceptionIsActive = 1 (CharScriptAhri), and only AhriOrbReturn's Target == Attacker branch, the
+    // returning orb reaching Ahri, sets it back to 0. While it is 1 every orb hit takes the heal branch and adds no charge (AhriOrbDamage).
+    [Check("scripting.p132-ahri-orb-return-reaching-ahri-ends-essence-theft-so-later-q-casts-give-charges")]
+    public static void OrbReturnEndsEssenceTheft()
+    {
+        TestAssert.True(Calls(Script("AhriOrbReturn"), "BBSetVarInTable").Any(block =>
+                Named(block, "DestVar") == "OrbofDeceptionIsActive" && Named(block, "DestVarTable") == "CharVars"),
+            "the return orb's arrival at Ahri resets the flag (shipped AhriOrbReturn TargetExecute)");
+        using var match = new Match("Ahri", foeChampion: "Orianna");
+        match.Hero.Facing = new Position2(1.0, 0.0);
+        match.Learn(1);
+        var vars = match.Module.CharVars(match.Hero);
+        int Charges() => Buff(match.Hero, "AhriSoulCrusherCounter")?.Stacks ?? 0;
+        bool Ready() => Buff(match.Hero, "AhriSoulCrusher") is not null;
+        void Q(string what)
+        {
+            match.Refill();
+            TestAssert.True(match.Cast(0, match.Foe), what + ": Q is cast at the foe");
+            // Out to 880 and back to Ahri in under two seconds (AhriOrbMissile 2500 slowing to 400, AhriOrbReturn 60 speeding up to 2600), and
+            // AhriSoulCrusher5 (the 2 s window that caps the charges at three) ends before the next cast.
+            match.Advance(4.0);
+        }
+        void Charge(string cycle)
+        {
+            // One foe: the outgoing hit and the return hit give a charge each, so five casts reach nine.
+            for (var cast = 1; !Ready(); cast++)
+            {
+                TestAssert.True(cast <= 6, $"{cycle}: Essence Theft is ready within six casts; buffs: {Names(match.Hero)}");
+                var before = Charges();
+                Q($"{cycle} cast {cast}");
+                TestAssert.True(Ready() || Charges() > before,
+                    $"{cycle} cast {cast}: the hits give charges ({before} -> {Charges()}); flag {vars["OrbofDeceptionIsActive"]}");
+            }
+        }
+
+        Charge("first cycle");
+        Q("charged cast");
+        TestAssert.False(Ready(), "the charged Q's hit spent Essence Theft (the heal branch)");
+        TestAssert.Equal(0.0, vars["OrbofDeceptionIsActive"] as double? ?? -1.0, "the orb came back to Ahri and reset the flag");
+        Charge("second cycle");
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
+    }
+
+    // Batch 891 (player report: "Ahri R has only 2 dashes instead of 3"). AhriTumble's first cast adds itself BUFF_REPLACE_EXISTING with
+    // NumberOfStacks 2 (MaxStack 2) and a 0.75 s recast; each later cast removes one stack, and the last stack's OnBuffDeactivate (count 0) starts
+    // the 90/80/70 cooldown. Cooldowns stay on here (no Refill between the dashes).
+    [Check("scripting.p132-ahri-spirit-rush-dashes-three-times-with-cooldowns-on")]
+    public static void SpiritRushDashesThreeTimes()
+    {
+        using var match = new Match("Ahri", foeChampion: "Orianna");
+        match.Learn(1);
+        match.Refill();
+        var hero = match.Hero;
+        for (var dash = 1; dash <= 3; dash++)
+        {
+            // Along the middle lane, back and forth.
+            var side = dash % 2 == 1 ? 1.0 : -1.0;
+            var from = hero.Position;
+            TestAssert.True(match.Cast(3, at: from + new Position2(283.0 * side, 283.0 * side)), $"dash {dash} is cast; R cooldown {hero.SpellCooldowns[3]}");
+            match.Advance(0.5);
+            var moved = Math.Sqrt((hero.Position.X - from.X) * (hero.Position.X - from.X) + (hero.Position.Z - from.Z) * (hero.Position.Z - from.Z));
+            TestAssert.True(moved > 200.0, $"dash {dash} moved Ahri ({moved:0})");
+            TestAssert.Equal(3 - dash, Buff(hero, "AhriTumble")?.Stacks ?? 0, $"dash {dash}: the charges left; buffs: {Names(hero)}");
+            if (dash < 3)
+                TestAssert.True(hero.SpellCooldowns[3] <= 0.75, $"dash {dash}: the recast waits at most 0.75 s ({hero.SpellCooldowns[3]})");
+            else
+                TestAssert.True(hero.SpellCooldowns[3] > 60.0, $"the third dash starts the 90 s cooldown ({hero.SpellCooldowns[3]})");
+            match.Advance(0.5);
+        }
+        TestAssert.False(match.Cast(3, at: hero.Position + new Position2(283.0, 283.0)), "a fourth dash is refused");
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
+    }
+
+    // Batch 891: one dash, then AhriTumble's 10 s run out with both charges left. The buff ends whole, and its OnBuffDeactivate must read count 0
+    // there, or R would end free and with no cooldown.
+    [Check("scripting.p132-ahri-spirit-rush-unused-charges-expire-into-the-cooldown")]
+    public static void SpiritRushChargesExpireIntoTheCooldown()
+    {
+        using var match = new Match("Ahri", foeChampion: "Orianna");
+        match.Learn(1);
+        match.Refill();
+        var hero = match.Hero;
+        TestAssert.True(match.Cast(3, at: hero.Position + new Position2(283.0, 283.0)), "one dash is cast");
+        match.Advance(0.5);
+        TestAssert.Equal(2, Buff(hero, "AhriTumble")?.Stacks ?? 0, "two charges are left; buffs: " + Names(hero));
+        match.Advance(10.0);
+        TestAssert.True(Buff(hero, "AhriTumble") is null, "the unused charges expire after 10 s; buffs: " + Names(hero));
+        TestAssert.True(hero.SpellCooldowns[3] > 60.0, $"their expiry starts the 90 s cooldown ({hero.SpellCooldowns[3]})");
+        TestAssert.False(match.Cast(3, at: hero.Position + new Position2(-283.0, -283.0)), "R is refused after the expiry");
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
+    }
+
+    // Batch 891: Fox-Fire's counter. AhriFoxFire's SelfExecute adds AhriFoxFireMissile BUFF_REPLACE_EXISTING with NumberOfStacks 3 (MaxStack 3); each
+    // fox-fire that launches removes one stack, and the counter's OnBuffDeactivate removes AhriFoxFire (W's seal, its cooldown at the end) at 0.
+    [Check("scripting.p132-ahri-fox-fire-counter-holds-three-fox-fires")]
+    public static void FoxFireCounterHoldsThree()
+    {
+        using var match = new Match("Ahri", foeChampion: "Orianna");
+        match.Learn(1);
+        match.Refill();
+        var hero = match.Hero;
+        TestAssert.True(match.Cast(1), "W is cast");
+        var waited = 0.0;
+        for (; Buff(hero, "AhriFoxFireMissile") is null && waited < 1.0; waited += Step) match.Advance(Step);
+        TestAssert.Equal(3, Buff(hero, "AhriFoxFireMissile")?.Stacks ?? 0, "the cast holds three fox-fires; buffs: " + Names(hero));
+        for (; Buff(hero, "AhriFoxFireMissile") is not null && waited < 6.0; waited += Step)
+        {
+            TestAssert.True(Buff(hero, "AhriFoxFire") is not null, $"W stays sealed while fox-fires are left ({match.Now:0.00} s)");
+            match.Advance(Step);
+        }
+        TestAssert.True(Buff(hero, "AhriFoxFireMissile") is null && Buff(hero, "AhriFoxFire") is null, "the last fox-fire ends the counter and W");
+        TestAssert.True(hero.SpellCooldowns[1] > 0.0, "W's cooldown runs from the counter's end (AhriFoxFire's OnBuffDeactivate)");
+        // The counter ends when the last fox-fire launches; the launched fox-fires (AhriFoxFireMissileTwo) are still on their way.
+        match.Advance(1.5);
+        TestAssert.Equal(3, HitsOn(match, "Foe").Count, "three fox-fires strike the foe");
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
+    }
 }

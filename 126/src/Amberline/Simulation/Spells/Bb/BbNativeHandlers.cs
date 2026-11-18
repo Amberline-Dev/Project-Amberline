@@ -1623,7 +1623,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         var inclusive = Flag(call, "InclusiveBuffFilter", true);
         var iterator = call.Value("IteratorVar") ?? throw new BbRuntimeException("BBForEachUnitInTargetArea has no IteratorVar");
 
-        var picked = BbSpellTargeting.Area(Spells, attacker, center, range, flags);
+        // Batch 886: a script scan takes turrets and buildings its flags name (BbSpellTargeting.AreaGate; Jack in the Box shoots them).
+        var picked = BbSpellTargeting.Area(Spells, attacker, center, range, flags, structures: true);
         if (buffFilter is not null)
             picked = picked.Where(unit => unit.Buffs.Any(buff =>
                 string.Equals(buff.Name, buffFilter, StringComparison.OrdinalIgnoreCase)) == inclusive).ToList();
@@ -1702,7 +1703,7 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
             _ => throw new BbRuntimeException("BBForEachUnitInTargetAreaAddBuff has no center"),
         };
         var flags = (call.Value("Flags") as string ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
-        var picked = BbSpellTargeting.Area(Spells, attacker, center, Sum(call, "Range"), flags);
+        var picked = BbSpellTargeting.Area(Spells, attacker, center, Sum(call, "Range"), flags, structures: true);
         // The pair reads as it does in BBForEachUnitInTargetArea (the same buff filter): a unit is kept when it carries BuffNameFilter and
         // InclusiveBuffFilter is true (the default), or when it does not and the filter is false. No shipped call of this native names a
         // BuffNameFilter (the three pass InclusiveBuffFilter alone, where the key is inert), so nothing is filtered here.

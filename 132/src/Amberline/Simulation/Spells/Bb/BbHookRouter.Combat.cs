@@ -233,7 +233,7 @@ internal sealed partial class BbHookRouter
     internal void RunAttackLaunch(Entity attacker, Entity target, uint missileNetId)
     {
         // Before the launch hooks: the 132 Ricochet's BuffOnLaunchAttack ends the override this swing left with (TakeLaunchedAttack).
-        RecordLaunchedAttack(attacker, target);
+        RecordLaunchedAttack(attacker, target, missileNetId);
         // Batch 348: the cast routine spends the swing's cost first, then the cast leaves; see
         // OverrideSwingCost. The PAR's clamp at zero covers a drain inside the windup.
         if (Owns(attacker) && _swingCosts.Remove(attacker.NetId, out var cost))

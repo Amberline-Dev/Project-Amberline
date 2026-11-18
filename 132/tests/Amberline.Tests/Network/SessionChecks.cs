@@ -91,10 +91,13 @@ public static class SessionChecks
                 TestAssert.Equal((byte)0, start[6]);
                 var creates = packets.Where(packet => packet.Plaintext.Span[0] == 0x50).ToArray();
                 TestAssert.Equal(4, creates.Length);
-                for (var seat = 0; seat < 4; seat++)
+                // Batch 890: the recipient's own hero first, then the others in roster order.
+                int[] order = [recipient, .. Enumerable.Range(0, 4).Where(seat => seat != recipient)];
+                for (var position = 0; position < 4; position++)
                 {
+                    var seat = order[position];
                     var member = session.Participants[seat];
-                    var create = creates[seat].Plaintext.Span;
+                    var create = creates[position].Plaintext.Span;
                     TestAssert.Equal(member.Hero!.NetId, BinaryPrimitives.ReadUInt32LittleEndian(create[5..]));
                     TestAssert.Equal(slots[seat], create[18]);
                     TestAssert.Equal((byte)(member.IsBot ? 1 : 0), create[16]);
@@ -374,6 +377,45 @@ public static class SessionChecks
             .Single(packet => packet.Plaintext.Span[5] == 3).Plaintext.Span;
         TestAssert.Equal((byte)1, trainedR[6], "trained Vayne R rank reaches native book");
         TestAssert.Equal((byte)0, trainedR[7], "training consumes the available point");
+    }
+
+    /// <summary>
+    /// Batch 890: the stock 1.0.0.132 client faults (read of address 0, exe+0xD1306) when another hero's revealed burst reaches it before
+    /// its own hero exists: the health-bar init reads a name that SetFilenames writes only once the local Player exists. Every human seat
+    /// after the first crashed at StartSpawn. Each seat's burst starts with its own hero, then the others in roster order; the
+    /// spectator stream (no recipient) keeps roster order.
+    /// </summary>
+    [Check("session.spawn-burst-own-hero-first")]
+    public static void SpawnBurstOwnHeroFirst()
+    {
+        var participants = new[] { ("Seat0", "Annie", Team.Order), ("Seat1", "Orianna", Team.Chaos), ("Seat2", "Vayne", Team.Order) }
+            .Select((seat, index) => new SessionParticipant(new SessionParticipantDefinition(
+                (ulong)index + 1, (uint)index, seat.Item1, seat.Item2, seat.Item3))).ToArray();
+        var service = new SessionSpawnService(new WorldState(), GameData.Default,
+            CreateHeroStats(GameData.Default), new ReplicationSyncCounter());
+        service.CreateHeroes(participants);
+        foreach (var reconnect in new[] { false, true })
+            for (var seat = 0; seat < participants.Length; seat++)
+            {
+                var own = participants[seat].Hero!.NetId;
+                var burst = service.BuildHeroSpawnBurst(participants[seat], participants,
+                    revealNonRecipient: !reconnect, includeChampionSpells: !reconnect, includeClassicHeroStats: !reconnect);
+                TestAssert.Equal((byte)0x66, burst[0].Plaintext.Span[0]);
+                TestAssert.Equal((byte)0x50, burst[1].Plaintext.Span[0]);
+                TestAssert.Equal(own, BinaryPrimitives.ReadUInt32LittleEndian(burst[1].Plaintext.Span[5..]),
+                    $"seat {seat} (reconnect {reconnect}): its own CreateHero directly follows StartSpawn");
+                TestAssert.Equal(new[] { own }.Concat(participants.Where((_, index) => index != seat).Select(member => member.Hero!.NetId)).ToArray(),
+                    CreateNetIds(burst), $"seat {seat} (reconnect {reconnect}): own hero, then the others in roster order");
+                var firstReveal = burst.First(packet => packet.Plaintext.Span[0] == 0xC3);
+                TestAssert.Equal(own, BinaryPrimitives.ReadUInt32LittleEndian(firstReveal.Plaintext.Span[1..]),
+                    $"seat {seat} (reconnect {reconnect}): the first EnterVisibility is its own hero's");
+            }
+        TestAssert.Equal(participants.Select(member => member.Hero!.NetId).ToArray(),
+            CreateNetIds(service.BuildHeroSpawnBurst(null, participants)), "the spectator stream keeps roster order");
+
+        static uint[] CreateNetIds(IReadOnlyList<PlaintextPacket> burst) => burst
+            .Where(packet => packet.Plaintext.Span[0] == 0x50)
+            .Select(packet => BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[5..])).ToArray();
     }
 
 

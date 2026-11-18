@@ -468,7 +468,7 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     // The client parses all of them like BBApplyStun (Target, Duration, Attacker) and then asserts InvalidClientCall in
     // the three client apply methods (ApplyFear, ApplyRoot, ApplyNearSight): the body is server-only. Each adds the
     // shipped global buff of the same name, whose hooks only set a CharacterState bit (Fear.luaobj: SetFeared, SetCanCast(false),
-    // 40 percent slow, the assist marker; Root.luaobj: SetRooted; NearSight.luaobj: SetNearSight).
+    // 40 percent slow, the assist marker and, in 1.0.0.132, its particle (ApplyFear); Root.luaobj: SetRooted; NearSight.luaobj: SetNearSight).
 
     private void ApplyFear(BbCall call)
     {
@@ -483,7 +483,22 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         // OnFearBegin, the shared one-second wander around FearOrigin) is the buff lifecycle's, and Fear.luaobj's 40 percent slow is
         // MoveSpeedMult. ChampionSpellSupport.AddBuff records the 10 s assist marker Fear.luaobj's activation applies.
         var payload = new BuffPayload { ActionDisabled = true, MoveSpeedMult = -0.4, FearOrigin = target.Position, NextWander = Spells.CurrentTime };
-        ChampionSpellSupport.AddBuff(Spells, target, "Fear", BuffType.Fear, duration, caster.NetId, payload, mitigate: true);
+        var fear = ChampionSpellSupport.AddBuff(Spells, target, "Fear", BuffType.Fear, duration, caster.NetId, payload, mitigate: true);
+        // Batch 884 ("Volibear's E fails to fear minions and monsters"): the 1.0.0.132 Fear.luaobj draws its particle itself. Its OnBuffActivate
+        // creates Global_Fear.troy bound to the feared unit for every client (GlobalFear_Surprise.troy, plus Party_HornConfetti_Instant.troy on the
+        // attacker's BUFFBONE_CSTM_HORN facing it, when the attacker's skin is 6) and its OnBuffDeactivate removes both; its AutoBuffActivateEffect
+        // is "". The 1.0.0.126 Fear.luaobj had AutoBuffActivateEffect "Global_Fear.troy", which the client draws on the buff add by itself, so this
+        // row drew nothing on 132 and a feared unit showed no fear (a minion under Majestic Roar's 80 percent slow barely moves either). The lifecycle
+        // kills FxNetId and ExtraFxNetId when the buff leaves; a renewal keeps the drawn ids.
+        if (fear is not null && fear.Payload.FxNetId == 0 && Spells.Effects.IsReferenceReady(target))
+        {
+            var surprise = attacker?.SkinId == 6;
+            fear.Payload.FxNetId = Spells.Effects.CreateEffect(surprise ? "GlobalFear_Surprise.troy" : "Global_Fear.troy", target.Position,
+                target.Position, targetNetId: target.NetId, bindNetId: target.NetId, persistent: true);
+            if (surprise && Spells.Effects.IsReferenceReady(attacker!))
+                fear.Payload.ExtraFxNetId = Spells.Effects.CreateEffect("Party_HornConfetti_Instant.troy", attacker!.Position, attacker.Position,
+                    targetNetId: attacker.NetId, bindNetId: attacker.NetId, boneName: "BUFFBONE_CSTM_HORN", flags: 0x0080);
+        }
     }
 
     private void ApplyRoot(BbCall call)
@@ -1631,7 +1646,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         var inclusive = Flag(call, "InclusiveBuffFilter", true);
         var iterator = call.Value("IteratorVar") ?? throw new BbRuntimeException("BBForEachUnitInTargetArea has no IteratorVar");
 
-        var picked = BbSpellTargeting.Area(Spells, attacker, center, range, flags);
+        // Batch 886: a script scan takes turrets and buildings its flags name (BbSpellTargeting.AreaGate; Jack in the Box shoots them).
+        var picked = BbSpellTargeting.Area(Spells, attacker, center, range, flags, structures: true);
         if (buffFilter is not null)
             picked = picked.Where(unit => unit.Buffs.Any(buff =>
                 string.Equals(buff.Name, buffFilter, StringComparison.OrdinalIgnoreCase)) == inclusive).ToList();
@@ -1710,7 +1726,7 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
             _ => throw new BbRuntimeException("BBForEachUnitInTargetAreaAddBuff has no center"),
         };
         var flags = (call.Value("Flags") as string ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
-        var picked = BbSpellTargeting.Area(Spells, attacker, center, Sum(call, "Range"), flags);
+        var picked = BbSpellTargeting.Area(Spells, attacker, center, Sum(call, "Range"), flags, structures: true);
         // The pair reads as it does in BBForEachUnitInTargetArea (the same buff filter): a unit is kept when it carries BuffNameFilter and
         // InclusiveBuffFilter is true (the default), or when it does not and the filter is false. No shipped call of this native names a
         // BuffNameFilter (the three pass InclusiveBuffFilter alone, where the key is inert), so nothing is filtered here.

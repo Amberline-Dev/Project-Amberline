@@ -75,11 +75,14 @@ public sealed partial class MatchGameplayHooks : ICombatHooks, IHeroStatsHooks, 
     // Batch 724: and the global Taunt that BBApplyTaunt adds (Taunt.luaobj has no PersistsThroughDeath). Galio's Idol of Durand taunts from a
     // buff on Galio, so nothing on the victim took the taunt away when the victim died: the corpse kept the row and the status bit, and a revive
     // inside the taunt brought it back taunted.
+    // Batch 884: and the global Fear (Fear.luaobj has no PersistsThroughDeath) on every unit, not only a hero (TemporaryHeroDeathBuffs). Its
+    // OnBuffDeactivate removes the 1.0.0.132 fear particle (BbNativeHandlers.ApplyFear); a minion or monster killed under Majestic Roar kept the
+    // row, and with it the particle, on its corpse until the 2 s ran out.
     private static readonly HashSet<string> RecipientDeathControls =
     [
         "BlindMonkRKick", "BlindMonkRDamage", "OrianaStun",
         "MoveAwayCollision", "RocketGrab2", "PowerFistSlow",
-        "VayneCondemnMissile", "Stun", "Taunt",
+        "VayneCondemnMissile", "Stun", "Taunt", "Fear",
         "SweepingBlow", "Propel",
     ];
 

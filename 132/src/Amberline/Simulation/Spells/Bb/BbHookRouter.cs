@@ -1273,9 +1273,30 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// </summary>
     private readonly Dictionary<uint, List<(uint Target, double At, ScriptAttackOverride Attack)>> _launchedAttacks = new();
 
-    private void RecordLaunchedAttack(Entity attacker, Entity target)
+    /// <summary>
+    /// Batch 884 ("Volibear's Q sometimes plays its fling without flinging"): the override each swing started with, by the swing's missile id. An
+    /// override swing leaves as a cast of the override spell when it starts (<see cref="RunAttackCast"/>), and the client plays that spell to its
+    /// cast frame, so the spell is fixed when the swing starts, as a cast's spell is. A buff that ends in the windup and takes its override back
+    /// with <c>BBRemoveOverrideAutoAttack CancelAttack=false</c> (VolibearQ's 4 s running out between the swing's start and its cast frame) leaves
+    /// that swing going (<c>BbNativeHandlers.RemoveOverrideAutoAttack</c>), and the swing lands as the spell it started as: VolibearQAttack's
+    /// TargetExecute flings. Before, the launch read the override that was left (none) and the swing landed as a plain hit after the client had
+    /// played the fling. Reconstruction: the retail server's attack routine is not shipped; the cast packet names the spell at the start.
+    /// A swing stopped in its windup never launches, so its entry is only pruned (after the chain-plan lifetime).
+    /// </summary>
+    private readonly Dictionary<uint, (double At, ScriptAttackOverride Attack)> _startedAttacks = new();
+
+    private void RecordStartedAttack(Entity attacker, uint missileNetId)
     {
-        if (attacker.ScriptAttackOverride is not { } attack || !Owns(attacker)) return;
+        if (missileNetId == 0 || attacker.ScriptAttackOverride is not { } attack || !Owns(attacker)) return;
+        var now = _host.Spells.CurrentTime;
+        foreach (var (stale, _) in _startedAttacks.Where(item => now - item.Value.At > ChainPlanLifetime).ToArray()) _startedAttacks.Remove(stale);
+        _startedAttacks[missileNetId] = (now, attack);
+    }
+
+    private void RecordLaunchedAttack(Entity attacker, Entity target, uint missileNetId)
+    {
+        var started = _startedAttacks.Remove(missileNetId, out var swing) ? swing.Attack : null;
+        if ((started ?? attacker.ScriptAttackOverride) is not { } attack || !Owns(attacker)) return;
         var now = _host.Spells.CurrentTime;
         if (!_launchedAttacks.TryGetValue(attacker.NetId, out var launched)) _launchedAttacks[attacker.NetId] = launched = new();
         launched.RemoveAll(item => now - item.At > ChainPlanLifetime);
@@ -1486,6 +1507,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// </summary>
     private void RunAttackSent(Entity attacker, Entity target, uint missileNetId)
     {
+        RecordStartedAttack(attacker, missileNetId);
         if (attacker.ScriptAttackOverride is not { } attack || !Owns(attacker) || _scripts.Find(attack.SpellName) is not { } script ||
             BbChainParameters.Read(script) is not { } chain) return;
         var data = _host.Spells.Data.Spell(attack.SpellName, 5);

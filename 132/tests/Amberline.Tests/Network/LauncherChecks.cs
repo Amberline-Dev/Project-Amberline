@@ -11,6 +11,8 @@ namespace Amberline.Tests.Network;
 
 public static class LauncherChecks
 {
+    /// <summary>Batch 890: a seat's hero spawn burst order: its own hero, then the others in roster order.</summary>
+    private static int[] OwnFirst(int recipient, int count) => [recipient, .. Enumerable.Range(0, count).Where(seat => seat != recipient)];
 
     [Check("server.launcher-roster")]
     public static void RosterValidationLoadingAndStartBarrier()
@@ -44,9 +46,12 @@ public static class LauncherChecks
                     TestAssert.True(session.Authenticate(100 + index, session.BuildKeyCheck((ulong)index + 1)) is null);
                     var spawn = session.Spawn(index + 1).Where(packet => packet.Plaintext.Span[0] == 0x50).ToArray();
                     TestAssert.Equal(count, spawn.Length);
-                    for (var seat = 0; seat < count; seat++)
+                    // Batch 890: the recipient's own hero first, then the others in roster order.
+                    var order = OwnFirst(index, count);
+                    for (var position = 0; position < count; position++)
                     {
-                        var payload = spawn[seat].Plaintext.Span;
+                        var seat = order[position];
+                        var payload = spawn[position].Plaintext.Span;
                         TestAssert.Equal((uint)seat, BinaryPrimitives.ReadUInt32LittleEndian(payload.Slice(9, 4)));
                         TestAssert.Equal(players[seat].SkinId, BinaryPrimitives.ReadInt32LittleEndian(payload.Slice(19, 4)));
                         TestAssert.Equal(players[seat].Name, Encoding.ASCII.GetString(payload.Slice(23, 128)).TrimEnd('\0'));
@@ -78,9 +83,10 @@ public static class LauncherChecks
                 TestAssert.True(session.AuthenticateReconnect(99, session.BuildKeyCheck((ulong)count)) is not null);
                 var reconnect = session.Spawn(99).Where(packet => packet.Plaintext.Span[0] == 0x50).ToArray();
                 TestAssert.Equal(count, reconnect.Length);
-                for (var seat = 0; seat < count; seat++)
-                    TestAssert.Equal(players[seat].SkinId,
-                        BinaryPrimitives.ReadInt32LittleEndian(reconnect[seat].Plaintext.Span[19..23]));
+                var reconnectOrder = OwnFirst(count - 1, count);
+                for (var position = 0; position < count; position++)
+                    TestAssert.Equal(players[reconnectOrder[position]].SkinId,
+                        BinaryPrimitives.ReadInt32LittleEndian(reconnect[position].Plaintext.Span[19..23]));
             }
             var player = new MatchPlayer("Alice", "annie", Team.Order);
             TestAssert.Equal("Annie", MatchRoster.Validate([player])[0].Champion);
@@ -199,8 +205,9 @@ public static class LauncherChecks
                 "Order bot is already counted in the loading roster");
             TestAssert.Equal((byte)0, spawn.Single(packet => packet.Plaintext.Span[0] == 0x66).Plaintext.Span[6],
                 "no additional Chaos seats");
-            TestAssert.Equal((byte)1, heroes[0].Plaintext.Span[16], "bot CreateHero flag");
-            TestAssert.Equal((byte)0, heroes[1].Plaintext.Span[16], "human CreateHero flag");
+            // Batch 890: the human recipient's own hero comes first, then the bot.
+            TestAssert.Equal((byte)0, heroes[0].Plaintext.Span[16], "human CreateHero flag");
+            TestAssert.Equal((byte)1, heroes[1].Plaintext.Span[16], "bot CreateHero flag");
 
             TestAssert.True(session.MarkReady(11));
             session.World.Clock.Advance(3.0);
@@ -255,7 +262,9 @@ public static class LauncherChecks
             TestAssert.Equal((byte)0, startSpawn[6], "Chaos bots are already counted in the loading roster");
             var heroes = firstSpawn.Where(packet => packet.Plaintext.Span[0] == 0x50).ToArray();
             TestAssert.Equal(10, heroes.Length);
-            TestAssert.True(heroes.Select((packet, index) => (packet, player: players[index])).Where(item => item.player.IsBot)
+            // Batch 890: the recipient (Human1, seat 1) gets its own hero first, then the others in roster order.
+            var order = OwnFirst(1, players.Length);
+            TestAssert.True(heroes.Select((packet, index) => (packet, player: players[order[index]])).Where(item => item.player.IsBot)
                 .All(item => item.packet.Plaintext.Span[16] == (item.player.Champion == "Annie" ? 1 : 0)),
                 "only Annie among these bots has a game_bot_ name in the stock client; the others are named by the server");
             TestAssert.True(heroes.All(packet => packet.Plaintext.Span[17] == 0), "default bot rank is zero");

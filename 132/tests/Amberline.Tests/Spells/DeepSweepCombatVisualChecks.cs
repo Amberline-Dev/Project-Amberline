@@ -195,7 +195,7 @@ public static partial class ChampionLiveRegressionChecks
             "trap template precedes its actor-owned Spell1 animation");
         var bytes = animations[0].packet.Plaintext.Span;
         TestAssert.Equal("Spell1", Encoding.ASCII.GetString(bytes[13..^1]));
-        TestAssert.Equal(0x248u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[5..]));
+        TestAssert.Equal(0xA0u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[5..]));
         TestAssert.Near(1.0, BinaryPrimitives.ReadSingleLittleEndian(bytes[9..]), 0);
     }
 

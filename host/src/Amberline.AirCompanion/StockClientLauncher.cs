@@ -111,7 +111,8 @@ public sealed class StockClientLauncher
     /// The complete launch plan, derived from the picked executable alone (no file access): the game starts
     /// from its own folder, which is where the stock client resolves <c>DATA\</c>, <c>LEVELS\</c>,
     /// <c>..\Air\preferences\</c> and writes its logs, so the plan holds on any drive or folder name.
-    /// Nothing here names a drive; the same input on another volume only changes the paths.
+    /// Nothing here names a drive; the same input on another volume only changes the paths. How rads.dll is to read that folder is the
+    /// release line's (<see cref="CompanionLine.GameWorkingDirectory"/>, batch 889).
     /// </summary>
     public static ProcessStartInfo PlanStart(string executable, MaestroCreateRequest request, int maestroPort = 8393)
     {
@@ -122,7 +123,7 @@ public sealed class StockClientLauncher
         if (maestroPort is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(maestroPort));
         var start = new ProcessStartInfo(fullPath)
         {
-            WorkingDirectory = Path.GetDirectoryName(fullPath)!,
+            WorkingDirectory = CompanionLine.GameWorkingDirectory(Path.GetDirectoryName(fullPath)!),
             UseShellExecute = false,
         };
         // The stock client parses the Maestro port from token one, ignores tokens two and three,

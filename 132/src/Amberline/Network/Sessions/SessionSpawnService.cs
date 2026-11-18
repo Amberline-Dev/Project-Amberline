@@ -232,7 +232,14 @@ public sealed class SessionSpawnService
             // for the batch-10 loading-card workaround, so they must not be counted twice.
             packets.Add(SpawnPackets.StartSpawn());
         }
-        foreach (var member in participants)
+        // Reconstruction (batch 890): a seat gets its own hero first, then the others in roster order. The stock 1.0.0.132 client's
+        // health-bar init builds a std:string from a name that only
+        // The client writes, and SetFilenames runs only once the local Player exists (it asserts
+        // "Player || IsReplaying()"); another hero's revealed burst ahead of the own hero left the name null and the client read address 0,
+        // so every human seat after the first crashed at StartSpawn. Retail evidently had the local Player first; the 1.0.0.126 client's
+        // getter checks for the Player itself, so the roster order never crashed there. The spectator stream (no
+        // recipient) keeps roster order: the replay client passes the IsReplaying() test.
+        foreach (var member in recipient is null ? participants : [recipient, .. participants.Where(other => other != recipient)])
         {
             var hero = member.Hero ?? throw new InvalidOperationException("Participant hero is not created.");
             // NOT RETAIL: retail flags every bot hero (byte 16) and the client names it from

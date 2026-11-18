@@ -337,9 +337,17 @@ public static class SpellPackets
 
     // Patch 132: the registration binds opcode 0xB9 (126: 0xB8; 0xBB is fade).
     // The handler reads flags at +5, duration at +9 and a
-    // NUL-terminated animation name at +13. Playback flags are consumed by
-    // The play routine's flags (126): loop=2, replace=8, lock=0x40, disable blending=0x200. The 132 handler passes the
-    // whole word to the new AnimationComponent; that these bits mean the same there is not verified.
+    // NUL-terminated animation name at +13.
+    // Batch 885: the 132 handler passes the whole flag word to the new AnimationComponent, whose bits
+    // are not 126's (126: loop 2, replace 8, lock 0x40, no blend 0x200): 8 queues the clip behind the one playing and 4 queues it
+    // unless that one loops; with neither it plays at once, where 0x10 marks the track looping, 0x20 locks it (the
+    // handler's gate the client refuses every play while a track is locked, the stop's the client reads the same bit) and 0x80 cuts the blend
+    // time to 0; 0x40 skips a clip that already plays. The 126 word queued every scripted clip behind the hero's
+    // looping idle or run. Reconstruction: the retail server's BBPlayAnimation body is not in the client (its native, only reads the
+    // parameters); the mapping is the component's reading of each script parameter. Bits 1 and 2, which the client's own plays set (Death: 0x82),
+    // are not sent: their reader is not traced.
+    public const uint PlayLoop = 0x10, PlayLock = 0x20, PlayNoBlend = 0x80;
+
     public static PlaintextPacket PlayAnimation(uint netId, string name,
         bool loop = false, bool lockAnimation = false, bool blend = true, float duration = 0)
     {
@@ -349,7 +357,7 @@ public static class SpellPackets
         using var writer = ProtocolEncoding.Writer(14 + name.Length, out var stream);
         writer.Write((byte)0xB9);
         writer.Write(netId);
-        writer.Write(8u | (loop ? 2u : 0u) | (lockAnimation ? 0x40u : 0u) | (blend ? 0u : 0x200u));
+        writer.Write((loop ? PlayLoop : 0u) | (lockAnimation ? PlayLock : 0u) | (blend ? 0u : PlayNoBlend));
         writer.Write(duration);
         writer.Write(Encoding.ASCII.GetBytes(name));
         writer.Write((byte)0);

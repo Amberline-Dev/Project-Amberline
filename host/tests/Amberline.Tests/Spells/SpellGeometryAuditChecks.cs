@@ -167,4 +167,92 @@ public static partial class ChampionLiveRegressionChecks
             }
         }
     }
+
+    /// <summary>
+    /// Batch 887 (player report, 18 November 2026: "Orianna Q hitbox is smaller than intended?"): the reach of Command: Attack on the production
+    /// step (MatchRuntime's 1/30 s, heroes moving every 0.05 s). The flight meets a unit within OrianaIzuna's LineWidth 80 plus the unit's gameplay
+    /// radius (BbLineMissile's swept contact); the landing meets a unit whose centre is within 175 of the ball (OrianaIzuna.SpellOnMissileEnd's
+    /// BBForEachUnitInTargetArea, the client's centre test in BbSpellTargeting.InCircle). The enemy hero stands in for every unit type; only its
+    /// gameplay radius changes. A unit walking across is judged by where it stands when the ball passes it.
+    /// </summary>
+    [Check("spells-geometry-orianna-q-hitbox-case-table")]
+    public static void OriannaQHitboxCaseTable()
+    {
+        const double width = 80.0, burst = 175.0, ambiguity = 20.0;
+        TestAssert.Near(width, ChampionSpellSupport.LineWidth(GameData.Default.Spell("OrianaIzuna", 5), -1), 0);
+        // Standing beside the middle of the flight (the landing is 400 further on, out of the burst).
+        foreach (var (unit, radius) in new[] { ("Red_Minion_Basic", 48.0), ("Annie", 55.0), ("Vayne", 65.0), ("Golem", 80.0), ("AncientGolem", 100.0) })
+        foreach (var outside in new[] { false, true })
+        {
+            TestAssert.Near(radius, GameData.Default.Champion(unit).CombatRadius, 0, unit);
+            var hit = OriannaQ(new Position2(400, width + radius + (outside ? 1 : -1)), radius, new Position2(800, 0), null, out _);
+            TestAssert.Equal(!outside, hit, $"standing beside the flight, {unit} radius {radius}, {(outside ? "1 outside" : "1 inside")}");
+        }
+        // Walking away from the flight (some across it first), at the hero's own speed: hit exactly when the unit is inside the edge as the ball
+        // passes it, within one step of either.
+        var inside = 0; var beyond = 0;
+        foreach (var start in new[] { -90.0, -60.0, -30.0, 0.0, 30.0, 60.0, 90.0, 120.0 })
+        {
+            var hit = OriannaQ(new Position2(400, start), 65, new Position2(800, 0), new Position2(400, 900), out var lateral);
+            TestAssert.False(double.IsNaN(lateral), $"walking from {start}: the ball passed the unit");
+            Console.WriteLine($"B887 Orianna Q, walking from {start}: {lateral:0.0} from the flight as the ball passes, {(hit ? "hit" : "missed")}");
+            if (Math.Abs(lateral - (width + 65)) < ambiguity) continue;
+            if (lateral < width + 65) inside++; else beyond++;
+            TestAssert.Equal(lateral < width + 65, hit, $"walking from {start}: {lateral:0.0} from the flight as the ball passes");
+        }
+        TestAssert.True(inside > 0 && beyond > 0, $"walking cases on both sides of the edge ({inside} inside, {beyond} beyond)");
+        // Walking across the flight as the ball comes.
+        TestAssert.True(OriannaQ(new Position2(400, -150), 65, new Position2(800, 0), new Position2(400, 600), out var crossing), "walking across");
+        TestAssert.True(crossing < width + 65 - ambiguity, $"walking across: {crossing:0.0} from the flight as the ball passes");
+        Console.WriteLine($"B887 Orianna Q, walking across: {crossing:0.0} from the flight as the ball passes, hit");
+        // Walking into the flight after the ball has passed: the line has no collision from its start (LineMissileCollisionFromStartPoint 0).
+        TestAssert.False(OriannaQ(new Position2(150, 320), 65, new Position2(800, 0), new Position2(150, -600), out var behind), "walking in behind the ball");
+        TestAssert.True(behind > width + 65, $"walking in behind the ball: {behind:0.0} from the flight as the ball passes");
+        Console.WriteLine($"B887 Orianna Q, walking in behind the ball: {behind:0.0} from the flight as the ball passes, missed");
+        // At the stop: the burst reaches a centre within 175 (radius 65: the flight's own edge, 145, is nearer); a unit of radius 100 is met by the
+        // flight's edge, 180, there too (the burst adds nothing for it); along the line past the stop only the burst reaches.
+        foreach (var (radius, edge) in new[] { (65.0, burst), (100.0, width + 100) })
+        foreach (var outside in new[] { false, true })
+            TestAssert.Equal(!outside, OriannaQ(new Position2(600, edge + (outside ? 1 : -1)), radius, new Position2(600, 0), null, out _),
+                $"beside the stop, radius {radius}, {(outside ? "1 outside" : "1 inside")} {edge}");
+        TestAssert.True(OriannaQ(new Position2(750, 0), 65, new Position2(600, 0), null, out _), "150 past the stop, inside the burst");
+        TestAssert.False(OriannaQ(new Position2(780, 0), 65, new Position2(600, 0), null, out _), "180 past the stop, outside the burst");
+    }
+
+    /// <summary>
+    /// One Command: Attack from Orianna (holding the ball) toward <paramref name="aim"/>, stepped as production steps. The enemy hero stands at
+    /// <paramref name="offset"/> with the gameplay <paramref name="radius"/>; with <paramref name="walkTo"/> it is ordered there 0.1 s before the cast.
+    /// <paramref name="lateral"/> is its distance from the flight at the first step that finds the ball level with it or past it.
+    /// </summary>
+    private static bool OriannaQ(Position2 offset, double radius, Position2 aim, Position2? walkTo, out double lateral)
+    {
+        const double step = 1.0 / 30.0;
+        using var match = new Match("Orianna", Team.Order, enemyChampion: "Vayne");
+        var hero = match.Hero(0); var target = match.Hero(1);
+        var origin = hero.Position;
+        target.CombatRadius = radius;
+        target.Position = origin + offset;
+        if (walkTo is { } to)
+        {
+            match.Move(1, origin + to);
+            for (var elapsed = 0.0; elapsed < .1 - 1e-9; elapsed += step) match.Runtime.Tick(step);
+        }
+        match.CastGround(0, origin + aim);
+        lateral = double.NaN;
+        // The hit is the script's own mark: TargetExecute and the landing burst both add the 1 s OrianaIzunaDamage to the unit they strike (the
+        // runtime's stat refresh moves the test's 5000 health, so health is no signal here).
+        var hit = false;
+        for (var elapsed = 0.0; elapsed < 1.2; elapsed += step)
+        {
+            match.Runtime.Tick(step);
+            hit |= target.Buffs.Any(buff => string.Equals(buff.Name, "OrianaIzunaDamage", StringComparison.OrdinalIgnoreCase));
+            var ball = match.Runtime.Spells.SharedProjectiles.Select(projectile => projectile.Snapshot)
+                .Where(snapshot => snapshot.Launched && string.Equals(snapshot.SpellName, "OrianaIzuna", StringComparison.OrdinalIgnoreCase))
+                .Select(snapshot => (Position2?)snapshot.Position).FirstOrDefault();
+            if (double.IsNaN(lateral) && ball is { } at && at.X - origin.X >= target.Position.X - origin.X)
+                lateral = Math.Abs(target.Position.Z - origin.Z);
+        }
+        if (walkTo is null) TestAssert.Near(0, Distance(target.Position, origin + offset), .5, "the unit stands still");
+        return hit;
+    }
 }

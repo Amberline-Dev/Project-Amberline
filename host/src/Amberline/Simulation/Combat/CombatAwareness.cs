@@ -84,8 +84,8 @@ public sealed partial class CombatService
             sourceKind == DamageSourceKind.Spell || victim.LaneHelpCallRemaining > 0.0 ||
             !WorldState.IsEnemy(victim, attacker) ||
             victim.Buffs.Any(buff => buff.Name == "GuardianAngel")) return;
-        // Preserve owner attribution for champion damage without making pets
-        // eligible as a new target class in the lane selector.
+        // A pet's hit calls for help on its hero owner (HallucinateFull's BuffOnHitUnit names Shaco as CallForHelpAttacker too). Batch 886:
+        // the pet itself is a candidate of the idle lane selector (MinionAiSystem.SelectTarget), not of this call.
         var aggressor = ResolveHeroOwner(attacker) ?? attacker;
         if (!aggressor.Alive || aggressor.UnitType is not (UnitType.Hero or UnitType.Turret) &&
             !Minions.MinionAiSystem.IsMinionUnit(aggressor)) return;

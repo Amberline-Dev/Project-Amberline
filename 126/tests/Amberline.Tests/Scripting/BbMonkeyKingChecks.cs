@@ -194,6 +194,26 @@ public static class BbMonkeyKingChecks
         TestAssert.True(Failures(match).Length == 0, "no script failure");
     }
 
+    // Batch 885: MonkeyKingDecoyClone switches SetGhosted on in OnBuffActivate and its OnBuffDeactivate adds MonkeyKingKillCloneW (1.25 s), whose own
+    // OnBuffDeactivate writes SetGhosted false: the clone keeps the ghost through its death buff (BbBuffRuntime's status hand-over).
+    [Check("scripting.bb-monkeyking-decoy-clone-stays-ghosted-through-its-death-buff")]
+    public static void DecoyCloneStaysGhostedThroughItsDeathBuff()
+    {
+        static bool Ghosted(Entity unit) => unit.AnyBuffOrStatus(buff => buff.Payload.Ghosted);
+        using var match = Arena();
+        TestAssert.True(match.Cast(1), "W casts");
+        match.Advance(0.2);
+        var clone = Clone(match, "MonkeyKingDecoyClone");
+        TestAssert.True(clone is not null && Ghosted(clone), "the clone is ghosted while the decoy lives");
+        match.Advance(1.6);
+        TestAssert.True(Buff(clone!, "MonkeyKingKillCloneW") is not null && clone!.Alive && Buff(clone!, "MonkeyKingDecoyClone") is null,
+            "the decoy has ended and the clone waits out its death buff");
+        TestAssert.True(Ghosted(clone!), "the clone is still ghosted during MonkeyKingKillCloneW");
+        match.Advance(1.4);
+        TestAssert.True(!clone!.Alive, "the clone dies when its death buff ends");
+        TestAssert.True(Failures(match).Length == 0, "no script failure");
+    }
+
     [Check("scripting.bb-monkeyking-decoy-stealth-breaks-on-an-attack")]
     public static void DecoyStealthBreaksWhenHeAttacks()
     {

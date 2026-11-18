@@ -47,14 +47,15 @@ internal static class BbSpellTargeting
     /// Team and kind filter of a line, a cone or an area, applied relative to the attacker. A line or a cone picks no ward. An area query
     /// (<see cref="AreaGate"/>) picks a ward when its flags carry <c>AffectWards</c> (batch 841, see there).
     /// </summary>
-    public static bool Admits(Entity? attacker, Entity unit, HashSet<string> flags) => Admits(attacker, unit, flags, areaQuery: false);
+    public static bool Admits(Entity? attacker, Entity unit, HashSet<string> flags) => Admits(attacker, unit, flags, areaQuery: false, structures: false);
 
-    private static bool Admits(Entity? attacker, Entity unit, HashSet<string> flags, bool areaQuery)
+    private static bool Admits(Entity? attacker, Entity unit, HashSet<string> flags, bool areaQuery, bool structures)
     {
         // NotAffectSelf (SpellData*Flags): the caster is no victim of its own spell. Ezreal's Essence Flux wave passes through allied heroes and
         // carries the flag (EzrealEssenceFluxMissile: AffectEnemies | AffectFriends | AffectHeroes | NotAffectSelf); the area scan skipped it already.
         if (ReferenceEquals(unit, attacker) && flags.Contains("NotAffectSelf")) return false;
-        var candidate = ChampionSpellSupport.IsAreaEffectTarget(unit) || areaQuery && unit.IsWard && unit.Alive && flags.Contains("AffectWards");
+        var candidate = ChampionSpellSupport.IsAreaEffectTarget(unit) || areaQuery && unit.IsWard && unit.Alive && flags.Contains("AffectWards") ||
+                        structures && unit.Alive && unit.UnitType is (UnitType.Turret or UnitType.Structure);
         if (!candidate && !(flags.Contains("AffectDead") && unit.UnitType != UnitType.Missile)) return false;
         if (!Targetable(attacker, unit, flags)) return false;
         if (!unit.Alive && !flags.Contains("AffectDead")) return false;
@@ -118,11 +119,20 @@ internal static class BbSpellTargeting
     /// Reconstruction: lines and cones keep refusing wards (<see cref="Admits(Entity?, Entity, HashSet{string})"/>); the inibin flags of the
     /// attack spells and of Graves's Collateral Damage carry the bit, and nothing shipped says whether those reach a ward.
     /// </para>
+    /// <para>
+    /// Batch 886: a turret and a building (inhibitor, nexus) are candidates of a script's area scan (<paramref name="structures"/>, the
+    /// <c>BBForEachUnitInTargetArea</c> family), and the type test then takes them only for <c>AffectTurrets</c> / <c>AffectBuildings</c>
+    /// (<see cref="KindFlag"/>). Shipped evidence (1.0.0.126 and 1.0.0.132): Spells/JackInTheBox.luaobj wakes on a scan naming
+    /// <c>AffectBuildings AffectTurrets</c> and its last shot rung scans <c>AffectEnemies AffectBuildings AffectTurrets</c>; the other scans
+    /// that name them are listed in the batch 886 record. Before, every structure failed the candidate test, so no such scan ever found one.
+    /// Reconstruction: a spell's own area (its inibin flags, the module victims and chain hops) keeps refusing structures; many attack and
+    /// area spell inibins carry the turret bit, and which of them reach a structure in retail is not settled here.
+    /// </para>
     /// </summary>
-    private static bool AreaGate(Entity? attacker, Entity unit, HashSet<string> flags) =>
+    private static bool AreaGate(Entity? attacker, Entity unit, HashSet<string> flags, bool structures = false) =>
         ReferenceEquals(unit, attacker) && flags.Contains("AlwaysSelf")
             ? Targetable(attacker, unit, flags) && (unit.Alive || flags.Contains("AffectDead"))
-            : Admits(attacker, unit, flags, areaQuery: true);
+            : Admits(attacker, unit, flags, areaQuery: true, structures);
 
     /// <summary>
     /// The team step of the client's shared target gate (team 300 is the literal 0x12c): a
@@ -225,9 +235,13 @@ internal static class BbSpellTargeting
         return !(along > 0.0 && across > 0.0 && radius * radius < along * along + across * across);
     }
 
-    /// <summary>Units of an area (the client's circle, <see cref="InCircle"/>) that pass <see cref="AreaGate"/>, in world order.</summary>
-    public static List<Entity> Area(SpellSystem system, Entity? attacker, Position2 centre, double range, HashSet<string> flags) =>
-        system.World.Entities.Values.Where(unit => InCircle(unit, centre, range) && AreaGate(attacker, unit, flags)).ToList();
+    /// <summary>
+    /// Units of an area (the client's circle, <see cref="InCircle"/>) that pass <see cref="AreaGate"/>, in world order. A script's area scan
+    /// passes <paramref name="structures"/> (see <see cref="AreaGate"/>).
+    /// </summary>
+    public static List<Entity> Area(SpellSystem system, Entity? attacker, Position2 centre, double range, HashSet<string> flags,
+        bool structures = false) =>
+        system.World.Entities.Values.Where(unit => InCircle(unit, centre, range) && AreaGate(attacker, unit, flags, structures)).ToList();
 
     /// <summary>
     /// The client's circle broad phase: the circle query (called from the area scans, under the multigrid query).

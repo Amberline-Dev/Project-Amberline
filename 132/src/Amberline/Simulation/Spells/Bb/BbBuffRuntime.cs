@@ -287,6 +287,9 @@ internal sealed class BbBuffRuntime
     /// <summary>The write that leaves the bit at its rest value: the unit's script status lets go, and every buff's hold of the status with it (the single bit of the client).</summary>
     private void ReleaseStatus(Entity unit, BbSetStatus status, bool rest)
     {
+        // Batch 885: a rest write also lets go of what an ending buff of the unit still holds while its deactivation runs (StatusHandOverFrame).
+        foreach (var handover in _handovers)
+            if (ReferenceEquals(handover.Instance.Owner, unit)) handover.Carried.Remove(status);
         var carried = ReleaseScriptStatus(unit, status);
         foreach (var holder in _instances.Values.Where(item => ReferenceEquals(item.Owner, unit) && unit.Buffs.Contains(item.State) &&
                      item.HeldStatuses.TryGetValue(status, out var held) && StatusActs(status, held)).ToArray())
@@ -1111,7 +1114,7 @@ internal sealed class BbBuffRuntime
         var wanted = Math.Min(Math.Max(1, request.Stacks), maxStack);
         var applications = addType switch
         {
-            BbBuffAddType.BUFF_STACKS_AND_OVERLAPS or BbBuffAddType.BUFF_RENEW_EXISTING => wanted,
+            BbBuffAddType.BUFF_STACKS_AND_OVERLAPS or BbBuffAddType.BUFF_RENEW_EXISTING or BbBuffAddType.BUFF_REPLACE_EXISTING => wanted,
             BbBuffAddType.BUFF_STACKS_AND_RENEWS or BbBuffAddType.BUFF_STACKS_AND_CONTINUE => Math.Max(1, request.Stacks),
             _ => 1,
         };
@@ -1133,8 +1136,16 @@ internal sealed class BbBuffRuntime
                     // with his name when his bomb is on the target, then adds its own bomb REPLACE_EXISTING; the bomb blasts again at its end only
                     // when it expires (OnBuffDeactivate, Expired), so a per-caster add would let the other bomb go off a second time. The wiki's
                     // V1.0.0.96 "Bug Fix: Not detonating an enemy Zilean's bomb when landing on the same unit" shows the detonation is retail.
-                    state = services.Add(request.Target, request.Name, type, request.Duration, request.Caster.NetId, payload,
-                        request.CanMitigateDuration);
+                    // Batch 891 (player report, 18 November 2026: "Ahri R has only 2 dashes instead of 3"): only the first application replaces;
+                    // the others raise the new instance's count to NumberOfStacks (capped by MaxStack), each a stack of its own (E29). The shipped
+                    // users are 1.0.0.132's AhriTumble (2: the first cast's charges, each later cast removes one and the last one's OnBuffDeactivate
+                    // starts the 90/80/70 cooldown) and AhriFoxFire's AhriFoxFireMissile (3: one per fox-fire, the last one ends AhriFoxFire and so
+                    // W's seal and cooldown); 1.0.0.126 ships none. Neither has an OnBuffActivate. Reconstruction: the retail server's buff
+                    // manager is not shipped; one stack made the second dash the last and Fox-Fire's counter end at the first launch.
+                    state = index == 0
+                        ? services.Add(request.Target, request.Name, type, request.Duration, request.Caster.NetId, payload, request.CanMitigateDuration)
+                        : services.AddStacking(request.Target, request.Name, type, request.Duration, request.Caster.NetId, maxStack, payload,
+                            canMitigateDuration: request.CanMitigateDuration);
                     break;
                 case BbBuffAddType.BUFF_RENEW_EXISTING:
                     // The live instance keeps its slot, start time and visuals; duration and variables are refreshed. The first application
@@ -1182,6 +1193,7 @@ internal sealed class BbBuffRuntime
             {
                 instance = new BbBuffInstance { Script = script, Name = request.Name, Owner = request.Target, State = state };
                 _instances[state] = instance;
+                NoteHandOverAdd(instance);
                 instance.StartTime = _host.Spells.CurrentTime;
                 instance.Shortened = state.ExpiresAt < request.Duration - 1e-9;
                 // The mutation clock of this life (BbBuffInstance.MutateNextAt): an add that carries a TickRate accumulates
@@ -2154,16 +2166,126 @@ internal sealed class BbBuffRuntime
 
     private void RunDeactivation(BbBuffInstance instance, bool expired)
     {
-        if (instance.Stacks.Count == 0)
-            _router.RunBuffHook(instance, "OnBuffDeactivate", _host.Spells.World.Get(instance.CasterNetId),
-                prepare: scope => scope.Vars["Expired"] = expired);
-        foreach (var stack in instance.Stacks.ToArray())
-            RunStackHook(instance, stack, "OnBuffDeactivate", scope => scope.Vars["Expired"] = expired);
+        var handover = BeginHandOver(instance);
+        try
+        {
+            if (instance.Stacks.Count == 0)
+                _router.RunBuffHook(instance, "OnBuffDeactivate", _host.Spells.World.Get(instance.CasterNetId),
+                    prepare: scope => scope.Vars["Expired"] = expired);
+            foreach (var stack in instance.Stacks.ToArray())
+                RunStackHook(instance, stack, "OnBuffDeactivate", scope => scope.Vars["Expired"] = expired);
+        }
+        finally
+        {
+            if (handover is not null) _handovers.Remove(handover);
+        }
+        if (handover is not null) CompleteHandOver(handover);
         foreach (var id in instance.SupersededEffects)
             if (_host.KilledEffects.Add(id)) _host.Spells.Effects.KillEffect(id);
         // Batch 726: what the buff's tables still own outlived it (BbSpellHost.RetireOwnedEffects).
         _host.RetireOwnedEffects(instance.InstanceVars);
         foreach (var stack in instance.Stacks) _host.RetireOwnedEffects(stack.Vars);
+    }
+
+    /// <summary>
+    /// Batch 885: the statuses an ending buff still holds, kept while its <c>OnBuffDeactivate</c> runs for the buff that deactivation adds on the same
+    /// unit to take over (<see cref="CompleteHandOver"/>).
+    /// </summary>
+    private sealed class StatusHandOverFrame(BbBuffInstance instance, Dictionary<BbSetStatus, bool> carried, IReadOnlyDictionary<BbSetStatus, string[]> successors)
+    {
+        public BbBuffInstance Instance { get; } = instance;
+        public Dictionary<BbSetStatus, bool> Carried { get; } = carried;
+        public IReadOnlyDictionary<BbSetStatus, string[]> Successors { get; } = successors;
+        public List<BbBuffInstance> Added { get; } = [];
+    }
+
+    private readonly List<StatusHandOverFrame> _handovers = new();
+    private readonly Dictionary<BbScript, IReadOnlyDictionary<BbSetStatus, string[]>> _statusSuccessors = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Batch 885 (player report on 1.0.0.132: Fizz attacks while he is untargetable on his spear). Reconstruction, an exception to the holder rule
+    /// of <see cref="WriteStatus"/> (a buff's status writes end with the buff): a status the ending buff holds is handed to a buff its
+    /// <c>OnBuffDeactivate</c> adds on the same unit (<c>BBSpellBuffAdd</c>, <c>TargetVar</c> Owner, a literal <c>BuffName</c>) when that buff's script,
+    /// or the script of a buff it adds the same way, writes the status's rest value; it then holds the status until such a rest write or its own end.
+    /// The shipped scripts that write the restore there show the bit staying on past the first buff: FizzJump switches Ghosted on and Targetable,
+    /// CanAttack and CanMove off, its deactivation adds FizzJumpDelay (Fizz on top of his spear, "becoming untargetable", the 132 tooltip), whose
+    /// deactivation writes Targetable, Ghosted and CanAttack back and adds FizzTrickSlam, which writes CanMove back. A writer with no such restore
+    /// (Jarvan IV's Cataclysm, the batch 222 audit) still releases at its end. Every shipped chain this rule reads (batch 885 record): on 132
+    /// FizzJump to FizzJumpDelay, and DeathDefiedSpirit, FizzShark and OrianaGhostMinion to ExpirationTimer (which holds Targetable off itself); on
+    /// 126 MonkeyKingDecoyClone to MonkeyKingKillCloneW (Ghosted), SpiritFire to SpiritFireAoE and the same ExpirationTimer chains.
+    /// </summary>
+    private StatusHandOverFrame? BeginHandOver(BbBuffInstance instance)
+    {
+        if (instance.HeldStatuses.Count == 0) return null;
+        var successors = StatusSuccessors(instance.Script);
+        if (successors.Count == 0) return null;
+        var carried = instance.HeldStatuses.Where(pair => StatusActs(pair.Key, pair.Value) && successors.ContainsKey(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        if (carried.Count == 0) return null;
+        var frame = new StatusHandOverFrame(instance, carried, successors);
+        _handovers.Add(frame);
+        return frame;
+    }
+
+    private void NoteHandOverAdd(BbBuffInstance instance)
+    {
+        foreach (var frame in _handovers)
+            if (ReferenceEquals(frame.Instance.Owner, instance.Owner)) frame.Added.Add(instance);
+    }
+
+    /// <summary>After the deactivation: each status no rest write released goes to the live buff it added whose script restores it.</summary>
+    private void CompleteHandOver(StatusHandOverFrame frame)
+    {
+        foreach (var successor in frame.Added)
+        {
+            if (frame.Carried.Count == 0) return;
+            if (!successor.Owner.Buffs.Contains(successor.State) || !_instances.ContainsKey(successor.State)) continue;
+            var taken = false;
+            foreach (var (status, value) in frame.Carried.ToArray())
+            {
+                if (!frame.Successors[status].Contains(successor.Name, StringComparer.OrdinalIgnoreCase)) continue;
+                frame.Carried.Remove(status);
+                if (successor.HeldStatuses.TryGetValue(status, out var held) && StatusActs(status, held)) continue;
+                successor.HeldStatuses[status] = value;
+                taken = true;
+            }
+            if (taken) Resample(successor);
+        }
+    }
+
+    /// <summary>For each status: the buffs the script's <c>OnBuffDeactivate</c> adds on its owner whose scripts (or a buff they add) write its rest value.</summary>
+    private IReadOnlyDictionary<BbSetStatus, string[]> StatusSuccessors(BbScript script)
+    {
+        if (_statusSuccessors.TryGetValue(script, out var known)) return known;
+        var map = new Dictionary<BbSetStatus, string[]>();
+        foreach (var name in OwnerBuffAdds(script, "OnBuffDeactivate"))
+        {
+            if (_scripts.FindOrShipped(name) is not { } successor) continue;
+            var rest = RestStatusWrites(successor);
+            foreach (var next in OwnerBuffAdds(successor, null))
+                if (_scripts.FindOrShipped(next) is { } nested) rest.UnionWith(RestStatusWrites(nested));
+            foreach (var status in rest)
+                map[status] = map.TryGetValue(status, out var names) ? [.. names, name] : [name];
+        }
+        _statusSuccessors[script] = map;
+        return map;
+    }
+
+    private static bool OnOwner(BbBlock block) => block.Text("TargetVar") is null or "Owner";
+
+    private static IEnumerable<string> OwnerBuffAdds(BbScript script, string? hook) =>
+        script.Walk().Where(step => (hook is null || step.Hook == hook) && step.Block.Function == "BBSpellBuffAdd" && OnOwner(step.Block))
+            .Select(step => step.Block.Text("BuffName")).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private static HashSet<BbSetStatus> RestStatusWrites(BbScript script)
+    {
+        var rest = new HashSet<BbSetStatus>();
+        foreach (var (_, block) in script.Walk())
+            if (block.Function == "BBSetStatus" && OnOwner(block) && block.Param("Status") is BbValue.Reference reference &&
+                block.Param("SrcValue") is BbValue.Bool value && Enum.TryParse<BbSetStatus>(reference.Name, out var status) &&
+                !StatusActs(status, value.Value))
+                rest.Add(status);
+        return rest;
     }
 
     /// <summary>

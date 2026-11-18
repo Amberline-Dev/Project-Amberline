@@ -301,7 +301,7 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
             // TargetExecute destroys them on him; the sweep met him at LineWidth plus his radius (140 and 315 units out), so the 0x5D removed
             // each blade that far from him (obj_SpellMissile's DestroyClientMissile handler flags it at once). Reconstruction: whether retail's
             // server-only sweep also skipped the tracked unit is not in the client; the arrival collide and the scripts' Target == Owner branch are.
-            if (_tracked.Alive && !_hit.Contains(_tracked.NetId) && Admissible(system, _tracked)) Strike(system, _tracked);
+            if (_tracked.Alive && !_hit.Contains(_tracked.NetId) && (ReachesItsCaster(system) || Admissible(system, _tracked))) Strike(system, _tracked);
             return Finish(system, _tracked);
         }
         ChampionSpellSupport.RefreshMissile(system, Caster, _castInfo, _origin, _position, goal, _speed, casterProjection: _projection, lineHeight: _height);
@@ -397,6 +397,22 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     private bool Admissible(SpellSystem system, Entity unit) =>
         BbSpellTargeting.Admits(Caster, unit, _flags) && system.Combat.IsTargetable(unit, null) &&
         ChampionSpellSupport.ScriptCollisionAllows(system, Caster, unit);
+
+    /// <summary>
+    /// Batch 891 (player report, 18 November 2026: "Ahri Q never gives passive charges after the first Essence Theft heal"): a tracking line that
+    /// reaches its own caster strikes him when its flags carry <c>AlwaysSelf</c> (0x40000), the shared target gate's step 2, which admits the
+    /// attacker whatever his team and kind once the targetable step (step 1) has passed; <see cref="BbSpellTargeting"/>'s area gate models the same
+    /// step. <c>AhriOrbReturn</c> (0x5C400: enemies, neutral, minions, heroes, AlwaysSelf; no AffectFriends) is cast at Ahri by AhriOrbMissile's end
+    /// hook, and its TargetExecute's Target == Attacker branch destroys it and sets <c>CharVars.OrbofDeceptionIsActive</c> back to 0. The team step
+    /// refused her, so after the first charged Q the flag stayed 1 and every later orb hit took Essence Theft's heal branch and gave no charge
+    /// (AhriOrbDamage, AhriOrbDamageSilence). The only other shipped tracking line with the flag is <c>OrianaReturn</c> (both lines), reached only
+    /// through OrianaGhostEnemy, which only OrianaDissonance adds, a spell in no book. Reconstruction: arrival only, the sweep along the path still
+    /// refuses the caster (253 shipped spells carry AlwaysSelf); retail's server gate for the arrival collide is not in the client, and a caster
+    /// the targetable step refuses (Zhonya's Hourglass) is still not struck.
+    /// </summary>
+    private bool ReachesItsCaster(SpellSystem system) =>
+        ReferenceEquals(_tracked, Caster) && _flags.Contains("AlwaysSelf") && BbSpellTargeting.Targetable(Caster, Caster, _flags) &&
+        system.Combat.IsTargetable(Caster, null);
 
     private void Strike(SpellSystem system, Entity unit)
     {

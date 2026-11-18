@@ -212,4 +212,79 @@ public static class RadsLayoutChecks
         }
     }
 
+
+    /// <summary>
+    /// The manifest rads.dll loads for a game started in <paramref name="folder"/>, or null (the game runs loose from its own files). RuntimeEnvironment
+    /// 0x100782a0 (1.0.0.132): "projects/" first (ManagedLayout.ParseGameDirectory, case-sensitive), then "solutions/"; a manifest that is not there
+    /// leaves the game loose. This line never starts a game in solution mode itself, so that one only has to be absent.
+    /// </summary>
+    internal static string? ManifestRead(string folder, string root)
+    {
+        TestAssert.False(folder.Replace('\\', '/').Contains("solutions/", StringComparison.Ordinal), $"{folder} reads as a RADS solution");
+        if (ManagedLayout.ParseGameDirectory(folder) is not { } release) return null;
+        var manifest = Path.Combine(root, "projects", release.Project, "releases", release.Version, "releasemanifest");
+        return File.Exists(manifest) ? manifest : null;
+    }
+
+    /// <summary>
+    /// Batch 889: a 1.0.0.126 managed layout in the RADS root (what a 126 start leaves in c:\rads; here a throwaway root) and a 1.0.0.132 game where
+    /// the player install keeps it (FolderMove.GameRelease, the release folder 126's layout fills). As it is, that folder names 126's releasemanifest
+    /// (the start before batch 889: white HUD bars, img:// names). The planned start's folder is the same folder, reads as no manifest, and a real
+    /// child (Windows PowerShell) started with the plan reports that spelling, which is what rads.dll reads. 126's layout is untouched afterwards.
+    /// </summary>
+    [Check("server.game-start-rads-cross-line")]
+    public static void Game132StartReadsNo126Layout()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "amberline-b889-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var root = Path.Combine(temp, "rads");
+            string Game(string install)
+            {
+                var game = Path.Combine(temp, install, Amberline.AirCompanion.FolderMove.GameRelease);
+                Directory.CreateDirectory(Path.Combine(game, "DATA", "Menu", "Textures"));
+                File.WriteAllBytes(Path.Combine(game, "DATA", "Menu", "Textures", "HUDAtlas.dds"), Enumerable.Repeat((byte)7, 4000).ToArray());
+                File.WriteAllBytes(Path.Combine(game, "League of Legends.exe"), [0x4D, 0x5A]);
+                return game;
+            }
+            var game126 = Game("amberline-126");
+            var game132 = Game("amberline-132");
+            TestAssert.Equal(ManagedLayout.Outcome.Built, ManagedLayout.Ensure(game126, root).Outcome, "126's managed layout");
+            var layout126 = ManifestRead(game126, root);
+            TestAssert.True(layout126 is not null, "126's game reads its layout");
+            TestAssert.Equal(layout126, ManifestRead(game132, root), "red: the 132 game's own folder names 126's manifest");
+
+            var executable = Path.Combine(game132, "League of Legends.exe");
+            var start = Amberline.AirCompanion.StockClientLauncher.CreateStartInfo(executable, Amberline.AirCompanion.MaestroCreateRequest.Parse("127.0.0.1 5319 1234567890123456 42"));
+            TestAssert.Equal(executable, start.FileName, "the image path stays as it is");
+            TestAssert.True(string.Equals(start.WorkingDirectory, game132, StringComparison.OrdinalIgnoreCase) && Directory.Exists(start.WorkingDirectory),
+                "the game starts in its own folder");
+            TestAssert.True(ManifestRead(start.WorkingDirectory, root) is null, $"green: {start.WorkingDirectory} reads no manifest");
+
+            var child = new System.Diagnostics.ProcessStartInfo("powershell.exe")
+            {
+                WorkingDirectory = start.WorkingDirectory, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardInput = true, CreateNoWindow = true,
+            };
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", "[Environment]::CurrentDirectory" }) child.ArgumentList.Add(argument);
+            using (var process = System.Diagnostics.Process.Start(child)!)
+            {
+                process.StandardInput.Close();
+                var seen = process.StandardOutput.ReadToEnd().Trim();
+                TestAssert.True(process.WaitForExit(60_000), "the child ends");
+                TestAssert.Equal(start.WorkingDirectory, seen, "Windows keeps the spelling the start gives");
+                TestAssert.True(ManifestRead(seen, root) is null, "what the child's rads.dll would read");
+            }
+
+            foreach (var loose in new[] { Path.Combine(temp, "AIR132-PREVIEW", "game"), Path.Combine(temp, "Projects", "game") })
+                TestAssert.Equal(loose, Amberline.AirCompanion.CompanionLine.GameWorkingDirectory(loose), "a folder rads.dll never reads stays as it is");
+            TestAssert.True(ManifestRead(Amberline.AirCompanion.CompanionLine.GameWorkingDirectory(@"C:\x\solutions\lol_game_client_sln\releases\0.0.0.70\deploy"), root) is null,
+                "a solution path is hidden too");
+            TestAssert.Equal(ManagedLayout.Outcome.Current, ManagedLayout.Ensure(game126, root).Outcome, "126's layout is untouched and current");
+            TestAssert.Equal(layout126, ManifestRead(game126, root), "and 126's game still reads it");
+        }
+        finally
+        {
+            if (Directory.Exists(temp)) ManagedLayout.DeleteTree(temp);
+        }
+    }
 }

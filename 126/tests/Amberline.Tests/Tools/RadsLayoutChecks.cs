@@ -267,4 +267,35 @@ public static class RadsLayoutChecks
             if (Directory.Exists(temp)) ManagedLayout.DeleteTree(temp);
         }
     }
+
+    /// <summary>
+    /// Batch 889 (the 1.0.0.132 line now starts its game so that rads.dll reads no layout; host StockClientLauncher.PlanStart asks the line): this line's
+    /// start keeps the game's folder exactly as it is, so a game where the player install keeps it (FolderMove.GameRelease) still reads the managed layout
+    /// its start builds (RuntimeEnvironment: "projects/", case-sensitive, ManagedLayout.ParseGameDirectory; a throwaway root here).
+    /// </summary>
+    [Check("server.game-start-rads-cross-line")]
+    public static void Game126StartKeepsItsLayout()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "amberline-b889-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var root = Path.Combine(temp, "rads");
+            var game = Path.Combine(temp, "amberline-126", Amberline.AirCompanion.FolderMove.GameRelease);
+            Directory.CreateDirectory(Path.Combine(game, "DATA", "Menu", "Textures"));
+            File.WriteAllBytes(Path.Combine(game, "DATA", "Menu", "Textures", "HUDAtlas.dds"), Enumerable.Repeat((byte)7, 4000).ToArray());
+            var executable = Path.Combine(game, "League of Legends.exe");
+            File.WriteAllBytes(executable, [0x4D, 0x5A]);
+            TestAssert.Equal(ManagedLayout.Outcome.Built, ManagedLayout.Ensure(game, root).Outcome, "126's managed layout");
+
+            var start = Amberline.AirCompanion.StockClientLauncher.CreateStartInfo(executable, Amberline.AirCompanion.MaestroCreateRequest.Parse("127.0.0.1 5219 1234567890123456 42"));
+            TestAssert.Equal(executable, start.FileName);
+            TestAssert.Equal(game, start.WorkingDirectory, "the folder as it is");
+            TestAssert.True(ManagedLayout.ParseGameDirectory(start.WorkingDirectory) is { } release &&
+                File.Exists(Path.Combine(root, "projects", release.Project, "releases", release.Version, "releasemanifest")), "the game reads its layout");
+        }
+        finally
+        {
+            if (Directory.Exists(temp)) ManagedLayout.DeleteTree(temp);
+        }
+    }
 }

@@ -19,12 +19,15 @@ public sealed partial class MinionAiSystem
         var source = radius is null && _tickIndex is not null && double.IsFinite(baseRange)
             ? _world.Near(_tickIndex, minion.Position, baseRange + MapDefinitions.NexusRadius)
             : _world.Entities.Values;
+        // Batch 886 (Reconstruction, player report "Shaco clone doesn't have aggro"): an enemy pet (Shaco's clone, Tibbers, Yorick's ghouls
+        // and revenant, LeBlanc's image, Wukong's decoy, Mordekaiser's ghost, Malzahar's voidlings) is a target too. This engine types a pet a
+        // monster, and the monster exclusion below is for the neutral camps; retail's pet is an obj_AI_Minion of the enemy team.
         var enemies = source.Where(candidate =>
             candidate.NetId != minion.NetId && candidate.Alive &&
             !IsIgnored(minion, candidate) &&
             WorldState.IsEnemy(minion, candidate) && !candidate.Protected &&
             (candidate.UnitType is UnitType.Hero or UnitType.Minion or UnitType.Turret or UnitType.Structure ||
-             candidate.AttackTarget == minion.NetId) &&
+             candidate.PetState is not null || candidate.AttackTarget == minion.NetId) &&
             _combat.IsTargetable(candidate, minion) &&
             InAcquisitionRange(minion, candidate, baseRange) &&
             HasBrushVision(minion.Team, candidate)).ToArray();
@@ -95,26 +98,27 @@ public sealed partial class MinionAiSystem
     {
         var victim = helpVictim ?? (candidate.AttackTarget is uint id ? world.Get(id) : null);
         var ally = victim is { Alive: true } && victim.Team == minion.Team;
-        var minionCandidate = IsMinionUnit(candidate);
+        // Batch 886 (Reconstruction): a pet ranks by the shared type test (BbSpellTargeting.KindFlag): a clone of a hero answers AffectHeroes,
+        // so it ranks as the hero it copies (the player's report expects the clone to be fought as Shaco is); Tibbers, a ghoul or a voidling
+        // answers AffectMinions and ranks as a minion.
+        var heroCandidate = candidate.UnitType == UnitType.Hero ||
+                            candidate.PetState is not null && Spells.Bb.BbSpellTargeting.KindFlag(candidate) == "AffectHeroes";
+        var minionCandidate = IsMinionUnit(candidate) || candidate.PetState is not null && !heroCandidate;
         if (ally && victim!.UnitType == UnitType.Hero)
         {
-            if (candidate.UnitType == UnitType.Hero) return 0;
+            if (heroCandidate) return 0;
             if (minionCandidate) return 1;
         }
         if (ally && IsMinionUnit(victim!))
         {
             if (minionCandidate) return 2;
             if (candidate.UnitType == UnitType.Turret) return 3;
-            if (candidate.UnitType == UnitType.Hero) return 4;
+            if (heroCandidate) return 4;
         }
         if (candidate.AttackTarget == minion.NetId) return 5;
         if (minionCandidate) return 6;
-        return candidate.UnitType switch
-        {
-            UnitType.Hero => 7,
-            UnitType.Turret => 8,
-            _ => 9,
-        };
+        if (heroCandidate) return 7;
+        return candidate.UnitType == UnitType.Turret ? 8 : 9;
     }
 
     // LMIN-01/02: one admission rule for damage nomination and AI consumption.
