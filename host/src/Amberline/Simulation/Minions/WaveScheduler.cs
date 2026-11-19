@@ -336,6 +336,8 @@ public sealed class WaveScheduler
         route = MovementSystem.InstallPath(entity, route,
             new NavigationBounds(_navigation.MinX, _navigation.MaxX, _navigation.MinZ, _navigation.MaxZ));
         entity.LastAnchorTime = now;
+        // Batch 910: the movement soft caps from the spawn on (BuffLifecycle.RecomputeMovementSpeed); 325 is inside 220..415 and stays.
+        BuffLifecycle.RecomputeMovementSpeed(entity);
         _world.Register(entity);
         // Retail builds a minion's AI object when the unit is created, so minionLib 0.0 OnInit runs
         // here and not at the unit's first AI step (LuaAiService.InstanceFor's Reconstruction note).

@@ -218,7 +218,8 @@ public sealed partial class BotController
     /// <summary><c>StopMove()</c>: drop the current route without touching the attack.</summary>
     internal void NativeStopMove(Entity hero)
     {
-        if (StateOf(hero) is not { } bot) return;
+        // Batch 900: a taunted bot's own stop would end the taunt's chase (StepControl); its orders wait (IsActionLocked).
+        if (StateOf(hero) is not { } bot || TauntTarget(hero) is not null) return;
         bot.HeldMove = null;
         StopMove(hero, bot);
     }
@@ -597,7 +598,11 @@ public sealed partial class BotController
     }
 
     /// <summary><c>TurnOffAutoAttack(stopReason)</c>.</summary>
-    internal void NativeTurnOffAutoAttack(Entity hero) => TurnOffAutoAttack(hero);
+    internal void NativeTurnOffAutoAttack(Entity hero)
+    {
+        // Batch 900: as NativeStopMove, a taunted bot keeps the taunt's chase.
+        if (TauntTarget(hero) is null) TurnOffAutoAttack(hero);
+    }
 
     /// <summary><c>GetState()</c>: the task's own state id.</summary>
     internal double NativeAiState(Entity hero) => StateOf(hero)?.ScriptState ?? 0.0;

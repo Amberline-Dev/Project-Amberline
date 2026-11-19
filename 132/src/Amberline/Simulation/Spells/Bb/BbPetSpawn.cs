@@ -100,6 +100,9 @@ internal static class BbPetSpawn
             };
         // The storm's own chunk (StormIdle.luaobj) runs on the spawned-unit host, which claims a unit by this name (SpawnedUnitAi.HostScript).
         if (!tibbers) pet.AiScript = SpawnedUnitAi.Canonical(ai);
+        // Batch 910: the movement soft caps from the spawn on (BuffLifecycle.RecomputeMovementSpeed); Viktor's storm (TempMovableChar, 150)
+        // reads 185 until its floor buff lands.
+        Amberline.Simulation.Buffs.BuffLifecycle.RecomputeMovementSpeed(pet);
         system.World.Register(pet);
         system.Effects.SendPetSpawn(pet, new SpawnPetSnapshot(
             owner.NetId, pet.NetId, checked((byte)pet.NodeId), spawnPosition, name, skin, SkinId: pet.SkinId, Rank: rank,

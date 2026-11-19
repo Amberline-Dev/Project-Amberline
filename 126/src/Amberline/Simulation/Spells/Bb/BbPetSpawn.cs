@@ -86,6 +86,9 @@ internal static class BbPetSpawn
         // still keeps its own character delay offset.
         UnitAttackTiming.Apply(pet, data);
         pet.PetState = new PetState(CloneKind.Tibbers, owner.NetId) { Rank = rank, BornAt = now };
+        // Batch 910: the movement soft caps from the spawn on (BuffLifecycle.RecomputeMovementSpeed); Tibbers' 350 is inside
+        // 220..415 and stays.
+        Amberline.Simulation.Buffs.BuffLifecycle.RecomputeMovementSpeed(pet);
         system.World.Register(pet);
         system.Effects.SendPetSpawn(pet, new SpawnPetSnapshot(
             owner.NetId, pet.NetId, checked((byte)pet.NodeId), spawnPosition, name, skin, SkinId: pet.SkinId, Rank: rank,

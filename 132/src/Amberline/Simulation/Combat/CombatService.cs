@@ -310,6 +310,7 @@ public sealed partial class CombatService : IEndOfGameEngine
             attacker.ClientAttackArmed = true;
             attacker.ClientSwingDropped = false;
             attacker.ClientSwingMissileNetId = missileNetId;
+            attacker.ClientSwingAnimationSerial = attacker.AnimationSerial;
         }
         if (attacker.UnitType == UnitType.Hero) _hooks.OnBasicAttackSent(attacker, target, missileNetId);
         // Batch 803: the client times a 0x0D with the delay offsets of the attack slot its slot byte names (HeroAttackTimings.ForSwing). A swing

@@ -204,7 +204,9 @@ public static partial class ChampionLiveRegressionChecks
         var wMove = caster.ForcedMove ?? throw new InvalidOperationException("W1 did not start");
         // W uses the saved script point, not Q2's inferred arrival shell: BlindMonkWOneDash moves to the ally's saved position. Restated in batch
         // 659: its IdealDistance (the gap between the bodies) sizes the speed and caps nothing (BbNativeHandlers.Move), so the dash ends there.
-        var wLanding = safeguardRuntime.Movement.FurthestWalkableLanding(caster.Position, ally.Position, caster);
+        // Restated in batch 916: the ally stands on Lee Sin's lattice row, so the end goes across it (MovementSystem.OffClientAxis).
+        var wLanding = safeguardRuntime.Movement.OffClientAxis(caster.Position,
+            safeguardRuntime.Movement.FurthestWalkableLanding(caster.Position, ally.Position, caster), wMove.Speed);
         TestAssert.Equal(wLanding, wMove.Destination, "Safeguard resolves the saved ally position");
         safeguardRuntime.Tick(.5);
         TestAssert.True(caster.ForcedMove is null, "Safeguard completes at the script landing");

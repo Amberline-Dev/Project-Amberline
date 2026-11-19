@@ -313,9 +313,11 @@ public sealed class SessionSpawnService
             }
 
             // Batch 460: the map's recall item and its spell (Mission.inibin ExtraSummonerItem*ItemID: 2001 Recall, 2005 OdinRecall on map 8).
+            // Batch 906: the spell the recall slot holds now. 414 Improved Recall's BBSetSpell (RecallImproved) runs when the page binds,
+            // before this client could take its 0x35.
             packets.Add(ItemsPackets.SetItem(hero.NetId, 6, checked((uint)_gameData.ExtraSummonerItemId), 1, 0));
-            packets.Add(SpellPackets.SetSpellData(hero.NetId,
-                ProtocolEncoding.HashString(_gameData.RecallSpellName), 10));
+            packets.Add(SpellPackets.SetSpellData(hero.NetId, ProtocolEncoding.HashString(
+                hero.ActiveSpellNames.Count > 10 && hero.ActiveSpellNames[10] is { Length: > 0 } recall ? recall : _gameData.RecallSpellName), 10));
             if (reveal && member != recipient)
                 packets.AddRange(VisionPackets.LeaveVisibility(hero.NetId));
         }

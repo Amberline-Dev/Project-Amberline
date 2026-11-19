@@ -126,6 +126,9 @@ internal sealed class BotState
     public double LastAttackOrderAt { get; set; } = double.NegativeInfinity;
     /// <summary>Batch 581: a <c>SetStateAndMove</c> the hero could not take yet, and the active task that ordered it.</summary>
     public (double State, Position2 Point, string Task)? HeldMove { get; set; }
+    /// <summary>Batch 900 (<c>BotController.StepControl</c>): when the next fear wander is due (null: not feared), and the taunter closed on (0: none).</summary>
+    public double? NextFearWander { get; set; }
+    public uint TauntTarget { get; set; }
     public int SkillKey { get; set; } = -1;
     /// <summary>Diagnostics only: the slot and cast count of a cast order that was queued behind a range walk (-1 none).</summary>
     public int QueuedSlot { get; set; } = -1;

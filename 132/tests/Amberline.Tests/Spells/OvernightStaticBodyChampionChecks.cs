@@ -58,9 +58,12 @@ public static partial class ChampionLiveRegressionChecks
             match.CastGround(0, rawEnd);
             for (var tick = 0; tick < 30 && vayne.ForcedMove is null; tick++) runtime.Tick(.01);
             var move = vayne.ForcedMove ?? throw new InvalidOperationException("Tumble did not begin");
-            TestAssert.Equal(rawEnd, move.Destination,
-                "Tumble retains its original collision request for the server");
-            TestAssert.Equal(runtime.Movement.ClientAnchor(projected),
+            // Restated in batch 916: the clear Tumble runs along a lattice row, so its request goes across the row
+            // (MovementSystem.OffClientAxis); the one the tower cuts short keeps its raw request.
+            var request = blocked ? rawEnd : runtime.Movement.OffClientAxis(new Position2(7000, 7000), rawEnd, move.Speed);
+            TestAssert.Equal(request, move.Destination,
+                "Tumble retains its collision request for the server");
+            TestAssert.Equal(runtime.Movement.ClientAnchor(blocked ? projected : request),
                 StaticBodyDashEnd(match.Captures[0].Packets),
                 "0x67 announces the quantized tower-limited Tumble endpoint");
             for (var tick = 0; tick < 20 && !move.Completed; tick++) runtime.Tick(cadence);
@@ -75,7 +78,7 @@ public static partial class ChampionLiveRegressionChecks
             {
                 TestAssert.Equal(rawEnd, projected, "clear Tumble keeps its raw dash endpoint");
                 // Batch 279: the dash's stand is a one-point path, installed on receipt: seated on the wire endpoint, its anchor.
-                TestAssert.Equal(runtime.Movement.ClientAnchor(rawEnd), vayne.Position,
+                TestAssert.Equal(runtime.Movement.ClientAnchor(request), vayne.Position,
                     "clear dash wire endpoint agrees with authoritative full travel");
             }
         }

@@ -165,7 +165,8 @@ public static partial class ChampionLiveRegressionChecks
             10.0, owner.NetId, canMitigateDuration: false);
         runtime.Dependencies.BuffServices.Items.SyncItemSlow(clone);
         runtime.Buffs.RefreshMovementSpeed(clone, push: false);
-        TestAssert.Near(325.0 * (1.0 - 0.40), clone.Speed, 1e-9,
+        // Batch 910: the clone takes the movement soft caps; 325 slowed 40 percent is 195 raw, 110 + 195 / 2 = 207.5.
+        TestAssert.Near(Amberline.Simulation.Stats.HeroStatCalculator.ApplyMovementSoftCaps(325.0 * (1.0 - 0.40)), clone.Speed, 1e-9,
             "production item selector applies the strongest slow");
         runtime.Delivery.Flush();
         match.Clear();

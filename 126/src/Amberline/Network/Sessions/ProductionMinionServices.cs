@@ -76,6 +76,17 @@ internal sealed class ProductionMinionPacketSink : IMinionPacketSink
     public void SendWaypoints(Entity minion, IReadOnlyList<Position2> waypoints,
         long syncId, string reason)
     {
+        // Batch 900 (owner, 19 November 2026: feared units are "barely moving at all"): a fear wander is no dash. MovementSystem.StartFearWander
+        // starts the Fear move and publishes its segment as an ordinary route (0xC1), which the client walks; held here like an order inside a
+        // dash (batch 225), every wander of a lane minion waited for its own move to end, so its client saw the minion stand for the whole fear
+        // and jump at its end. A route replaces a route, so the wander goes now.
+        if (minion.ForcedMove is { Effect: "Fear" })
+        {
+            // An order held before the fear (a dash's) is older than the wander and must not flush in the middle of it.
+            _held.RemoveAll(order => ReferenceEquals(order.Minion, minion));
+            SendNow(minion, waypoints, syncId, reason);
+            return;
+        }
         if (minion.ForcedMove is { Completed: false })
         {
             HoldOrder(minion, waypoints, syncId, reason);

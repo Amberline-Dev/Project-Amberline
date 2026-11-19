@@ -19,6 +19,7 @@ public sealed class BuffState
         if (stacks < 0) throw new ArgumentOutOfRangeException(nameof(stacks));
         if (maxStack is < 0) throw new ArgumentOutOfRangeException(nameof(maxStack));
         ExpiresAt = Finite(expiresAt, nameof(expiresAt));
+        TimerSpan = ExpiresAt;
         Name = name;
         Payload = payload ?? new BuffPayload();
         Type = type;
@@ -46,8 +47,40 @@ public sealed class BuffState
     public double ExpiresAt
     {
         get => _expiresAt;
-        set => _expiresAt = Finite(value, nameof(ExpiresAt));
+        set
+        {
+            _expiresAt = Finite(value, nameof(ExpiresAt));
+            TimerSet = true;
+            _countsFromItsStep = false;
+        }
     }
+
+    /// <summary>
+    /// Batch 906: the timer was set (the add, a renewal, a script's own write) since the simulation step began (<c>BuffLifecycle.BeginTick</c>
+    /// clears it): the step's buff pass leaves such a timer whole (<c>BuffLifecycle.TickBuffs</c>, <see cref="KeepWhole"/>).
+    /// </summary>
+    public bool TimerSet { get; internal set; }
+
+    /// <summary>Batch 906: the buff pass of the step this timer was set in leaves it whole; its later counts end at zero within rounding.</summary>
+    internal void KeepWhole() => _countsFromItsStep = true;
+
+    /// <summary>
+    /// Batch 906: the buff pass's count-down, which does not mark the timer as set. For a timer its set step left whole (<see cref="KeepWhole"/>)
+    /// a count that ends within a nanosecond of zero is zero: the repeated 1/30 s subtraction leaves a leftover of either sign on a whole-step
+    /// duration, and a positive one would keep the buff one step past it. Every other timer counts as it always did.
+    /// </summary>
+    internal void CountDown(double dt)
+    {
+        var left = Finite(_expiresAt - dt, nameof(ExpiresAt));
+        _expiresAt = _countsFromItsStep && Math.Abs(left) <= 1e-9 ? 0.0 : left;
+    }
+
+    private bool _countsFromItsStep;
+    /// <summary>
+    /// Batch 909: the length the timer was last started or restarted with (the add, a renewal); <see cref="ExpiresAt"/> counts down from it, so
+    /// <c>TimerSpan - ExpiresAt</c> is how long the timer has run. A stack that keeps the timer (<c>BUFF_STACKS_AND_CONTINUE</c>) leaves it alone.
+    /// </summary>
+    public double TimerSpan { get; set; }
     public uint CasterNetId { get; set; }
     public int Stacks
     {

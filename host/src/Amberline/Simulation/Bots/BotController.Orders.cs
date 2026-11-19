@@ -1,4 +1,5 @@
 using Amberline.Core;
+using Amberline.Core.Buffs;
 using Amberline.Network.Protocol;
 using Amberline.Simulation.Movement;
 using Amberline.Simulation.Spells;
@@ -164,8 +165,10 @@ public sealed partial class BotController
         if (hero.ChampionState?.BlocksActions == true || _spells.RecallRemaining(hero) > 0.0 ||
             SpellWindup.IsWindingUp(hero) || hero.ActiveScriptChannels > 0)
             return true;
+        // Batch 900 (Reconstruction): a taunt too, as Hero.luaobj's OnOrder refuses every order in AI_TAUNTED; the taunt's own chase is
+        // StepControl's.
         foreach (var buff in hero.BuffsAndScriptStatus())
-            if (buff.DisablesActions)
+            if (buff.DisablesActions || buff.Type == BuffType.Taunt)
                 return true;
         return false;
     }

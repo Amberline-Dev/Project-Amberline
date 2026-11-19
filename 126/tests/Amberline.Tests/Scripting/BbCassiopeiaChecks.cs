@@ -226,7 +226,7 @@ public static class BbCassiopeiaChecks
         match.Foe.Position = new Position2(9000, 9000);
         var speed = hero.Speed;
         TestAssert.True(match.Cast(0, at: minion.Position), "Noxious Blast is cast at the minion");
-        match.Advance(0.5);
+        match.Advance(0.5 + Step);     // Batch 906: the blast's 0.25 s timer (SelfExecute's dummy buff) ends on the first step at or past it, 8 steps
         TestAssert.True(Find(minion, "CassiopeiaNoxiousBlastPoison") is not null, "the minion is poisoned");
         TestAssert.True(Find(hero, "CassiopeiaNoxiousBlastHaste") is null, "no haste for a minion (the script's IsType hero test)");
         Refresh(match, hero);
@@ -295,7 +295,7 @@ public static class BbCassiopeiaChecks
         {
             var foe = match.Foe;
             TestAssert.True(match.Cast(0, at: foe.Position), "Noxious Blast poisons the foe");
-            match.Advance(0.5);
+            match.Advance(0.5 + Step);     // Batch 906: the blast lands 8 steps after its cast frame (its 0.25 s timer)
             TestAssert.True(Find(foe, "CassiopeiaNoxiousBlastPoison") is not null, "the foe is poisoned");
             match.Hero.SpellCooldowns[2] = 0.0;
             TestAssert.True(match.Cast(2, foe), "Twin Fang is cast at the poisoned enemy");

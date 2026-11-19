@@ -119,6 +119,12 @@ public sealed partial class Entity
     public uint AnimationSerial { get; set; }
 
     /// <summary>
+    /// Batch 899: <see cref="AnimationSerial"/> when the swing's 0x0D went out. A different value means a play or stop has reached the client
+    /// since, so the body plays that clip and a stop of the swing would cut it (<c>BbScriptMoves.DropSwing</c>).
+    /// </summary>
+    public uint ClientSwingAnimationSerial { get; set; }
+
+    /// <summary>
     /// Whether this unit's client holds an animation lock: a play with the lock bit (0xB8 flag 0x40, <c>BBPlayAnimation Lock=true</c>, Lock
     /// left out reads true) sets it and only the 0x2B unlock clears it; the client refuses every other play while it is set (batch 520).
     /// Batch 663: a cast pressed during a dash waits for the landing only while this is set (<c>SpellSystem.HandleCastRequest</c>).

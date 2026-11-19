@@ -531,9 +531,17 @@ public sealed class BbChampionModule : IChampionSpellModule
         // Reconstruction (16 October 2026 playtest): the cast animation has to override the attack animation that is playing: the client only yields to a cast whose controller
         // starts (a windup cast of the champion's own slots), so the swing is stopped before the cast reaches it, as the cast-approach
         // path does for a hero that has to walk into range (SpellSystem.ApproachCastPoint).
-        if (takesOrder && attacking && system.Effects.IsReferenceReady(hero)) system.Effects.SendStopAttack(hero);
+        // Batch 911 (owner, 19 November 2026: "Fizz Q still sometimes makes him run really fast instead of playing the dashing animation"): a
+        // windup cast pressed during the hero's own unlocked dash goes at once (batch 663), and its stop was a one-point path after the dash's 0x68,
+        // which every client installs in place of the dash (batch 862: the actor stands, then the landing's stop moves it across). Fizz's R
+        // pressed in his Q dash sent it, and a 0x39 for a swing no client played (the Q's AI_ATTACKTO set the target, DropSwing had dropped the
+        // swing). A forced move owns the hero's client route (HeroAttackOrderSystem.Move, BuffLifecycle's control stop), so neither goes out then
+        // unless a swing still plays on the client. Reconstruction: the retail server's cast stop is server code.
+        var dashing = hero.ForcedMove is { Completed: false };
+        if (takesOrder && attacking && (!dashing || hero.ClientSwingMissileNetId != 0) && system.Effects.IsReferenceReady(hero))
+            system.Effects.SendStopAttack(hero);
         // The cast's stop is a one-point path, installed on receipt (the client's follow-path routine): seated on its anchor at once.
-        if (takesOrder && system.Effects.IsReferenceReady(hero))
+        if (takesOrder && !dashing && system.Effects.IsReferenceReady(hero))
             system.Effects.SendWaypoints(hero, system.Movement.InstallStop(hero), system.World.Clock.SyncId());
         // No 0x8A here (batch 168): the cast's own cooldown travels in the cast answer below and the client starts it
         // itself, at the cast frame for a windup spell (the client's cast-frame routine ->

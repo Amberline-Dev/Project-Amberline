@@ -16,8 +16,39 @@ public sealed partial class BuffLifecycle
             foreach (var removal in _renewalRemovals.Where(held => held.Frame is null && held.Tick < _tick).ToArray())
                 SendHeld(removal);
         _tick++;
+        _stepOpen = false;
     }
 
+    /// <summary>
+    /// Batch 906: the start of one simulation step (<c>ProductionSimulationDriver.Tick</c>, right after the clock advances). A timer set from
+    /// here to its holder's buff pass is set at this step's time, so that pass does not count it (<see cref="TickBuffs"/>); the marks of the
+    /// timers set before (between two steps, or after their holder's pass in the step before) are cleared, and the pass counts those.
+    /// </summary>
+    public void BeginTick()
+    {
+        foreach (var unit in _world.Entities.Values)
+            foreach (var buff in unit.Buffs)
+                buff.TimerSet = false;
+        _stepOpen = true;
+    }
+
+    // Batch 906: between BeginTick and EndTick (a simulation step of the driver). A pass outside a step counts every timer.
+    private bool _stepOpen;
+
+    /// <summary>
+    /// One buff pass over <paramref name="unit"/>: the update hooks, the host-filled periodics and the timers.
+    /// <para>
+    /// Batch 906 (both lines): a step's pass does not count down a timer set earlier in the same step (<see cref="BuffState.TimerSet"/>,
+    /// <see cref="BeginTick"/>): no time has passed for it. Its later counts end at zero within rounding (<see cref="BuffState.CountDown"/>),
+    /// so it holds its buff for its duration in whole steps, counting its own. Before, the pass also counted a timer set in its own step, so
+    /// the count reached zero on the last step of the buff's life, and the rounding of the repeated 1/30 s subtraction decided that step: a
+    /// positive leftover kept it (0.1 to 1.1 s, 2.9 s and up), a zero or negative one dropped it (1.2 to 2.8 s), and a duration that is not a
+    /// whole number of steps lost its part step (0.25 s held 7 steps). A buff re-added on the period of its own duration was missing for one
+    /// step: Siege Commander's 2 s debuff every 2 s, Sona's 0.25 s auras on the 8-step gaps of their 0.25 s periodic. A timer set after its
+    /// holder's pass or between two steps counts exactly as before. Reconstruction: retail's buff manager is server code the client does not
+    /// hold; the shipped scripts re-add these buffs on exactly their duration, which holds only when the re-add meets the live buff.
+    /// </para>
+    /// </summary>
     public void TickBuffs(Entity unit, double dt, bool push = false)
     {
         ArgumentNullException.ThrowIfNull(unit);
@@ -105,7 +136,10 @@ public sealed partial class BuffLifecycle
                 if (changed && push && unit.UnitType == UnitType.Hero) _heroStats.Push(unit);
             }
             if (!unit.Buffs.Contains(buff)) continue;
-            buff.ExpiresAt -= dt;
+            // Batch 906: a timer set earlier in this step is left whole.
+            if (_stepOpen && buff.TimerSet) buff.KeepWhole();
+            else buff.CountDown(dt);
+            buff.TimerSet = false;
             if (buff.ExpiresAt <= 0.0 && !ContinueAmmo(unit, buff))
             {
                 // Reconstruction (wire grace): a buff whose wire copy carries a margin is one a script or a poll re-adds on a period. Its remove

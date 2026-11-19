@@ -798,6 +798,72 @@ public sealed partial class MovementSystem
     }
 
     /// <summary>
+    /// Batch 916 (owner, 19 November 2026: Volibear Q "really rarely fails to flip the enemy VISUALLY - they just teleport"): the end of a dash
+    /// whose client path runs along an axis, or so close to one that the client drops its cross component, moved across the axis. The client
+    /// installs a dash (0x67/0x68) as a path that cannot be overridden (the client passes false to ClientFollowServerPath, 126
+    /// The client +0xd5), seated on the path's first lattice point, and draws the unit through the client ->
+    /// <c>MoveForwardAtMaxSpeed</c>. For a path with gravity or one that cannot be overridden
+    /// (every dash, arcing or not), that routine moves the drawn unit only while both the x and the z of the actor's frame movement are non-zero
+    /// (<c>0.0 &lt; ABS(x) &amp;&amp; 0.0 &lt; ABS(z)</c>); an ordinary route takes its other branch. And the client (132
+    /// The client lines 120-131, 126 the client, the float 0.005 at 126) zeroes each component of that frame movement
+    /// under 0.005 units. A dash whose two lattice points share a row or a column has a zero component at any frame rate: the unit is not drawn
+    /// moving at all (a knock-up rises and falls on its start) until the landing stop seats it on the end, the "teleport". Volibear Q's bounce
+    /// point lies on the line through Volibear, so a target standing on his lattice row or column was flung along it every time (batch 912's six
+    /// client flings, both seats); Alistar's Headbutt along a row stalled the same way on this batch's client, and a fling 2 units off the row
+    /// played whole. A dash a few units off an axis keeps a cross component of (offset / trip) / frame rate per frame, so it stalls the same way
+    /// once the frame rate passes 0.005 x trip / offset.
+    /// <para>
+    /// The end's cross coordinate is set so that component stays at 0.005 or more at <see cref="DashDrawnFrameRate"/>, rounded up to whole lattice
+    /// steps: one step (2 units) for a trip of 0.4 s, two for Volibear's 0.47 s fling, three for a one-second toss. The cross side the dash already
+    /// leans to is kept when it is floor (else the other); on an axis, the side that is movement floor with the more room from terrain (a landing
+    /// kept clear of a wall stays clear).
+    /// The server's landing and the client's path are the same point, so the landing stop corrects nothing. A dash of at most two lattice steps
+    /// keeps its end (its stall is a snap of at most 4 units, and the step would turn it by 45 degrees or more: Xin Zhao's charge at a target 1
+    /// to 3 units away still ends on it), as does one whose candidate is not floor.
+    /// </para>
+    /// NOT RETAIL: the shipped scripts name the landing point (Volibear's bounce point, Headbutt's push), and this server lands a few units off it
+    /// on purpose, so that the stock client draws the dash. Retail's server body of the move natives is not in any client, and nothing shows it
+    /// doing the same. The frame rate the step is sized for is a Reconstruction (<see cref="DashDrawnFrameRate"/>).
+    /// </summary>
+    internal Position2 OffClientAxis(Position2 origin, Position2 end, double speed)
+    {
+        const double ClientLatticeStep = 2.0;
+        // The client's threshold under which a frame's movement component is zeroed.
+        const double ZeroedComponent = 0.005;
+        var from = ClientAnchor(origin);
+        var to = ClientAnchor(end);
+        var dx = to.X - from.X;
+        var dz = to.Z - from.Z;
+        var length = Math.Sqrt(dx * dx + dz * dz);
+        if (length <= 2.0 * ClientLatticeStep || !(speed > 0.0)) return end;
+        // The cross offset whose share of each frame's step, (offset / length) x (speed / fps), is the zeroing threshold.
+        var needed = ZeroedComponent * DashDrawnFrameRate * length / speed;
+        var crossIsX = Math.Abs(dx) < Math.Abs(dz);
+        var cross = crossIsX ? dx : dz;
+        if (Math.Abs(cross) >= needed) return end;
+        var offset = Math.Ceiling(needed / ClientLatticeStep) * ClientLatticeStep;
+        Position2? stepped = null;
+        var room = double.NegativeInfinity;
+        double lean = Math.Sign(cross);
+        foreach (var side in lean == 0.0 ? new[] { 1.0, -1.0 } : new[] { lean, -lean })
+        {
+            var candidate = ClientAnchor(crossIsX ? new Position2(from.X + side * offset, to.Z) : new Position2(to.X, from.Z + side * offset));
+            if (!_navigation.IsMovementWalkable(candidate)) continue;
+            if (lean != 0.0) return candidate;
+            var clearance = _navigation.PointClearance(candidate, 200.0);
+            if (clearance > room) (stepped, room) = (candidate, clearance);
+        }
+        return stepped ?? end;
+    }
+
+    /// <summary>
+    /// Reconstruction: the highest client frame rate <see cref="OffClientAxis"/> sizes its step for. The client's frame cap (<c>FrameCapType</c>)
+    /// can be off, and the owner plays at 200 frames a second and more (owner rule, 17 October 2026); at a higher rate a dash that close to an axis
+    /// would stall again.
+    /// </summary>
+    internal const double DashDrawnFrameRate = 1000.0;
+
+    /// <summary>
     /// Projects a FIRST_COLLISION_HIT request to a client-quantized, body-clear
     /// placement. Callers that retain the raw movement request must instead use
     /// FirstCollisionDashLanding for presentation: live collision tests the

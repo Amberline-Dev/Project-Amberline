@@ -62,7 +62,10 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
         // the server dropped. Tell the client first. Whatever swing is left is no longer the current SpellCaster, so a later drop
         // of it sends nothing and no stop can find the spell's own missile.
         if (caster.ClientSwingDropped) SendStopAttack(caster);
-        caster.ClientSwingMissileNetId = 0;
+        // Batch 899: an instacast replaces nothing. The client hands it to TryCastInstaSpell while the current SpellCaster
+        // is an auto attack, and that routine creates and stops no SpellCaster (batch 575), so the swing stays the
+        // client's current SpellCaster and a drop of it after this cast still has to be told (Playful/Trickster's own BBCancelAutoAttack).
+        if (!IsInstacast(info)) caster.ClientSwingMissileNetId = 0;
         // Batch 400 (owner finding, 27 October 2026: Fiddlesticks cannot move while Dark Wind's crows bounce). A missile-only child (batch 393)
         // reaches its caster's own client as the 0x41 alone, which builds no SpellCaster (the 0x41 handler runs
         // the cast routine, and that builds none). Only a SpellCaster's Stop asks IsCancelBlocked
@@ -133,6 +136,13 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
         if (channel > 0.0 && (info.Flags & 0x01) == 0 && _data.SpellHasUncancellableChannel(name))
             SpellWindup.BeginChannel(caster, castFrame, info.ExtraCastTime + info.DesignerTotalTime,
                 _data.Spell(name).RawFlag("SpellData*CannotBeSuppressed"));
+    }
+
+    // The cast packet's spell carries the Instacast bit (SpellData*Flags 4), the bit Client_DoCastSpell tests.
+    private bool IsInstacast(SpellCastInfo info)
+    {
+        _spellNamesByHash ??= SpellNamesByHash();
+        return _spellNamesByHash.TryGetValue(info.SpellHash, out var name) && _data.Spell(name).IsInstant;
     }
 
     private Dictionary<uint, string> SpellNamesByHash()
@@ -715,6 +725,16 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
     private static float WireDuration(BuffState buff) =>
         Float(buff.ExpiresAt + buff.Payload.WireDurationMargin);
 
+    /// <summary>
+    /// Batch 909 (owner, 19 November 2026: True Grit's ring "restarts at every +1"). The running time an add carries: how long the buff's timer has
+    /// run since it was last started (<see cref="BuffState.TimerSpan"/>). The stock client's buff add (0xBF) and count update (0x1F) hand the duration
+    /// and this running time to the instance's resize (126 the client, lol132.exe: start = now - running, end = now +
+    /// duration), and the HUD draws the ring over end - start. A stack that keeps its timer (<c>BUFF_STACKS_AND_CONTINUE</c>: Graves' True Grit
+    /// raise, the potions, Ahri's two) or a count that falls on a running timer therefore keeps the ring's total; with 0 the ring restarted at
+    /// the time left. A fresh add or a restart carries 0. Reconstruction: retail's server code for the field is not in the client; the handlers are.
+    /// </summary>
+    private static float WireRunning(BuffState buff) => Float(Math.Max(0.0, buff.TimerSpan - buff.ExpiresAt));
+
     public void RenewBuff(Entity unit, BuffState buff)
     {
         if (IsReferenceReady(unit) && ReachesClient(buff))
@@ -759,7 +779,7 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
             ? SpellPackets.AddBuff(new BuffAdd(unit.NetId, checked((byte)buff.Slot),
                 (byte)buff.Type, nameHash,
                 WireDuration(buff), buff.CasterNetId, checked((byte)Math.Max(0, count)),
-                IsHidden: buff.HiddenOnClientByte))
+                IsHidden: buff.HiddenOnClientByte, RunningTime: WireRunning(buff)))
             : SpellPackets.RemoveBuff(unit.NetId, checked((byte)buff.Slot), nameHash);
         // Batch 405: a toggle carrier's add names the slot it toggles, so the delivery can send it behind that slot's swap.
         if (added && buff.Payload.ToggleSlot is { } toggleSlot) _queue.EnqueueToggleCarrier(packet, unit.NetId, toggleSlot);

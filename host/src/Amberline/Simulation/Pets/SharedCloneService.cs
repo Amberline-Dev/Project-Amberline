@@ -4,6 +4,7 @@ using Amberline.Network.Protocol;
 using Amberline.Simulation.Combat;
 using Amberline.Simulation.Movement;
 using Amberline.Simulation.Spells;
+using Amberline.Simulation.Stats;
 
 namespace Amberline.Simulation.Pets;
 
@@ -48,9 +49,12 @@ public sealed class SharedCloneService
             CloneKind.LeblancImage or CloneKind.MonkeyKingDecoy or CloneKind.MordekaiserGhost => EntityKind.ClonePet,
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
+        // Batch 910: every moving unit takes the movement soft caps (BuffLifecycle.RecomputeMovementSpeed), so a clone's baseline is a raw speed.
+        // A snapshot clone's source.Speed is the champion's capped speed: the baseline is the raw speed it came from, so the clone reads the
+        // source's speed at birth and a later slow is capped once. Reconstruction: what retail copied into the clone is not in the shipped files.
         var movementBaseline = kind == CloneKind.YorickRevenant
             ? _data.StatsAtLevel(_data.Champion(source.StatCharacterName), source.Level).MoveSpeed
-            : source.Speed;
+            : WithoutMovementSoftCaps(source.Speed);
         // The clone belongs to the team of its owner: the same unit as the source's for Shaco, LeBlanc, Wukong and Yorick (who clones a fallen
         // ally), and the owner's side for Mordekaiser's ghost, whose source is a fallen enemy.
         // Batch 467: the source's penetration without its buffs' part. The clone's own copies of the items put their buffs on the clone
@@ -75,7 +79,7 @@ public sealed class SharedCloneService
             Created = false,
             Visible = false,
             Speed = kind == CloneKind.YorickRevenant
-                ? Math.Max(0.0, movementBaseline + owner.FlatMovementSpeedMod) : source.Speed,
+                ? HeroStatCalculator.ApplyMovementSoftCaps(Math.Max(0.0, movementBaseline + owner.FlatMovementSpeedMod)) : source.Speed,
             // Revenants retain the template's base speed; their controller
             // synchronizes only Yorick's flat modifier. Shaco keeps his snapshot.
             MovementSpeedBaseline = movementBaseline,
@@ -132,6 +136,18 @@ public sealed class SharedCloneService
             _effects.SendHealth(clone, clone.Health);
         return clone;
     }
+
+    /// <summary>
+    /// Batch 910: the raw speed a capped one came from. <see cref="HeroStatCalculator.ApplyMovementSoftCaps"/> rises strictly (110..220 below
+    /// 220 raw, then 220..415, 415..475 up to 490 raw, then above 475), so each capped speed has one raw speed.
+    /// </summary>
+    private static double WithoutMovementSoftCaps(double speed) => speed switch
+    {
+        < HeroStatCalculator.MovementSoftCapLowerStart => Math.Max(0.0, (speed - 110.0) * 2.0),
+        <= HeroStatCalculator.MovementSoftCapStart => speed,
+        <= 475.0 => (speed - 83.0) / HeroStatCalculator.MovementSoftCapMiddleScale,
+        _ => (speed - 230.0) / HeroStatCalculator.MovementSoftCapHighScale,
+    };
 
     private AttackTimingBaseline CloneTimingBaseline(Entity source)
     {

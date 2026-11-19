@@ -269,7 +269,17 @@ public sealed class BbSummonerModule
     /// </summary>
     public string RecallSpellName => _data.RecallSpellName;
 
-    private bool IsRecall(BbChannel? channel) => channel is not null && channel.Script.Name == RecallSpellName;
+    /// <summary>
+    /// Batch 906: the recall spell the hero's recall slot holds now. A script may write the slot (<c>BBSetSpell</c> of inventory slot 6,
+    /// stored at <see cref="SpellSystem.RecallSlot"/>): 1.0.0.132's MasteryImprovedRecallBuff (414 Improved Recall) puts RecallImproved there
+    /// (OdinRecallImproved on The Crystal Scar). A slot no script wrote holds the map's <see cref="RecallSpellName"/>.
+    /// </summary>
+    public string RecallSpellNameOf(Entity hero) =>
+        SpellSystem.RecallSlot < hero.ActiveSpellNames.Count && hero.ActiveSpellNames[SpellSystem.RecallSlot] is { Length: > 0 } live
+            ? live : RecallSpellName;
+
+    // Batch 906: the recall is the channel of the recall slot, whichever recall spell the slot holds.
+    private static bool IsRecall(BbChannel? channel) => channel is { Slot: SpellSystem.RecallSlot };
 
     /// <summary>Recalls whose cast windup is still running: the binding, the cast point and the seconds left to the cast frame.</summary>
     private readonly Dictionary<Entity, (BbLoadoutBinding Binding, Position3 At, double Remaining)> _recallWindups =
@@ -277,13 +287,16 @@ public sealed class BbSummonerModule
 
     /// <summary>
     /// The hero's Recall binding, made the first time the hero casts it: <c>Spells/Recall.luaobj</c> on the owner's summoner slot
-    /// <see cref="SpellSystem.RecallSlot"/>. Null when the shipped script is missing.
+    /// <see cref="SpellSystem.RecallSlot"/>. Null when the shipped script is missing. Batch 906: <paramref name="spellName"/> is the spell the
+    /// slot holds (<see cref="RecallSpellNameOf"/>, the map's when omitted); a binding of another recall spell is replaced.
     /// </summary>
-    public BbLoadoutBinding? RecallBinding(BbLoadoutOwner owner)
+    public BbLoadoutBinding? RecallBinding(BbLoadoutOwner owner, string? spellName = null)
     {
-        if (owner.Summoner(SpellSystem.RecallSlot) is { } live) return live;
-        return _scripts.FindOrShipped(RecallSpellName) is { } script
-            ? owner.SetSummoner(script, RecallSpellName.GetHashCode(StringComparison.Ordinal), SpellSystem.RecallSlot)
+        spellName ??= RecallSpellName;
+        if (owner.Summoner(SpellSystem.RecallSlot) is { } live && string.Equals(live.Script.Name, spellName, StringComparison.OrdinalIgnoreCase))
+            return live;
+        return _scripts.FindOrShipped(spellName) is { } script
+            ? owner.SetSummoner(script, spellName.GetHashCode(StringComparison.Ordinal), SpellSystem.RecallSlot)
             : null;
     }
 

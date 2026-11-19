@@ -109,9 +109,11 @@ public sealed class BbLoadoutHooks
         if (ignoreDamageIncreaseMods) return amount;
         var page = PageFor(source);
         if (page is null) return amount;
+        // Batch 902: the hook sees the hit's own target (its kind and health: Talents/262.luaobj Executioner) and source type.
+        var health = target.MaxHealth > 0.0 ? target.Health / target.MaxHealth : 1.0;
         foreach (var talent in page.Talents.Values)
         {
-            amount = Run(talent, "CharOnPreDealDamage", amount, type, KindOf(source));
+            amount = Run(talent, "CharOnPreDealDamage", amount, type, KindOf(source), KindOf(target), kind, health);
             if (kind != DamageSourceKind.Basic) continue;
             foreach (var add in talent.Buffs.Where(add => BbLoadoutReport.BuffHasHook(add.Name, "BuffOnHitUnit")))
                 amount = Guard(talent.Id + "/" + add.Name, "BuffOnHitUnit", amount,
@@ -141,12 +143,13 @@ public sealed class BbLoadoutHooks
     /// <c>CharOnPreDamage</c> (Tenacity's non-true factor, Defensive's block of an AI non-hero hit) run after the
     /// target's script buffs and its champion's own hook, where the hand-written reductions sat.
     /// </summary>
-    public double OnPreDamage(Entity target, Entity? source, double amount, DamageType type)
+    public double OnPreDamage(Entity target, Entity? source, double amount, DamageType type, DamageSourceKind? kind = null)
     {
         var page = PageFor(target);
         if (page is null) return amount;
+        // Batch 902: the hit's source type reaches the hook (Talents/333.luaobj Evasion cuts a DAMAGESOURCE_SPELLAOE hit).
         foreach (var talent in page.Talents.Values)
-            amount = Run(talent, "CharOnPreDamage", amount, type, KindOf(source));
+            amount = Run(talent, "CharOnPreDamage", amount, type, KindOf(source), kind: kind);
         return amount;
     }
 
@@ -173,11 +176,14 @@ public sealed class BbLoadoutHooks
     // Running one talent hook
     // ------------------------------------------------------------------------------------------------------------
 
-    private double Run(BbTalentReport talent, string hook, double amount, DamageType type, BbProbeUnit attacker)
+    private double Run(BbTalentReport talent, string hook, double amount, DamageType type, BbProbeUnit attacker,
+        BbProbeUnit? target = null, DamageSourceKind? kind = null, double targetHealthPercent = 1.0)
     {
         if (!talent.HasHook(hook)) return amount;
+        // Reconstruction: a hit the engine gives no source category reads DAMAGESOURCE_RAW (0), the probe's answer before batch 902.
+        var source = kind is { } known ? BbSpellHost.DamageSourceNumber(known) : 0.0;
         return Guard(talent.Id + "/" + hook, hook, amount,
-            () => talent.ModifyHit(hook, amount, TypeOf(type), attacker));
+            () => talent.ModifyHit(hook, amount, TypeOf(type), attacker, target, source, targetHealthPercent));
     }
 
     private IReadOnlyList<BbLoadoutBuffAdd> RunAdd(BbTalentReport talent, string hook, Func<string?, double>? heroBuffCount = null)
@@ -250,13 +256,17 @@ public sealed class BbLoadoutHooks
     }
 
     /// <summary>
-    /// The adds that live on the hero as buffs: those whose buff keeps its own update loop (132: Archmage's MasteryBlastBuff), and the
-    /// utility's neutral markers (batch 196), which the shipped neutral death scripts read from the killer. NOT RETAIL (batch 770, open):
-    /// the 132 adds whose whole effect is an <c>OnBuffActivate</c> (442 Wealth's MasteryHoardBuff gold, 414 Improved Recall's
-    /// MasteryImprovedRecallBuff spell swap) are not installed yet, so those two talents do nothing.
+    /// The adds that live on the hero as buffs: those whose buff keeps its own update loop (132: Archmage's MasteryBlastBuff), the
+    /// utility's neutral markers (batch 196), which the shipped neutral death scripts read from the killer, and (batch 902) 442 Wealth's
+    /// MasteryHoardBuff, whose <c>OnBuffActivate</c> is the gold: added BUFF_RENEW_EXISTING for 25000 s and PersistsThroughDeath, so the
+    /// polls, a level-up's rebind and a respawn renew it without activating it again (batch 896's renewal) and the gold lands once.
+    /// Batch 906: 414 Improved Recall's MasteryImprovedRecallBuff (batch 770 left it uninstalled). Its <c>OnBuffActivate</c> swaps inventory
+    /// slot 6 (spell slot 10) from Recall to RecallImproved, OdinRecall to OdinRecallImproved (<c>BBSetSpell</c>), and the recall casts the
+    /// spell that slot holds (<c>BbSummonerModule.RecallSpellNameOf</c>): ChannelDuration 7 against 8.
     /// </summary>
     private static bool IsLiveAdd(BbLoadoutBuffAdd add) =>
-        BbLoadoutReport.BuffHasHook(add.Name, "BuffOnUpdateActions") || MasteryEffects.NeutralBuffMarkers.Contains(add.Name);
+        BbLoadoutReport.BuffHasHook(add.Name, "BuffOnUpdateActions") || MasteryEffects.NeutralBuffMarkers.Contains(add.Name) ||
+        add.Name is "MasteryHoardBuff" or "MasteryImprovedRecallBuff";
 
     /// <summary>
     /// The add goes through the ordinary buff lifecycle with the payload the buff's own script collects

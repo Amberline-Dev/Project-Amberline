@@ -65,6 +65,8 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     private readonly double _height;
     private Position2 _origin;
     private Position2 _position;
+    // The centre of the unit whose hit destroyed the line: where it ends (Strike, batch 909).
+    private Position2? _struckEnd;
     private Position2 _direction;
 
     public BbLineMissile(Action<BbLineMissile> forget, BbSpellHost host, BbScript script, string spellName, Entity caster, int slot, int rank,
@@ -425,9 +427,17 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         // the line on this hit (Mystic Shot, Thundering Shuriken) keeps the next unit of the step unhit. Reconstruction: retail's grouping is not in
         // the client, which takes any count.
         system.Effects.SendLineMissileHitList(_missileNetId, [unit.NetId]);
-        var at = new Position3(unit.Position.X, system.Movement.Navigation.HeightAt(unit.Position), unit.Position.Z);
+        var centre = unit.Position;
+        var at = new Position3(centre.X, system.Movement.Navigation.HeightAt(centre), centre.Z);
         _host.Router.RunTargetExecute(_script, Caster, _slot, _rank, 0.0, at, at, unit, targetsHit: _hits++, missileNetId: _missileNetId,
             itemId: _itemId);
+        // Batch 909 (owner decision, 19 November 2026, from Sejuani's champion spotlight: Glacial Prison's explosion "centered on the target"). A
+        // line its own hit destroys (the TargetExecute's BBDestroyMissile) ends at the centre of the unit it struck: that is the MissileEndPosition
+        // its end hooks get, not the head's point at the step, which the swept contact (LineWidth + the unit's radius) left 150-175 units short of
+        // the unit. Who reads it (the 132 scripts' end hooks on a line destroyed on a hit): SejuaniGlacialPrisonStart's nova, sejuani_ult_tar and
+        // its 450 area; GravesChargeShotShot's cone, cast from 150 short of the end; FizzMarinerDoomMissile's fish position, which its
+        // TargetExecute already takes from the target. Reconstruction: retail's server-side end of a line at a hit is not in the client.
+        if (_flight.Destroyed) _struckEnd ??= centre;
     }
 
     private bool Finish(SpellSystem system, Entity? reached = null)
@@ -439,7 +449,7 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         // retiring it put an 0xA6 on the wire while it lived, and the next visibility refresh created it a second time.
         if (_projection is { } projected && system.World.Get(projected.NetId) is null or { Placemarker: true, Announced: false })
             system.Effects.RetireProjectedCaster(projected.NetId);
-        _flight.End(_position, reached);
+        _flight.End(_struckEnd ?? _position, reached);
         _forget(this);
         return false;
     }

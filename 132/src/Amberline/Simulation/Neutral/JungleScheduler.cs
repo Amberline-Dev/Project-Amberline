@@ -307,6 +307,8 @@ public sealed class JungleScheduler
             NeutralState = "idle",
             NeutralPlayerLevel = playerLevel,
         };
+        // Batch 910: the movement soft caps from the spawn on (BuffLifecycle.RecomputeMovementSpeed): the Ancient Golem's shipped 180 reads 200.
+        Buffs.BuffLifecycle.RecomputeMovementSpeed(entity);
         _world.Register(entity);
         _occupied.Add((new Position2(home.X, home.Z), stats.Radius));
         var member = new NeutralMember(entity, name, request.Camp, request.Member,
@@ -326,10 +328,11 @@ public sealed class JungleScheduler
         // The scripts' own first sample may have grown the pool (HPByPlayerLevel's IncFlatHPPoolMod on a non-hero moves
         // MaxHealth and Health directly, BuffLifecycle.ApplyNpcMaxHealth), so the member's stat block the create burst
         // and the Worm's attack read is re-stamped from the entity the bind left: the 0xCC that follows the create then
-        // carries the script's pool, exactly as the recorded corpora and the live client see it.
-        if (entity.MaxHealth != stats.Hp || entity.Health != stats.Hp)
+        // carries the script's pool, exactly as the recorded corpora and the live client see it. Batch 910: its speed is the unit's
+        // capped one too (the member's stats keep the record's raw speed otherwise).
+        if (entity.MaxHealth != stats.Hp || entity.Health != stats.Hp || entity.Speed != stats.Speed)
         {
-            stats = stats with { Hp = entity.MaxHealth };
+            stats = stats with { Hp = entity.MaxHealth, Speed = entity.Speed };
             member = member with { Stats = stats };
             _members[entity.NetId] = member;
         }

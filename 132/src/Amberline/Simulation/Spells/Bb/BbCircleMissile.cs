@@ -100,6 +100,7 @@ internal sealed class BbCircleMissile : ISharedSpellProjectile
             _radius = ChampionSpellSupport.Distance(_center, _launchFrom);
             _angle = Math.Atan2(_launchFrom.Z - _center.Z, _launchFrom.X - _center.X);
             _flight.Launch(_position, _centerUnit);
+            AnnounceLaunch(system);
         }
         if (_flight.Destroyed) return Finish(system);
         _age += dt;
@@ -111,7 +112,33 @@ internal sealed class BbCircleMissile : ISharedSpellProjectile
         _radius += _radialVelocity * dt;
         _position = next;
         _flight.Move(next, _centerUnit);
+        // Batch 901: the live missile for a view that holds no copy of it (one that first sees Ahri meanwhile), as the homing children refresh theirs
+        // (BbSpellProjectile); a view that holds it is skipped (ReplicationDelivery's RefreshOnly rule).
+        if (!_flight.Destroyed)
+            ChampionSpellSupport.RefreshMissile(system, Caster, _castInfo, _launchFrom, _position, _center, Math.Abs(_angularVelocity) * _radius);
         return !_flight.Destroyed || Finish(system);
+    }
+
+    /// <summary>
+    /// Batch 901 (owner finding, 19 November 2026: "Ahri W doesn't show the VFX around her"): the circle missile's creation 0x41. AhriFoxFireMissile
+    /// is Instacast (SpellData Flags bit 2), so its child cast reaches every view as its missile's creation alone (batch 582, SendChildCast's
+    /// instantMissile: the views are tracked, no cast answer goes out), as the homing and line children announce theirs (BbSpellProjectile
+    /// SendInstantCreation, BbLineMissile). The circle missile sent none, so no client built the three fox-fires that orbit Ahri: they appeared only
+    /// as the second missiles leaving for a target. The 0x41 handler runs the stock cast routine, whose CastType 4 branch builds the orbit from the
+    /// cast info (its target unit the centre, the launch point the radius and angle). Reconstruction: retail's wire for this child is not in the client.
+    /// </summary>
+    private void AnnounceLaunch(SpellSystem system)
+    {
+        if (_missileNetId == 0 || !system.Effects.IsReferenceReady(Caster)) return;
+        var start = ChampionSpellSupport.Ground(system, _launchFrom);
+        // The orbit's tangent at the launch point, the way the angle turns (the sign of the angular velocity).
+        var radial = new Position2(_launchFrom.X - _center.X, _launchFrom.Z - _center.Z);
+        var length = Math.Sqrt(radial.X * radial.X + radial.Z * radial.Z);
+        var sign = _angularVelocity < 0.0 ? -1.0 : 1.0;
+        var direction = length > 1e-9 ? new Position3(-radial.Z / length * sign, 0.0, radial.X / length * sign) : new Position3(0.0, 0.0, 1.0);
+        var speed = Math.Abs(_angularVelocity) * _radius;
+        system.Effects.SendMissile(Caster, _castInfo, start, direction, new Position3(direction.X * speed, 0.0, direction.Z * speed), start,
+            ChampionSpellSupport.Ground(system, _center), ChampionSpellSupport.Ground(system, Caster.Position), needsCastAnnouncement: true);
     }
 
     // The target unit's position while the object manager still holds it (a hero's corpse included), else the last centre.

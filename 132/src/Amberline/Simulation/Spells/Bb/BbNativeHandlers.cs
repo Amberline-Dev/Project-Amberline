@@ -941,9 +941,20 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     // word lifts it or adds ForceRenderParticles: its bound particles are never drawn (the stock draw routine), whenever the script sets NoRender.
     // Nasus's Spirit Fire binds its three effects to a SpellBook1 cube before the server holds the cube's NoRender (SpiritFire.OnBuffActivate
     // creates the warning before its SetNoRender, and the statuses of an activation reach the unit when the hook ends), so they went out bound.
+    // Batch 901 (owner finding, 19 November 2026: "Viktor E lacks ground effect (burned ground VFX)"): not a cube whose particles the client draws.
+    // ViktorExpirationTimer sets NoRender and ForceRenderParticles on Death Ray's MaokaiSproutling, a placemarker of a character that is not
+    // NeverRender, so the client takes both bits from the unit's replicated word (the 0xCC block, ScriptedCombatOf) and draws the particles
+    // bound to it while the unit itself stays hidden (the stock draw routine's ForceRenderParticles test). ViktorEntropicBeam_tar_beam.troy
+    // (the "trench" and dirt emitters, e-rate 60 while the emitter moves) is bound to that unit as it slides 500 along the drag: sent unbound
+    // at the drag start, the burned trench of the retail footage (2011-12-29 Viktor spotlight, 89.5-92 s) never left the start point.
     private bool IsPlacemarkerCube(Entity unit) => (unit.Placemarker || unit.Name is "TestCube" or "SpellBook1" || IsTestCubeCharacter(unit)) &&
         ((Amberline.Simulation.Buffs.CharacterState.ActionWord(unit) & Amberline.Simulation.Buffs.CharacterState.NoRenderBit) != 0 ||
-         unit.ChampionName is { } character && Spells.Data.OptionalChampion(character) is { NeverRender: true, ServerOnly: true });
+         unit.ChampionName is { } character && Spells.Data.OptionalChampion(character) is { NeverRender: true, ServerOnly: true }) &&
+        !DrawsBoundParticles(unit);
+
+    private bool DrawsBoundParticles(Entity unit) =>
+        (Amberline.Simulation.Buffs.CharacterState.ActionWord(unit) & Amberline.Simulation.Buffs.CharacterState.ForceRenderParticlesBit) != 0 &&
+        unit.ChampionName is { } character && Spells.Data.OptionalChampion(character) is { NeverRender: false };
 
     // Batch 668: Dominion's opening barrier keeps the script's bind (OdinOpeningBarrierParticle.luaobj, BindObjectVar Owner). Batch 521 sent it
     // unbound to keep the blur after the camera looks away, but the client drops the particles of any system that leaves the view unless the troy
@@ -1603,26 +1614,70 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         // attack available at once.
         if (Unit(call, "TargetVar") is not { } unit) return;
         Spells.Combat.InterruptBasicAttack(unit);
+        // Batch 899: a swing the client still plays (its 0x0D, and only an instacast since: FizzJump) is told now, or the client plays its cast
+        // frame (the hit's sound and particles) mid-hop. Reconstruction: the retail native's own stop packet is server code.
+        if (unit.ClientSwingDropped && Spells.Effects.IsReferenceReady(unit)) Spells.Effects.SendStopAttack(unit);
         if (Flag(call, "Reset", false)) unit.AttackCooldown = 0.0;
     }
 
     private void PlayAnimation(BbCall call)
     {
         if (Unit(call, "TargetVar") is not { } unit || call.Value("AnimationName") is not string name) return;
-        if (!Spells.Effects.IsReferenceReady(unit)) return;
         // The animation native parses AnimationName, ScaleTime, Loop, Blend and Lock; ScaleTime is the playback time the clip is scaled to. The
         // optional booleans default to Loop false, Blend true and Lock true (8 of the 93 shipped calls omit Lock; BBUnlockAnimation,
-        // the unlock native, is what releases it and sets the CanAttack bit again).
+        // the unlock native, is what releases it and sets the CanAttack bit again, UnlockAnimation below).
+        var lockAnimation = Flag(call, "Lock", true);
+        // Batch 911 (owner, 19 November 2026: "Fizz still autoattacks when using E"): a locked clip that a buff's OnBuffDeactivate plays on its own
+        // owner outlives that buff, and the unit does not start a swing until the clip is unlocked: the CanAttack bit is written off as that hook's
+        // BBSetStatus would write it (BbBuffRuntime.WriteStatus: the unit's script status), and the unlock writes it back. Evidence: retail's
+        // server body of BBUnlockAnimation ORs the CanAttack bit back in (UnlockAnimation below); FizzJumpDelay's deactivation writes CanAttack
+        // true, then plays the slam Spell3c locked, and leaves the attack to the UnlockAnimation that FizzTrickSlam's end adds 0.45 s later, so
+        // Fizz swung at the slam's start and hit before the slam landed; GuardianAngel, ChronoRevive and the YorickRADelay buffs play a locked
+        // idle1 in their deactivation and unlock it at once; UrgotSwap2's deactivation plays teleDwn locked and adds UnlockAnimation (0.25 s).
+        // Reconstruction: the retail BBPlayAnimation body is not in the client (a parser stub in both builds). A lock played by a spell's own hook
+        // or by a live buff is left alone: RenektonCleave, Bushwhack and CaitlynYordleTrap lock in SelfExecute and never unlock (a hold there
+        // would last for good), and a live buff's other hooks are released with the buff anyway.
+        if (lockAnimation && _host.HasFrame && _host.Frame is { Hook: "OnBuffDeactivate", Buff: { } ending } && ReferenceEquals(ending.Owner, unit))
+            _host.Buffs.WriteStatus(unit, BbSetStatus.SetCanAttack, false, ending, "OnBuffDeactivate");
+        if (!Spells.Effects.IsReferenceReady(unit)) return;
         var loop = Flag(call, "Loop", false);
-        Spells.Effects.PlayAnimation(unit, name, loop: loop, lockAnimation: Flag(call, "Lock", true),
-            blend: Flag(call, "Blend", true), duration: (float)Sum(call, "ScaleTime"));
+        var scaleTime = Sum(call, "ScaleTime");
+        // A held unlock (batch 912) goes out first: the client refuses a play while it still holds the lock.
+        Spells.ReleaseHeldUnlock(unit);
+        Spells.Effects.PlayAnimation(unit, name, loop: loop, lockAnimation: lockAnimation,
+            blend: Flag(call, "Blend", true), duration: (float)scaleTime);
+        // Batch 912: a locked clip that ends by itself (no loop, a playback time) is remembered for the timed unlock below.
+        if (!loop && lockAnimation && scaleTime > 0.0) _lockedClips[unit.NetId] = (Spells.CurrentTime + scaleTime, unit.AnimationSerial);
+        else _lockedClips.Remove(unit.NetId);
         // Reconstruction (batch 476): a looped play by a channel's hook is that channel's loop (BbScriptChannels.NoteLoop).
         if (loop) _host.Channels.NoteLoop(unit);
     }
 
+    // Batch 912: the last scripted locked clip that ends by itself, per unit: its end and the AnimationSerial right after its play.
+    private readonly Dictionary<uint, (double End, uint Serial)> _lockedClips = new();
+
     private void UnlockAnimation(BbCall call)
     {
-        if (Unit(call, "OwnerVar") is not { } unit || !Spells.Effects.IsReferenceReady(unit)) return;
+        if (Unit(call, "OwnerVar") is not { } unit) return;
+        // Batch 911: retail's server body of the unlock native (in the 1.0.0.126 client) zeroes the unit's lock (+0x454,
+        // +0x87c), broadcasts the 0x2B and ORs bit 0, CanAttack, into the ActionState word at +0xa1c, the bit BBSetStatus SetCanAttack true sets.
+        // So the unlock is also that rest write (BbBuffRuntime.WriteStatus), before the wire guard: a hold must not outlive an unlock nobody sees.
+        _host.Buffs.WriteStatus(unit, BbSetStatus.SetCanAttack, true, _host.HasFrame ? _host.Frame.Buff : null, _host.HasFrame ? _host.Frame.Hook : "");
+        if (!Spells.Effects.IsReferenceReady(unit)) return;
+        // Batch 912 (owner, 19 November 2026: "After using Ahri W it cancels the animation after ~0.5s"): the timed unlock of the
+        // UnlockAnimation buff (AhriFoxFire adds it for 0.25 s under a 0.71 s Spell2) is held while that clip still plays and the unit
+        // stands idle: the 132 client's 0x2B always stops the clip (batch 912's client runs of 0x02, 0x03 and 0x00), so it goes out with the
+        // first order, cast or scripted play instead (SpellSystem.ReleaseHeldUnlock), and a unit left alone plays the clip to its end, as the
+        // 2011 Ahri spotlight shows. A unit walking or attacking is unlocked at once, as before; so is every other unlock (a dash's end).
+        // Reconstruction: the retail server's unlock is server code (the 126 client's copy of it sends the stop at once and fades the clip).
+        if (_host.HasFrame && _host.Frame is { Hook: "OnBuffDeactivate", Buff.Name: "UnlockAnimation" } && _lockedClips.Remove(unit.NetId, out var clip) &&
+            clip.Serial == unit.AnimationSerial && Spells.CurrentTime < clip.End - 0.05 && unit.Alive &&
+            unit.Waypoints.Count == 0 && unit.Target is null && unit.ForcedMove is null && unit.AttackTarget is null && unit.PendingCast is null)
+        {
+            unit.AnimationLocked = false;
+            Spells.HoldUnlock(unit, clip.End);
+            return;
+        }
         // The unlock native clears the animation lock (the 0x2B unlock the dashes already use).
         Spells.Effects.StopAnimation(unit, Flag(call, "Blend", true));
     }

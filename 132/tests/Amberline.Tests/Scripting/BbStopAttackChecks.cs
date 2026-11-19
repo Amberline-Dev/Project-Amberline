@@ -76,10 +76,11 @@ public static class BbStopAttackChecks
     [Check("scripting.n2-a-swing-dropped-after-a-cast-replaced-it-is-not-told")]
     public static void ASwingThatACastReplacedIsNotToldWhenTheServerDropsIt()
     {
-        // Kayle's W is an instacast that does not take the hero's order, so the swing stays in its windup on the server; the cast
-        // replaces it on the client (Client_DoCastSpell force-stops the attack's SpellCaster). When the owner then clicks away and
-        // the server drops the windup, the hero's current SpellCaster is the spell's: a stop with DestroyMissile would remove
-        // its missile, and there is no swing left to tell the client about.
+        // Kayle's W is an instacast that does not take the hero's order, so the swing stays in its windup on the server. Restated by batch 899
+        // (the check keeps its name): the client keeps it too. Client_DoCastSpell hands an instacast to TryCastInstaSpell while the current
+        // SpellCaster is an auto attack, and that routine creates and stops no SpellCaster (batch 575), so the swing is still the client's
+        // current SpellCaster. When the owner then clicks away and the server drops the windup, the stop says so (DestroyMissile, no cast
+        // frame): the swing's is the only missile that SpellCaster owns.
         using var match = new Match("Kayle");
         match.Learn(1);
         match.Foe.Position = new Position2(7100, 7000);
@@ -105,8 +106,8 @@ public static class BbStopAttackChecks
                 BinaryPrimitives.ReadUInt32LittleEndian(item.Packet.Plaintext.Span[1..]) == match.Hero.NetId)
             .Select(item => item.Packet.Plaintext.Span[5]).ToArray();
         TestAssert.Equal(1, stops.Length, "one stop for the move order");
-        TestAssert.Equal(CombatPackets.LandedAttackFlags, stops[0],
-            "neither DestroyMissile nor ForceSpellCast: the swing is not the hero's current SpellCaster any more, Kayle's W is");
+        TestAssert.Equal(CombatPackets.CancelWindupFlags, stops[0],
+            "DestroyMissile and no ForceSpellCast: the dropped swing is still the hero's current SpellCaster under the instant W");
     }
 
     private static double GameDataCastTime() => Amberline.Data.GameData.Default.Spell("SpellFlux", 5).CastTime;

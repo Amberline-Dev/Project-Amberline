@@ -504,12 +504,17 @@ internal sealed class BbBuffRuntime
     /// infernalguardian_tar.troy, as their hit effect; the stock default hit pass draws it on each unit the spell hits
     /// (BbHookRouter.DrawDefaultHitEffects, which asks this table too). Pantheon's other hit effects and his R creates are
     /// Pantheon-named, so this one is a copy. NOT RETAIL: the shipped inibins name it; owner decision, 27 October 2026.
+    /// Batch 912 (owner, 19 November 2026: "Volibear E has a weird red tornado VFX"): VolibearE's inibin carries Warwick's HuntersCall hit fields
+    /// (HaveHitEffect, HitEffectName HuntersCall_eff2.troy, the same values as HuntersCall's), so the default hit pass drew Warwick's red swirl on
+    /// Volibear and on every unit the roar hit. The script draws its own Volibear-named cast and hit effects, and the 2011 spotlight shows violet
+    /// rings and white lightning with no swirl. NOT RETAIL: the shipped inibin names it; owner decision, 27 October 2026.
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string[]> CopiedEffectCreates =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["Meditate_eff.troy"] = ["HungeringStrike"],
             ["infernalguardian_tar.troy"] = ["Pantheon_GrandSkyfall_Jump", "Pantheon_GrandSkyfall_Fall", "Pantheon_GrandSkyfall"],
+            ["HuntersCall_eff2.troy"] = ["VolibearE"],
         };
 
     /// <summary>
@@ -923,7 +928,7 @@ internal sealed class BbBuffRuntime
             _instances.TryGetValue(live, out var renewed) &&
             _host.Spells.CurrentTime + request.Duration * 0.5 < renewed.WireEndsAt)
         {
-            live.ExpiresAt = request.Duration;
+            live.ExpiresAt = live.TimerSpan = request.Duration;
             // Batch 896: a renewal keeps the instance's variables (see the renewal in the loop below); the replace kept in place here stands
             // for the new instance retail makes, which starts from the add's.
             if ((BbBuffAddType)request.AddType == BbBuffAddType.BUFF_REPLACE_EXISTING)
@@ -1109,7 +1114,13 @@ internal sealed class BbBuffRuntime
         if (type == BuffType.Invulnerability) payload.ActionsAllowed = true;
         // Batch 222: a stun label with no status write in its script stuns nothing (Teleport_Turret's BUFF_Stun sets none and the turret
         // keeps firing). The label stays; the stun rule reads ActionsAllowed (BuffState.DisablesActions, CharacterState).
-        if (type == BuffType.Stun && script is not null && !ScriptWritesStatus(script)) payload.ActionsAllowed = true;
+        // Batch 900 (owner, 19 November 2026: "Charming a target with Ahri E makes them teleport back to the location they were charmed at
+        // sometimes"): nor does one whose script never takes movement. AhriSeduce (added BUFF_Stun by AhriSeduceMissile) writes only
+        // SetCanAttack, slows its holder and orders it AI_MOVETO Ahri (DATA/Spells/AhriSeduce.luaobj), so the charmed unit walks; read as a
+        // stun, the server held it while its client walked the published route, and BBStopMove at the end put it back. Every other
+        // 1.0.0.132 BUFF_Stun add whose script writes a status writes SetStunned or SetCanMove(false) (batch 900 record).
+        // Reconstruction: retail's status of a buff type is not in the client; the shipped scripts show these two cases.
+        if (type == BuffType.Stun && script is not null && !ScriptHoldsTheUnit(script)) payload.ActionsAllowed = true;
         // The script's own NonDispellable global (278 scripts, 40 more spell it Nondispellable) is what a dispel reads: Cleanse, Quicksilver
         // Sash and BBSpellBuffRemoveType (the dispel-by-type routine) leave such a buff on its holder.
         if (script is not null && IsNonDispellable(script)) payload.NonDispellable = true;
@@ -1964,12 +1975,13 @@ internal sealed class BbBuffRuntime
         BbSetStatus.SetForceRenderParticles or BbSetStatus.SetSuppressCallForHelp or BbSetStatus.SetCallForHelpSuppresser or BbSetStatus.SetIgnoreCallForHelp or
         BbSetStatus.SetStunned or BbSetStatus.SetSuppressed or BbSetStatus.SetGhostProof or BbSetStatus.SetImmovable;
 
-    /// <summary>Whether any block of the script (its pre-load and its event tables, sub-blocks included) is a <c>BBSetStatus</c> (batch 222).</summary>
-    private static bool ScriptWritesStatus(BbScript script)
-    {
-        static bool Writes(BbBlock block) => block.Function == "BBSetStatus" || block.SubBlocks.Any(Writes);
-        return script.PreLoad.Any(Writes) || script.Events.Any(table => table.Blocks.Any(Writes));
-    }
+    /// <summary>
+    /// Whether the script itself takes the unit's movement: a <c>BBSetStatus</c> of <c>SetStunned(true)</c>, <c>SetRooted(true)</c> or
+    /// <c>SetCanMove(false)</c> anywhere in it (a write from a variable counts). Batch 900: replaces batch 222's "writes any status" test.
+    /// </summary>
+    private static bool ScriptHoldsTheUnit(BbScript script) => script.Walk().Any(step => step.Block.Function == "BBSetStatus" &&
+        step.Block.Param("Status") is BbValue.Reference { Name: "SetStunned" or "SetRooted" or "SetCanMove" } reference &&
+        (step.Block.Param("SrcValue") is not BbValue.Bool value || StatusActs(Enum.Parse<BbSetStatus>(reference.Name), value.Value)));
 
     private static void ApplyStatus(BuffPayload payload, BbSetStatus status, bool value)
     {

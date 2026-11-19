@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Amberline.AirCompanion;
 using Amberline.Tests.Air;
 
 namespace Amberline.Tests;

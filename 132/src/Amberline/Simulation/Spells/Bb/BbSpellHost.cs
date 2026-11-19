@@ -826,6 +826,10 @@ internal sealed class BbSpellHost : IBbHost
     /// they write that slot's cooldown. A slot with no item, or an item with no active spell, holds "".</summary>
     private string InventorySpellName(Entity hero, int index)
     {
+        // Batch 906: a hero's inventory slot 6 is the map's recall item (spell slot 10): it answers the spell that slot holds, which
+        // MasteryImprovedRecallBuff compares to Recall / OdinRecall before its BBSetSpell (it read "" and never swapped).
+        if (index == Amberline.Simulation.Inventory.SlotCount && hero.UnitType == UnitType.Hero)
+            return Spells.SummonerScripts?.RecallSpellNameOf(hero) ?? Spells.Data.RecallSpellName;
         if ((uint)index >= (uint)hero.Inventory.Count || hero.Inventory[index] is not { } held) return "";
         return (_items ??= new ItemCatalog(Spells.Data.Paths)).Get(held.ItemId)?.SpellName ?? "";
     }

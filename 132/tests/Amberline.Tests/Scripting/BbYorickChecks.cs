@@ -378,8 +378,10 @@ public static class BbYorickChecks
         TestAssert.Near(data.BaseHp + Math.Max(60.0, 0.35 * maxHealth - 60.0), ghoul.MaxHealth, 0.01, "health: the record + max(60, 0.35 of his maximum health - 60)");
         TestAssert.Near(ghoul.MaxHealth, ghoul.Health, 0.01, "born at full health");
         var flatSpeed = data.MoveSpeed + (level >= 3 ? 30.0 : 0.0) + (level >= 6 ? 30.0 : 0.0) + (level >= 11 ? 40.0 : 0.0);
-        TestAssert.Near(flatSpeed * (1.0 + speedPercent[rank - 1]), ghoul.Speed, 0.6, "speed: +30/+30/+40 at levels 3/6/11, then the Omen's percent");
-        TestAssert.Near(562.5, ghoul.Speed, 0.6, "level 11, rank 3: 450 x 1.25 (the measured ghoul)");
+        // Batch 910: the ghoul takes the movement soft caps every moving unit takes; 562.5 raw is above 490, so 562.5 * 0.5 + 230.
+        TestAssert.Near(Amberline.Simulation.Stats.HeroStatCalculator.ApplyMovementSoftCaps(flatSpeed * (1.0 + speedPercent[rank - 1])), ghoul.Speed, 0.6,
+            "speed: +30/+30/+40 at levels 3/6/11, then the Omen's percent, then the soft caps");
+        TestAssert.Near(511.25, ghoul.Speed, 0.6, "level 11, rank 3: 450 x 1.25 = 562.5 raw (the measured ghoul), capped");
     }
 
     // ------------------------------------------------------------------------------------------------------------

@@ -111,6 +111,13 @@ internal sealed class BbScriptMoves
             if (movement.Navigation.PointClearance(destination) < radius + 4.0)
                 destination = movement.Navigation.ClosestSummonPlacement(requested, radius);
         }
+        // Batch 916: the client draws no dash along (or too close to) a lattice row or column (MovementSystem.OffClientAxis); its end goes across
+        // the axis far enough for the client to draw it. A first-collision move is stepped only when its whole ray is clear: one a wall cuts short
+        // keeps its ray (a stepped request would turn the wall stop into an arrival), so its landing can still lie on an axis.
+        var stepped = movement.OffClientAxis(origin, destination, speed);
+        if (stepped != destination && (!firstCollision || movement.FirstCollisionDashLanding(origin, destination, speed,
+                BbSpellHost.Distance(origin, destination) / speed + FollowSafetyStop, unit) == destination))
+            destination = stepped;
         var length = BbSpellHost.Distance(origin, destination);
         var (source, effect) = Origin(unit);
         // Batch 371 (owner finding 107, "Skarner R really stuttery when moving the enemy"): an update hook that repeats a move to the endpoint
@@ -134,6 +141,7 @@ internal sealed class BbScriptMoves
         var move = new ForcedMoveState(destination, speed, duration, source, effect, firstCollision);
         if (faceMovement) Geometry.FaceTowards(unit, announced);
         Supersede(unit);
+        if (!postpone) DropSwing(unit);
         movement.StartForcedMove(unit.NetId, move, cancelOrder: true);
         if (spells.Effects.IsReferenceReady(unit))
             spells.Effects.SendDash(unit, origin, announced, speed, gravity, spells.World.Clock.SyncId());
@@ -170,11 +178,32 @@ internal sealed class BbScriptMoves
         var postponed = postpone && unit.UnitType == UnitType.Hero ? PostponedHeroOrders.Capture(unit) : null;
         if (faceMovement) Geometry.FaceTowards(unit, target.Position);
         Supersede(unit);
+        if (!postpone) DropSwing(unit);
         movement.StartForcedMove(unit.NetId, move, cancelOrder: true);
         if (spells.Effects.IsReferenceReady(unit))
             spells.Effects.SendDash(unit, origin, move.Destination, speed, gravity, spells.World.Clock.SyncId(), followNetId: target.NetId,
                 followDistance: double.IsFinite(track) ? track : 0.0, followBackDistance: arrival);
         return Track(unit, move, RunningBuffOf(unit), postponed);
+    }
+
+    /// <summary>
+    /// Batch 899 (owner, 19 November 2026: "Fizz Q sometimes doesn't put him inside of an animation, making him run instead"): a CANCEL_ORDER
+    /// move cancels the unit's order, and with it the swing still in its windup, before the dash goes out. Left to run, that swing was dropped
+    /// later in the dash (Fizz's Urchin Strike orders AI_ATTACKTO on a champion, and the chase dropped the swing on the minion Fizz was hitting),
+    /// and its 0x39 came after the script's clip: the client (132 the client, 126
+    /// The client) stops the unit's current animation for a swing whose own animation plays and has not cast, whatever the flags,
+    /// so the dash ran on in the run pose. Told before the dash, the stop ends the swing's clip and the script's clip plays after it.
+    /// The client still plays a swing under an instacast (<c>ProtocolSpellEffectSink.SendCast</c>), so only a swing it plays is told.
+    /// Reconstruction: what the retail server does with a swing under a CANCEL_ORDER move is server code; POSTPONE_CURRENT_ORDER keeps it.
+    /// A swing the client plays is left alone, as before, once a clip has reached the client after its 0x0D (the script played its clip before
+    /// its move: Headbutt's Spell2, Feint's Spell3, Shadow Dance's Spell4): a stop now would cut that clip instead.
+    /// </summary>
+    private void DropSwing(Entity unit)
+    {
+        if (unit.ClientSwingMissileNetId != 0 && unit.AnimationSerial != unit.ClientSwingAnimationSerial) return;
+        var spells = _host.Spells;
+        spells.Combat.InterruptBasicAttack(unit);
+        if (unit.ClientSwingDropped && spells.Effects.IsReferenceReady(unit)) spells.Effects.SendStopAttack(unit);
     }
 
     private (uint Source, string Effect) Origin(Entity unit)

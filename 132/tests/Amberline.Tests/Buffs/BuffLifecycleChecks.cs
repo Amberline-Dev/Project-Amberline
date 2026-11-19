@@ -373,8 +373,10 @@ public static class BuffLifecycleChecks
         var weaker = context.Lifecycle.AddBuff(npc, "WeakSlow", BuffType.Slow,
             10.0, caster.NetId, new BuffPayload { MoveSpeedMult = -0.20 })!;
 
-        var expectedSlowed = 100.0 * (1.0 + 0.20) * (1.0 + 0.15) *
-                             (1.0 - 0.40) * (1.0 - 0.20 * 0.35);
+        // Batch 910: every moving unit takes the movement soft caps (BuffLifecycle.RecomputeMovementSpeed); this fixture's 100 is below 220,
+        // so each speed reads 110 + raw / 2.
+        var expectedSlowed = HeroStatCalculator.ApplyMovementSoftCaps(100.0 * (1.0 + 0.20) * (1.0 + 0.15) *
+                             (1.0 - 0.40) * (1.0 - 0.20 * 0.35));
         TestAssert.Near(expectedSlowed, npc.Speed, 1e-9,
             "NPC movement uses additive haste, independent multipliers, and 35 percent slow stacking");
         TestAssert.True(npc.MovementSpeedBaseline is 100.0,
@@ -383,14 +385,14 @@ public static class BuffLifecycleChecks
             "each live NPC movement transition emits one speed-only update");
 
         context.Lifecycle.RemoveBuff(npc, strongest.Slot);
-        var speedAfterStrongestRemoval = 100.0 * (1.0 + 0.20) * (1.0 + 0.15) *
-                                         (1.0 - 0.20);
+        var speedAfterStrongestRemoval = HeroStatCalculator.ApplyMovementSoftCaps(100.0 * (1.0 + 0.20) * (1.0 + 0.15) *
+                                         (1.0 - 0.20));
         TestAssert.Near(speedAfterStrongestRemoval, npc.Speed, 1e-9,
             "removing the strongest slow retains the weaker slow and positive stages");
         context.Lifecycle.RemoveBuff(npc, weaker.Slot);
         context.Lifecycle.RemoveBuff(npc, multiplier.Slot);
         context.Lifecycle.RemoveBuff(npc, haste.Slot);
-        TestAssert.Near(100.0, npc.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(100.0), npc.Speed, 1e-9,
             "removing effects restores the captured baseline without ratio inversion");
 
         var itemSlowEvents = context.Effects.Events.Count(value => value == "movement-speed:51");
@@ -401,13 +403,13 @@ public static class BuffLifecycleChecks
             10.0, caster.NetId, canMitigateDuration: false)!;
         var itemSlow = context.Lifecycle.AddBuff(npc, "Internal_40Slow", BuffType.Internal,
             10.0, caster.NetId, canMitigateDuration: false)!;
-        TestAssert.Near(60.0, npc.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(60.0), npc.Speed, 1e-9,
             "an item slow contributes its selected movement payload");
         TestAssert.Equal(itemSlowEvents + 1,
             context.Effects.Events.Count(value => value == "movement-speed:51"),
             "adding an item slow publishes its speed-only transition");
         context.Lifecycle.RemoveBuff(npc, itemSlow.Slot);
-        TestAssert.Near(100.0, npc.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(100.0), npc.Speed, 1e-9,
             "removing the last item slow restores the NPC baseline");
         TestAssert.Equal(itemSlowEvents + 2,
             context.Effects.Events.Count(value => value == "movement-speed:51"),
@@ -416,10 +418,10 @@ public static class BuffLifecycleChecks
         var silentEvents = context.Effects.Events.Count(value => value == "movement-speed:51");
         var silentSlow = context.Lifecycle.AddBuff(npc, "Internal_20Slow", BuffType.Internal,
             10.0, caster.NetId, canMitigateDuration: false)!;
-        TestAssert.Near(80.0, npc.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(80.0), npc.Speed, 1e-9,
             "a second item slow still recomputes from the same baseline");
         context.Lifecycle.RemoveBuff(npc, silentSlow.Slot, emitWire: false);
-        TestAssert.Near(100.0, npc.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(100.0), npc.Speed, 1e-9,
             "silent item slow removal still restores authoritative speed");
         TestAssert.Equal(silentEvents + 1,
             context.Effects.Events.Count(value => value == "movement-speed:51"),
@@ -427,7 +429,7 @@ public static class BuffLifecycleChecks
         // The marker sweeps its rows and carries no penalty of its own once they are gone.
         TestAssert.True(context.Lifecycle.RemoveBuff(npc, itemSlowMarker.Slot, emitWire: false),
             "the empty item-slow marker can still be removed");
-        TestAssert.Near(100.0, npc.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(100.0), npc.Speed, 1e-9,
             "an empty marker leaves the NPC baseline alone");
     }
 
@@ -450,14 +452,16 @@ public static class BuffLifecycleChecks
                 AttackSpeedMult = -0.40,
             })!;
         context.Lifecycle.TickBuffs(crippleTarget, 1.0);
-        TestAssert.Near(100.0 * (1.0 - 0.30) * (1.0 - 0.20 * 0.35), crippleTarget.Speed,
+        // Batch 910: every moving unit takes the movement soft caps (BuffLifecycle.RecomputeMovementSpeed); this fixture's 100 is below 220,
+        // so each speed reads 110 + raw / 2.
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(100.0 * (1.0 - 0.30) * (1.0 - 0.20 * 0.35)), crippleTarget.Speed,
             1e-9, "Cripple decay recomputes from baseline with the second slow");
         context.Lifecycle.TickBuffs(crippleTarget, 1.0);
-        TestAssert.Near(100.0 * (1.0 - 0.20) * (1.0 - 0.20 * 0.35), crippleTarget.Speed,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(100.0 * (1.0 - 0.20) * (1.0 - 0.20 * 0.35)), crippleTarget.Speed,
             1e-9, "Cripple's later decay keeps the strongest slow ordering");
         context.Lifecycle.RemoveBuff(crippleTarget, cripple.Slot);
         context.Lifecycle.RemoveBuff(crippleTarget, secondSlow.Slot);
-        TestAssert.Near(100.0, crippleTarget.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(100.0), crippleTarget.Speed, 1e-9,
             "removing Cripple and its overlapping slow restores the baseline");
     }
 
@@ -477,7 +481,7 @@ public static class BuffLifecycleChecks
             new BuffPayload { MoveSpeedMult = -0.35 }, canMitigateDuration: false, maxStack: 2)!;
         TestAssert.Equal(2, target.Buffs.Count(buff => buff.Name == "Slow"), "an application never replaces another");
         TestAssert.True(first.Slot != second.Slot, "every application owns a client slot");
-        TestAssert.Near(100.0 * 0.65 * (1.0 - 0.35 * 0.35), target.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(100.0 * 0.65 * (1.0 - 0.35 * 0.35)), target.Speed, 1e-9,
             "two slow instances compose with the shipped 35 percent stacking factor");
         context.Lifecycle.TickBuffs(target, 2.0);
         TestAssert.False(target.Buffs.Contains(first), "the first application expires on its own timer");
@@ -745,7 +749,7 @@ public static class BuffLifecycleChecks
         TestAssert.Equal((uint)1002, renewed.Payload.ExtraFxNetId);
         TestAssert.True(renewed.Payload.VisionBubbles.SequenceEqual(new uint[] { 1003, 1004 }),
             "renewal retains perception bubble handles");
-        TestAssert.Near(105.0, target.Speed, 1e-9,
+        TestAssert.Near(HeroStatCalculator.ApplyMovementSoftCaps(105.0), target.Speed, 1e-9,
             "renewal replaces the movement payload without double-applying it");
         TestAssert.Equal(replacementCaster.NetId, renewed.CasterNetId,
             "renewal updates the aura caster");

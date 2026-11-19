@@ -168,7 +168,20 @@ public sealed partial class BuffLifecycle
         payload.MoveSpeedFlat != 0.0 || payload.MoveSpeedPercent != 0.0 ||
         payload.MoveSpeedMult != 0.0 || payload.MoveSpeedFloor != 0.0;
 
-    private static void RecomputeMovementSpeed(Entity unit)
+    /// <summary>
+    /// A minion's or a monster's speed from its raw baseline (captured once, before any cap) and its buffs. Spawns call it too
+    /// (<c>WaveScheduler</c>, <c>JungleScheduler</c>, <c>BbPetSpawn</c>, <c>BbNativeHandlers.Spawn</c>), so a unit reads its capped speed from
+    /// the start; it must never see a capped <c>Speed</c> without a baseline, or the cap would be taken twice.
+    /// Batch 910 (owner decision, 19 November 2026): every unit that moves takes the soft caps heroes take. Retail footage (qj9gFmeR_yo,
+    /// 30 November 2011) shows an unslowed Ancient Golem at 200 in the target panel, which reads the replicated mMoveSpeed; its shipped
+    /// Data*MoveSpeed is 180 (110 + 180 / 2), and a lane minion reads its shipped 325 in the same panel. Batch 907's structure agrees: one
+    /// server-only the client for every AI unit and unit-wide UnitStats.inibin names.
+    /// Reconstruction: the footage shows the lower stage only; the 415 and 490 stages on NPCs (wolves 560 to 510) follow from the same
+    /// function. A unit whose baseline is 0 (turrets, wards, Heimerdinger's turrets, Jarvan IV's flag, Anivia's wall) keeps 0, slowed or not
+    /// (owner decision: never 110), and so does a unit that never walks (<see cref="Walks"/>); the shipped files do not show whether retail
+    /// excluded either.
+    /// </summary>
+    internal static void RecomputeMovementSpeed(Entity unit)
     {
         if (!IsMovementUnit(unit)) return;
         var baseline = unit.MovementSpeedBaseline ??= (double.IsFinite(unit.Speed)
@@ -176,8 +189,16 @@ public sealed partial class BuffLifecycle
         unit.Speed = MovementSpeedCalculator.Calculate(
             baseline, 0.0, 0.0, 0.0,
             unit.Buffs.Select(buff => buff.Payload),
-            applyHeroSoftCaps: false);
+            applyHeroSoftCaps: baseline > 0.0 && Walks(unit));
     }
+
+    /// <summary>
+    /// Batch 910 (owner: a unit with no movement stays unchanged): a placemarker (the Orianna ball, moved only by its spells) and a unit that
+    /// runs Idle.luaobj (Teemo's mushroom, whose record has no Data*MoveSpeed and reads the loader's 100; the wards) never walk, so they keep
+    /// their record's speed. Viktor's storm runs StormIdle.luaobj and walks.
+    /// </summary>
+    private static bool Walks(Entity unit) =>
+        !unit.Placemarker && !string.Equals(unit.AiScript, Amberline.Simulation.Pets.SpawnedUnitAi.Idle, StringComparison.OrdinalIgnoreCase);
 
     private static BuffPayload ScalePayload(BuffPayload source, int stacks)
     {

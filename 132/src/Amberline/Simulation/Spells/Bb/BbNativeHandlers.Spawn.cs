@@ -433,6 +433,10 @@ internal sealed partial class BbNativeHandlers
             // spawn packets and target selection: it is a position to cast from, not a unit.
             unit.AiScript = SpawnedUnitAi.Canonical(ai);
         }
+        // Batch 910: the movement soft caps from the spawn on (BuffLifecycle.RecomputeMovementSpeed): Malzahar's voidling 460 reads 451 and
+        // Maokai's sapling 475 reads 463; a unit whose record has no speed (wards, Heimerdinger's turrets, Jarvan IV's flag) keeps 0, and one
+        // that never walks (the Orianna ball, Teemo's mushroom: BuffLifecycle.Walks) keeps its record's speed.
+        Amberline.Simulation.Buffs.BuffLifecycle.RecomputeMovementSpeed(unit);
         Spells.World.Register(unit);
         ApplyFlags(unit, flags);
         unit.SpawnIgnoreCollision = flags.IgnoreCollision;

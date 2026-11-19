@@ -80,7 +80,7 @@ public sealed partial class BuffLifecycle
         }
         existing.Stacks = stacks;
         existing.Payload.Stacks = stacks;
-        if (!continueTimer) existing.ExpiresAt = duration;
+        if (!continueTimer) existing.ExpiresAt = existing.TimerSpan = duration;
         existing.CasterNetId = casterNetId;
         if (_services.Effects.SendBuffAdd(unit, existing, stacks))
         {

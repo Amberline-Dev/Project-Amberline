@@ -602,7 +602,7 @@ public sealed partial class MatchGameplayHooks : ICombatHooks, IHeroStatsHooks, 
             sourceKind is null) ?? amount;
         // The masteries' own CharOnPreDamage (Talents/125 Tenacity, Talents/144 Defensive) in the same stage, after the
         // target's script buffs and its champion's own hook — where the hand-written reductions sat.
-        return LoadoutHooks?.OnPreDamage(target, source, amount, damageType) ?? amount;
+        return LoadoutHooks?.OnPreDamage(target, source, amount, damageType, sourceKind) ?? amount;
     }
 
     public double ModifyDamageDealtAfterMitigation(Entity? source, Entity target, double amount,

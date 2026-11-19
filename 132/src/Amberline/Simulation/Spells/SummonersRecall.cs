@@ -343,15 +343,15 @@ public sealed partial class SpellSystem
     /// </summary>
     private bool HandleRecall(Entity hero, double now)
     {
-        if (!hero.Alive || RecallRemaining(hero) > 0.0 || RecallDisabled(hero) ||
-            !BuffLifecycle.CanAddNamedBuffs(hero, _data.RecallSpellName))
-            return false;
+        if (!hero.Alive || RecallRemaining(hero) > 0.0 || RecallDisabled(hero)) return false;
         if (SummonerScripts is not { } module || LoadoutHooks?.OwnerFor(hero) is not { } owner) return false;
-        if (module.RecallBinding(owner) is not { } binding) return false;
+        // Batch 906: the spell the recall slot holds (414 Improved Recall's MasteryImprovedRecallBuff writes RecallImproved there).
+        var spellName = module.RecallSpellNameOf(hero);
+        if (!BuffLifecycle.CanAddNamedBuffs(hero, spellName) || module.RecallBinding(owner, spellName) is not { } binding) return false;
         // CharOnSpellCast and BuffOnSpellCast of the caster's script buffs, the same boundary every other cast crosses
         // (RunSummonerScript raises it for the summoner slots; a champion cast gets it through MatchGameplayHooks.OnSpellCast).
         // Spells/Recall.luaobj sets CastingBreaksStealth true, so the stealth buffs' own BuffOnSpellCast ends them.
-        _championHooks.OnNamedSpellCast(hero, RecallSlot, _data.RecallSpellName, null);
+        _championHooks.OnNamedSpellCast(hero, RecallSlot, spellName, null);
         // The recall's stop is a one-point path, installed on receipt (the client's follow-path routine): stopped and seated on its anchor.
         var anchor = _movement.InstallStop(hero)[0];
         hero.AttackTarget = null;
@@ -360,7 +360,7 @@ public sealed partial class SpellSystem
         hero.AnchorPath = [anchor];
         hero.LastAnchorTime = now;
 
-        var data = _data.Spell(_data.RecallSpellName);
+        var data = _data.Spell(spellName);
         // Batch 460: the cast point carries the ground height (it was 0).
         var position = Ground(anchor);
         // The packet's total is the cast time plus the script's ChannelDuration, the rule every channelled cast follows

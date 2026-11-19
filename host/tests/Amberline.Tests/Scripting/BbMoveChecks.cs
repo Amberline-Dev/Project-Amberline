@@ -19,7 +19,7 @@ public static class BbMoveChecks
 {
     private const string Probe = "W22MoveProbe";
 
-    private static BbScript Script(IReadOnlyList<BbBlock> activate, bool hooks = true)
+    internal static BbScript Script(IReadOnlyList<BbBlock> activate, bool hooks = true)
     {
         var events = new List<BbEventTable> { new("OnBuffActivate", activate) };
         if (hooks)
@@ -32,7 +32,7 @@ public static class BbMoveChecks
         return new BbScript(Probe, "Spells/" + Probe + ".luaobj", [], events, []);
     }
 
-    private static BbBuffInstance Activate(BbM3.Match match, Entity holder, Entity caster, BbScript script, double duration = 30.0)
+    internal static BbBuffInstance Activate(BbM3.Match match, Entity holder, Entity caster, BbScript script, double duration = 30.0)
     {
         var state = match.Runtime.Spells.Buffs.Add(holder, script.Name, BuffType.Internal, duration, caster.NetId)
             ?? throw new InvalidOperationException("the probe buff was not added");
@@ -41,10 +41,10 @@ public static class BbMoveChecks
         return instance;
     }
 
-    private static BbBlock Point(string variable, double distance, double angle = 0.0) =>
+    internal static BbBlock Point(string variable, double distance, double angle = 0.0) =>
         BbTest.Block("BBGetPointByUnitFacingOffset", ["UnitVar", "Owner", "Distance", distance, "OffsetAngle", angle, "PositionVar", variable]);
 
-    private static BbBlock Move(string target, double speed, double gravity, string type = "FURTHEST_WITHIN_RANGE", double ideal = 0.0,
+    internal static BbBlock Move(string target, double speed, double gravity, string type = "FURTHEST_WITHIN_RANGE", double ideal = 0.0,
         double back = 0.0, string order = "CANCEL_ORDER") =>
         BbTest.Block("BBMove", ["UnitVar", "Owner", "TargetVar", target, "Speed", speed, "Gravity", gravity, "MoveBackBy", back,
             "MovementType", BbTest.Ref(type), "MovementOrdersType", BbTest.Ref(order), "MovementOrdersFacing", BbTest.Ref("FACE_MOVEMENT_DIRECTION"),

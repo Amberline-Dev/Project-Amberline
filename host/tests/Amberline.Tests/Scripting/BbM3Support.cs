@@ -43,14 +43,14 @@ internal static class BbM3
         /// <c>GameData.ConfigureDefault</c> of its paths for its layout, and its own <paramref name="navigation"/>.
         /// </summary>
         public Match(string champion, string allyChampion = "Annie", string foeChampion = "Orianna", Team team = Team.Order,
-            NavigationGrid? navigation = null, int mapId = GameMaps.Normal)
+            NavigationGrid? navigation = null, int mapId = GameMaps.Normal, bool foeIsBot = false)
         {
             Champion = champion;
             var other = team == Team.Order ? Team.Chaos : Team.Order;
             var roster = new List<SessionParticipantDefinition>
             {
                 new(1, 0, "Hero", champion, team), new(2, 1, "Ally", allyChampion, team),
-                new(3, 2, "Enemy", foeChampion, other), new(4, 3, "FarEnemy", "Ezreal", other),
+                new(3, 2, "Enemy", foeChampion, other, IsBot: foeIsBot), new(4, 3, "FarEnemy", "Ezreal", other),
             };
             Runtime = MatchRuntime.CreateProduction(navigation ?? NavigationGrid.LoadDefault(), GameData.Default, readySettleSeconds: 0, roster: roster,
                 mapId: mapId);
@@ -59,15 +59,20 @@ internal static class BbM3
             for (var i = 0; i < roster.Count; i++)
             {
                 var id = i + 1;
-                TestAssert.True(Runtime.Session.Authenticate(id, Runtime.Session.BuildKeyCheck((ulong)id)) is not null, "authenticate");
-                Runtime.Session.Spawn(id);
-                TestAssert.True(Runtime.Session.MarkReady(id), "ready");
-                var hero = Runtime.Session.Participants[i].Hero!;
+                // Batch 900: a bot seat (Bot.luaobj, no client) is spawned by the session itself and joins no handshake.
+                if (!roster[i].IsBot)
+                {
+                    TestAssert.True(Runtime.Session.Authenticate(id, Runtime.Session.BuildKeyCheck((ulong)id)) is not null, "authenticate");
+                    Runtime.Session.Spawn(id);
+                    TestAssert.True(Runtime.Session.MarkReady(id), "ready");
+                }
+                if (Runtime.Session.Participants[i].Hero is not { } hero) continue;
                 hero.HeroAutoAcquire = false;
                 hero.MaxHealth = hero.Health = 5000;
                 hero.Mana = hero.MaxMana;
             }
             TestAssert.True(Runtime.Session.Start(), "start");
+            if (foeIsBot) Runtime.Session.Participants[2].Hero!.MaxHealth = Runtime.Session.Participants[2].Hero!.Health = 5000;
             Hero = Runtime.Session.Participants[0].Hero!;
             Ally = Runtime.Session.Participants[1].Hero!;
             Foe = Runtime.Session.Participants[2].Hero!;

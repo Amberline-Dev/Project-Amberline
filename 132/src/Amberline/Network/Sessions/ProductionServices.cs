@@ -353,6 +353,11 @@ internal sealed class ProductionServices
             else if (move.Effect == "VayneTumble")
                 packets.Add(SpellPackets.PlayAnimation(entity.NetId, "Spell1",
                     lockAnimation: true, blend: false));
+            // Batch 911 (owner: "Fizz Q sometimes makes him run really fast instead of playing the dashing animation"): Urchin Strike's
+            // TargetExecute plays Spell1 (Lock false, Blend false) right after its BBMove. An enemy who first sees Fizz mid-dash (a Q out of a
+            // brush) got the reveal's dash and no clip, so Fizz ran the dash in the run pose on that client.
+            else if (move.Effect == "FizzPiercingStrike")
+                packets.Add(SpellPackets.PlayAnimation(entity.NetId, "Spell1", blend: false));
         }
         // Recall's TeleportHome (the channel's effect, not a buff's) reaches a late observer through the persistent-effect replay of the
         // replication layer, like every effect a script removes later. Batch 726 retired the batch 179 replay of it here: that copy was not

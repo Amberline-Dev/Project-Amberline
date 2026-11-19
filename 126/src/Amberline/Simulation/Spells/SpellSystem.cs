@@ -528,6 +528,20 @@ public sealed partial class SpellSystem
         if (_effects.IsReferenceReady(hero)) _effects.StopAnimation(hero);
     }
 
+    /// <summary>
+    /// Batch 899 (owner, 19 November 2026: "Fizz Q sometimes doesn't put him inside of an animation, making him run instead"): a champion cast while
+    /// the client still holds a script's clip lock that a pending <c>UnlockAnimation</c> buff is to release ends that buff first, so its unlock
+    /// (0x2B) goes out before the cast. <c>FizzTrickSlam</c> unseals Q at its end and adds <c>UnlockAnimation</c> (0.25 s) for the locked slam
+    /// clip: a Q in that tail was cast under the lock (the client refuses a play while it holds one) and the late unlock stopped the clip in
+    /// the dash. Reconstruction: the retail server's handling is server code; the shipped scripts allow the cast in the window.
+    /// </summary>
+    private void ReleasePendingUnlock(Entity hero)
+    {
+        if (!hero.AnimationLocked || hero.ForcedMove is not null) return;
+        foreach (var buff in hero.Buffs.Where(buff => string.Equals(buff.Name, "UnlockAnimation", StringComparison.Ordinal)).ToArray())
+            if (buff.Slot >= 0) _buffs.Remove(hero, buff.Slot);
+    }
+
     public void Tick(double dt)
     {
         if (!double.IsFinite(dt) || dt < 0.0) throw new ArgumentOutOfRangeException(nameof(dt));
@@ -892,6 +906,7 @@ public sealed partial class SpellSystem
     private void ExecuteCast(Entity hero, SpellCastRequest request, double now)
     {
         var slot = request.Slot;
+        ReleasePendingUnlock(hero);
         // Accepted out-of-range requests arrive here only when they execute.
         // Count before effects: an immediate lethal cast can freeze the final result.
         hero.MatchStatistics.RecordCast(slot);

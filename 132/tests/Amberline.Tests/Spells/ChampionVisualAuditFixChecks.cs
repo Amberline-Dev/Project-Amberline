@@ -502,6 +502,9 @@ public static partial class ChampionLiveRegressionChecks
             "controlled wall witness receives Power Fist basic");
         var move = victim.ForcedMove ?? throw new InvalidOperationException(
             "safe backoff should permit the knock-up displacement");
+        // Restated in batch 916: an eastward knock-up runs along a lattice row, so its end goes across the row (MovementSystem.OffClientAxis),
+        // to the side with more room from the wall.
+        landing = runtime.Movement.OffClientAxis(origin, landing, move.Speed);
         TestAssert.Equal(landing, move.Destination,
             "the real hit chooses the same quantized landing as the map search");
         TestAssert.True(grid.IsMovementWalkable(move.Destination) &&

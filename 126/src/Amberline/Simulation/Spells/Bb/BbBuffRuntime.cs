@@ -908,7 +908,7 @@ internal sealed class BbBuffRuntime
             _instances.TryGetValue(live, out var renewed) &&
             _host.Spells.CurrentTime + request.Duration * 0.5 < renewed.WireEndsAt)
         {
-            live.ExpiresAt = request.Duration;
+            live.ExpiresAt = live.TimerSpan = request.Duration;
             // Batch 896: a renewal keeps the instance's variables (see the renewal in the loop below); the replace kept in place here stands
             // for the new instance retail makes, which starts from the add's.
             if ((BbBuffAddType)request.AddType == BbBuffAddType.BUFF_REPLACE_EXISTING)

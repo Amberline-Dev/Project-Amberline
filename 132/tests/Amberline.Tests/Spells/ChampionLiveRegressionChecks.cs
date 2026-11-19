@@ -865,12 +865,13 @@ public static partial class ChampionLiveRegressionChecks
             bool autoAcquire = false, int skinId = 0, bool initializeSpells = true,
             string enemyChampion = "Annie", Amberline.Core.IRandomSource? random = null,
             string allyChampion = "LeeSin",
-            string extraEnemyChampion = "Annie", GameData? data = null)
+            string extraEnemyChampion = "Annie", GameData? data = null, MasteryPage? masteries = null)
         {
             var other = team == Team.Order ? Team.Chaos : Team.Order;
+            // Batch 902: seat 0's mastery page rides the roster, as a lobby's does, so the page is bound when the hero is created.
             var roster = new List<SessionParticipantDefinition>
             {
-                new(1, 0, "Caster", champion, team, SkinId: skinId), new(2, 1, "Enemy", enemyChampion, other),
+                new(1, 0, "Caster", champion, team, SkinId: skinId, Masteries: masteries), new(2, 1, "Enemy", enemyChampion, other),
             };
             if (ally) roster.Add(new(3, 2, "Ally", allyChampion, team));
             if (extraEnemy) roster.Add(new(3, 2, "Secondary", extraEnemyChampion, other));

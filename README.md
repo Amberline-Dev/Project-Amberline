@@ -13,7 +13,7 @@ patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its f
 | Patch | Newest release | Hosting guide |
 |---|---|---|
 | 1.0.0.126 (October 2011) | [Amberline, latest release](https://github.com/Amberline-Dev/Project-Amberline/releases/latest) | [HOSTING.md](HOSTING.md) |
-| 1.0.0.132 (January 2012) | [Amberline 132 0.1.9](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.9) | [132/HOSTING.md](132/HOSTING.md) |
+| 1.0.0.132 (January 2012) | [Amberline 132 0.1.10](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.10) | [132/HOSTING.md](132/HOSTING.md) |
 
 The **Releases** box on the right shows only the 1.0.0.126 line's newest release; [all releases](https://github.com/Amberline-Dev/Project-Amberline/releases)
 lists both lines.

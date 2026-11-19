@@ -1,4 +1,5 @@
 using Amberline.Core;
+using Amberline.Core.Buffs;
 using Amberline.Data;
 using Amberline.Network.Sessions;
 using Amberline.Simulation.Ai;
@@ -226,6 +227,7 @@ public sealed partial class BotController
                 continue;
             }
 
+            StepControl(hero, state, now);
             // The shipped AI decides: its own Bot.luaobj instance per seat and its own timers.
             // The engine's 250 ms pass below only measures the seat and keeps the movement
             // plumbing alive.
@@ -237,6 +239,35 @@ public sealed partial class BotController
             Update(hero, state, now);
         }
     }
+
+    /// <summary>
+    /// Batch 900 (owner, 19 November 2026: feared units are "barely moving at all"; Ahri's charm). Reconstruction: Bot.luaobj and its tasks
+    /// answer no control hook (no OnFearBegin, TimerFeared, OnTauntBegin or OnOrder), and a bot seat's hero runs no Hero.luaobj, so a feared bot
+    /// stood for the whole fear and a taunted or charmed one went on with its task. The seat gets what Hero.luaobj does for a player's
+    /// champion: OnFearBegin and its 1.0 s TimerFeared walk to MakeWanderPoint(GetFearLeashPoint(), FEAR_WANDER_DISTANCE 500) (Hero.luaobj
+    /// protos 0, 0.1, 0.6 and 0.8), and OnTauntBegin closes on the taunt target (proto 0.4). Its own orders wait meanwhile, as OnOrder refuses
+    /// every order in AI_TAUNTED and AI_FEARED (proto 0.2 pc 0000-0017; <see cref="IsActionLocked"/>). Retail's bot under control is native.
+    /// </summary>
+    private void StepControl(Entity hero, BotState state, double now)
+    {
+        var fear = hero.Buffs.LastOrDefault(buff => buff.Type == BuffType.Fear || buff.Name == "Fear" || buff.Payload.FearOrigin is not null);
+        if (fear is null) state.NextFearWander = null;
+        else if (now + Epsilon >= (state.NextFearWander ??= now))
+        {
+            state.NextFearWander = now + 1.0;
+            _heroOrders.WanderFeared(hero, _heroOrders.Engine.MakeWanderPoint(hero, _heroOrders.Engine.GetFearLeashPoint(hero), 500.0));
+        }
+        var taunter = TauntTarget(hero);
+        if (taunter is null) state.TauntTarget = 0;
+        else if (state.TauntTarget != taunter.NetId)
+        {
+            state.TauntTarget = taunter.NetId;
+            _heroOrders.Engine.SetStateAndCloseToTarget(hero, HeroLuaAiEngine.StateTaunted, taunter);
+        }
+    }
+
+    private Entity? TauntTarget(Entity hero) => hero.Buffs.Where(buff => buff.Type == BuffType.Taunt)
+        .Select(buff => _world.Get(buff.CasterNetId)).LastOrDefault(caster => caster is { Alive: true });
 
     /// <summary>
     /// The engine's half of the script's 250 ms step: what the seat measured, and the movement

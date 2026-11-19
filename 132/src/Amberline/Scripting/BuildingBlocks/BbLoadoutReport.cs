@@ -146,11 +146,19 @@ public sealed class BbTalentReport
     /// read as a factor. <paramref name="attacker"/> carries the attacker's kind flags, which is all
     /// <c>CO_IS_TYPE_*</c> of the shipped hooks reads (Defensive's AI / turret / hero branches).
     /// </summary>
-    internal double ModifyHit(string hook, double amount, BbDamageType type, BbProbeUnit attacker)
+    /// <param name="target">Batch 902: the hit's target, by its kind flags (null: a minion, the probe's old answer). Its
+    /// <c>GetHealthPercent</c> reads <paramref name="targetHealthPercent"/>: Talents/262.luaobj (Executioner) tests the target at 40 %.</param>
+    /// <param name="sourceType">Batch 902: the hit's <c>DAMAGESOURCE_*</c> number, what <c>CO_DAMAGE_SOURCETYPE_IS</c> reads:
+    /// Talents/333.luaobj (Evasion) cuts a <c>DAMAGESOURCE_SPELLAOE</c> hit.</param>
+    internal double ModifyHit(string hook, double amount, BbDamageType type, BbProbeUnit attacker,
+        BbProbeUnit? target = null, double sourceType = 0.0, double targetHealthPercent = 1.0)
     {
         if (!HasHook(hook)) return amount;
-        var host = new BbLoadoutEvalHost(_host.Level);
-        var scope = _owner.NewScope(Binding, BbLoadoutEvalHost.Hero, attacker, BbLoadoutEvalHost.Minion);
+        // A named copy, so the target is told apart from the owner probe when both are heroes.
+        var hitTarget = (target ?? BbLoadoutEvalHost.Minion) with { Name = "Target" };
+        var host = new BbLoadoutEvalHost(_host.Level)
+            { SourceType = sourceType, HitTarget = hitTarget, HitTargetHealthPercent = targetHealthPercent };
+        var scope = _owner.NewScope(Binding, BbLoadoutEvalHost.Hero, attacker, hitTarget);
         scope.Vars["DamageType"] = (double)type;
         scope.Vars["DamageAmount"] = amount;
         new BbInterpreter(host).ExecuteHook(Binding.Script, hook, scope);
@@ -431,7 +439,13 @@ internal sealed class BbLoadoutEvalHost : IBbHost, IBbNativeHandler
     public void SpellBuffRemove(object? target, string? buffName, object? attacker) { }
 
     // IBbCombatHost
-    public double GetSourceType() => 0.0;
+    /// <summary>The hit's <c>DAMAGESOURCE_*</c> when a live hook runs on a real hit (<see cref="BbTalentReport.ModifyHit"/>); 0 in the static report.</summary>
+    public double SourceType { get; init; }
+    public double GetSourceType() => SourceType;
+
+    /// <summary>The hit's target and its health fraction when a live hook runs on a real hit; every other unit reads 1.</summary>
+    public BbProbeUnit? HitTarget { get; init; }
+    public double HitTargetHealthPercent { get; init; } = 1.0;
 
     // IBbStatHost — every stat reads 1, so a buff's captured add is the factor it applies to a base of 1
     public double GetLevel(object? unit) => Unit(unit) == Hero ? Level : 1.0;
@@ -445,7 +459,8 @@ internal sealed class BbLoadoutEvalHost : IBbHost, IBbNativeHandler
 
     // IBbResourceHost
     public bool HasPARType(object? unit, double? parType) => true;
-    public object? GetResource(BbGetResource function, object? unit, double? parType) => 1.0;
+    public object? GetResource(BbGetResource function, object? unit, double? parType) =>
+        function == BbGetResource.GetHealthPercent && HitTarget is not null && Equals(unit, HitTarget) ? HitTargetHealthPercent : 1.0;
     public double GetGold(BbCall call) => 0.0;
     public void ReincarnateNonDeadHero(object? unit) { }
 

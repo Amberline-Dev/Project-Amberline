@@ -161,6 +161,43 @@ public static class BbB884VolibearChecks
         }
     }
 
+    // Batch 910 (owner, 19 November 2026: every moving unit takes the movement soft caps): at rank 5 VolibearE's -1.0 on a non-hero and the fear's
+    // slow take a minion's or a monster's raw speed to 0 (batch 900), and the lower soft cap leaves 110 + 0 / 2, so the unit walks its fear.
+    [Check("scripting.b910-volibear-rank-5-majestic-roar-leaves-minions-and-monsters-moving")]
+    public static void RankFiveMajesticRoarLeavesNpcsMoving()
+    {
+        var failures = new List<string>();
+        Roar("lane minion", match => LaneMinion(match, match.Hero.Position + new Position2(200, 0)));
+        Roar("camp monster", CampMonster);
+        TestAssert.True(failures.Count == 0, string.Join(" | ", failures));
+
+        void Roar(string name, Func<Match, Entity> place)
+        {
+            using var match = new Match("Volibear", foeChampion: "Orianna");
+            match.Runtime.Waves!.AutomaticSpawningEnabled = false;
+            var unit = place(match);
+            match.Advance(0.2);
+            match.Learn(5);
+            match.Refill();
+            if (!match.Cast(2))
+            {
+                failures.Add($"{name}: E was not cast");
+                return;
+            }
+            match.Advance(0.2);
+            if (Buff(unit, "VolibearE") is null || Buff(unit, "Fear") is null)
+            {
+                failures.Add($"{name}: not slowed and feared; buffs {Names(unit)}");
+                return;
+            }
+            if (Math.Abs(unit.Speed - 110.0) > 1e-6) failures.Add($"{name}: speed {unit.Speed:0.###} under the rank-5 roar, expected 110");
+            var from = unit.Position;
+            match.Advance(1.5);
+            var moved = Math.Sqrt(Math.Pow(unit.Position.X - from.X, 2) + Math.Pow(unit.Position.Z - from.Z, 2));
+            if (moved < 10.0) failures.Add($"{name}: moved {moved:0.#} u in 1.5 s of the fear");
+        }
+    }
+
     private static bool HasNumber(BbBlock block, string key, double value) =>
         block.Param(key) is BbValue.Number number && Math.Abs(number.Value - value) < 1e-6;
 

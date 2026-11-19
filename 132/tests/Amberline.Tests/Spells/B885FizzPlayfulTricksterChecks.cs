@@ -139,7 +139,11 @@ public static class B885FizzPlayfulTricksterChecks
                 string.Join(",", states.Select(entry => $"{entry.At - start:0.000}:{entry.Targetable}")));
             match.Advance(Step * 3);
             var after = CharacterState.Of(hero);
-            TestAssert.True(!Untargetable(hero) && after.CanAttack && after.CanMove, $"{item.Name}: the slam gives Fizz back targetable, attack and move");
+            // Batch 911: the attack comes back with the unlock that ends the locked slam clip (UnlockAnimation, FizzTrickSlam's end + 0.25 s), not
+            // at the slam's start (B911FizzChecks).
+            TestAssert.True(!Untargetable(hero) && !after.CanAttack && after.CanMove, $"{item.Name}: the slam gives Fizz back targetable and move, not yet attack");
+            for (var step = 0; step < 45 && (hero.AnimationLocked || hero.Buffs.Any(buff => buff.Name is "FizzTrickSlam" or "UnlockAnimation")); step++) match.Advance(Step);
+            TestAssert.True(CharacterState.Of(hero).CanAttack, $"{item.Name}: the slam's unlock gives Fizz back attack");
             TestAssert.Equal(0, match.Module.ScriptFailures.Count,
                 $"{item.Name}: no script failed: " + string.Join(" | ", match.Module.ScriptFailures.Select(failure => failure.Message)));
         }

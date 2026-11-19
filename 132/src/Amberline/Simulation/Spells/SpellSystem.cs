@@ -437,7 +437,7 @@ public sealed partial class SpellSystem
         try
         {
             if (request.IsSummoner) return SummonerSpellData(hero, request.Slot) is { IsInstant: false };
-            if (request.Slot == RecallSlot) return !_data.Spell(_data.RecallSpellName).IsInstant;
+            if (request.Slot == RecallSlot) return !_data.Spell(SummonerScripts?.RecallSpellNameOf(hero) ?? _data.RecallSpellName).IsInstant;
             if ((uint)request.Slot >= ChampionSlotCount || !_championDispatcher.Handles(hero)) return false;
             if (!CastSpellData(hero, request.Slot).IsInstant) return true;
             return _championDispatcher.FindModule(hero.ChampionName)?.CasterChildSpell(hero, request.Slot) is { } child &&
@@ -513,7 +513,7 @@ public sealed partial class SpellSystem
         // Any player order lifts the post-cast idle-attack hold (playtest B2 AE6).
         hero.AutoAttackResumeAt = 0.0;
         hero.CastPostponedOrder = null;
-        StopCastGesture(hero);
+        StopCastGesture(hero);   // also sends a held unlock (batch 912)
         if (hero.PendingCast is not null) hero.PendingCast = null;
         // Every fresh order is the stop source Move/Attack of a running script channel (Janna's Monsoon).
         _championHooks.CancelChannel(hero, "order");
@@ -525,9 +525,45 @@ public sealed partial class SpellSystem
     // that keeps the hero from sliding in it (playtest #7/#22).
     private void StopCastGesture(Entity hero)
     {
+        ReleaseHeldUnlock(hero);
         if (!hero.CastClipActive || SpellWindup.IsWindingUp(hero)) return;
         hero.CastClipActive = false;
         if (_effects.IsReferenceReady(hero)) _effects.StopAnimation(hero);
+    }
+
+    /// <summary>
+    /// Batch 899 (owner, 19 November 2026: "Fizz Q sometimes doesn't put him inside of an animation, making him run instead"): a champion cast while
+    /// the client still holds a script's clip lock that a pending <c>UnlockAnimation</c> buff is to release ends that buff first, so its unlock
+    /// (0x2B) goes out before the cast. <c>FizzTrickSlam</c> unseals Q at its end and adds <c>UnlockAnimation</c> (0.25 s) for the locked slam
+    /// clip: a Q in that tail was cast under the lock (the client refuses a play while it holds one) and the late unlock stopped the clip in
+    /// the dash. Reconstruction: the retail server's handling is server code; the shipped scripts allow the cast in the window.
+    /// </summary>
+    private void ReleasePendingUnlock(Entity hero)
+    {
+        if (!hero.AnimationLocked || hero.ForcedMove is not null) return;
+        foreach (var buff in hero.Buffs.Where(buff => string.Equals(buff.Name, "UnlockAnimation", StringComparison.Ordinal)).ToArray())
+            if (buff.Slot >= 0) _buffs.Remove(hero, buff.Slot);
+        // The unlock that buff ran may have been held (batch 912): the cast's gesture still needs the client's lock gone first.
+        ReleaseHeldUnlock(hero);
+    }
+
+    /// <summary>
+    /// Batch 912 (owner, 19 November 2026: "After using Ahri W it cancels the animation after ~0.5s"): units whose timed unlock
+    /// (the <c>UnlockAnimation</c> buff's <c>BBUnlockAnimation</c>) was held while their scripted clip still plays, with the clip's end
+    /// (<see cref="Bb.BbNativeHandlers"/>). The 132 client has no 0x2B that releases a lock and keeps the clip (every flag combination stops it,
+    /// client runs of batch 912), so the stop goes out with the first thing that needs the lock gone: an order, a cast or a scripted play. A
+    /// unit nothing interrupts plays the clip to its end, when the client's lock goes with it. Reconstruction: the 2011 Ahri spotlight shows
+    /// Fox-Fire's whole spin while she stands; the retail server's unlock is server code.
+    /// </summary>
+    private readonly Dictionary<uint, double> _heldUnlocks = new();
+
+    internal void HoldUnlock(Entity unit, double clipEnd) => _heldUnlocks[unit.NetId] = clipEnd;
+
+    /// <summary>Sends a held unlock's stop (0x2B) before whatever needs the client's lock gone; nothing once the clip has ended.</summary>
+    internal void ReleaseHeldUnlock(Entity unit)
+    {
+        if (!_heldUnlocks.Remove(unit.NetId, out var clipEnd) || _time >= clipEnd) return;
+        if (_effects.IsReferenceReady(unit)) _effects.StopAnimation(unit);
     }
 
     public void Tick(double dt)
@@ -894,6 +930,7 @@ public sealed partial class SpellSystem
     private void ExecuteCast(Entity hero, SpellCastRequest request, double now)
     {
         var slot = request.Slot;
+        ReleasePendingUnlock(hero);
         // Accepted out-of-range requests arrive here only when they execute.
         // Count before effects: an immediate lethal cast can freeze the final result.
         hero.MatchStatistics.RecordCast(slot);

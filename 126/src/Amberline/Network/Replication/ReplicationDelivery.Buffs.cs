@@ -38,11 +38,15 @@ public sealed partial class ReplicationDelivery
     /// </summary>
     private PlaintextPacket AsHeldBuffUpdate(ReplicationView view, PlaintextPacket packet)
     {
-        if (!IsHeldRenewal(view, packet.Plaintext.Span, out var add, out var held)) return packet;
+        // Batch 909: the running time the add carries (ProtocolSpellEffectSink.WireRunning, the time the buff's timer has run) goes out on the
+        // 0x1F only, where it keeps the HUD ring's total over a count change; a fresh add (0xBF) and a renewal (0x32) still carry 0, as before
+        // (Reconstruction: their client effect with a non-zero running time, the late-sight ring and the 0x32's torch anchor, is unconfirmed).
+        if (!IsHeldRenewal(view, packet.Plaintext.Span, out var add, out var held))
+            return add.RunningTime > 0f ? SpellPackets.AddBuff(add with { RunningTime = 0f }) : packet;
         return held.Count != add.Count || ClientActivationFx(add)
             ? SpellPackets.UpdateBuffCount(add.TargetNetId, add.Slot, add.Count, add.Duration,
                 add.CasterNetId, add.RunningTime)
-            : SpellPackets.RenewBuff(add.TargetNetId, add.Slot, add.Duration, add.CasterNetId, add.RunningTime);
+            : SpellPackets.RenewBuff(add.TargetNetId, add.Slot, add.Duration, add.CasterNetId, 0f);
     }
 
     /// <summary>

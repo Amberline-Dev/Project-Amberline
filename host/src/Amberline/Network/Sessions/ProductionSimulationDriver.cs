@@ -149,6 +149,8 @@ internal sealed class ProductionSimulationDriver : IMatchSimulationDriver
             return;
         _fidelityTrace?.BeginTick();
         if (_world.Clock.IsVirtual) _world.Clock.Advance(dt);
+        // Batch 906: a buff timer set from here to its holder's buff pass below is set at this step's time; that pass does not count it.
+        _buffs.BeginTick();
         _movement.AdvanceSimulationTime(dt);
         // Batch 474f: the Dominion opening window (the quests run and the release is still ahead) holds the champions in the movement layer.
         _movement.OpeningHoldWindow = Quests is not null && !_combat.GameOver && _combat.CurrentTime < OpeningCeremonyTiming.ReleaseSeconds;

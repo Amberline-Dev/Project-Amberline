@@ -1580,18 +1580,34 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         // attack available at once.
         if (Unit(call, "TargetVar") is not { } unit) return;
         Spells.Combat.InterruptBasicAttack(unit);
+        // Batch 899: a swing the client still plays (its 0x0D, and only an instacast since: FizzJump) is told now, or the client plays its cast
+        // frame (the hit's sound and particles) mid-hop. Reconstruction: the retail native's own stop packet is server code.
+        if (unit.ClientSwingDropped && Spells.Effects.IsReferenceReady(unit)) Spells.Effects.SendStopAttack(unit);
         if (Flag(call, "Reset", false)) unit.AttackCooldown = 0.0;
     }
 
     private void PlayAnimation(BbCall call)
     {
         if (Unit(call, "TargetVar") is not { } unit || call.Value("AnimationName") is not string name) return;
-        if (!Spells.Effects.IsReferenceReady(unit)) return;
         // The animation native parses AnimationName, ScaleTime, Loop, Blend and Lock; ScaleTime is the playback time the clip is scaled to. The
         // optional booleans default to Loop false, Blend true and Lock true (8 of the 93 shipped calls omit Lock; BBUnlockAnimation,
-        // the unlock native, is what releases it and sets the CanAttack bit again).
+        // the unlock native, is what releases it and sets the CanAttack bit again, UnlockAnimation below).
+        var lockAnimation = Flag(call, "Lock", true);
+        // Batch 911 (owner, 19 November 2026: "Fizz still autoattacks when using E"): a locked clip that a buff's OnBuffDeactivate plays on its own
+        // owner outlives that buff, and the unit does not start a swing until the clip is unlocked: the CanAttack bit is written off as that hook's
+        // BBSetStatus would write it (BbBuffRuntime.WriteStatus: the unit's script status), and the unlock writes it back. Evidence: retail's
+        // server body of BBUnlockAnimation ORs the CanAttack bit back in (UnlockAnimation below); FizzJumpDelay's deactivation writes CanAttack
+        // true, then plays the slam Spell3c locked, and leaves the attack to the UnlockAnimation that FizzTrickSlam's end adds 0.45 s later, so
+        // Fizz swung at the slam's start and hit before the slam landed; GuardianAngel, ChronoRevive and the YorickRADelay buffs play a locked
+        // idle1 in their deactivation and unlock it at once; UrgotSwap2's deactivation plays teleDwn locked and adds UnlockAnimation (0.25 s).
+        // Reconstruction: the retail BBPlayAnimation body is not in the client (a parser stub in both builds). A lock played by a spell's own hook
+        // or by a live buff is left alone: RenektonCleave, Bushwhack and CaitlynYordleTrap lock in SelfExecute and never unlock (a hold there
+        // would last for good), and a live buff's other hooks are released with the buff anyway.
+        if (lockAnimation && _host.HasFrame && _host.Frame is { Hook: "OnBuffDeactivate", Buff: { } ending } && ReferenceEquals(ending.Owner, unit))
+            _host.Buffs.WriteStatus(unit, BbSetStatus.SetCanAttack, false, ending, "OnBuffDeactivate");
+        if (!Spells.Effects.IsReferenceReady(unit)) return;
         var loop = Flag(call, "Loop", false);
-        Spells.Effects.PlayAnimation(unit, name, loop: loop, lockAnimation: Flag(call, "Lock", true),
+        Spells.Effects.PlayAnimation(unit, name, loop: loop, lockAnimation: lockAnimation,
             blend: Flag(call, "Blend", true), duration: (float)Sum(call, "ScaleTime"));
         // Reconstruction (batch 476): a looped play by a channel's hook is that channel's loop (BbScriptChannels.NoteLoop).
         if (loop) _host.Channels.NoteLoop(unit);
@@ -1599,7 +1615,12 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
 
     private void UnlockAnimation(BbCall call)
     {
-        if (Unit(call, "OwnerVar") is not { } unit || !Spells.Effects.IsReferenceReady(unit)) return;
+        if (Unit(call, "OwnerVar") is not { } unit) return;
+        // Batch 911: retail's server body of the unlock native (in the 1.0.0.126 client) zeroes the unit's lock (+0x454,
+        // +0x87c), broadcasts the 0x2B and ORs bit 0, CanAttack, into the ActionState word at +0xa1c, the bit BBSetStatus SetCanAttack true sets.
+        // So the unlock is also that rest write (BbBuffRuntime.WriteStatus), before the wire guard: a hold must not outlive an unlock nobody sees.
+        _host.Buffs.WriteStatus(unit, BbSetStatus.SetCanAttack, true, _host.HasFrame ? _host.Frame.Buff : null, _host.HasFrame ? _host.Frame.Hook : "");
+        if (!Spells.Effects.IsReferenceReady(unit)) return;
         // The unlock native clears the animation lock (the 0x2B unlock the dashes already use).
         Spells.Effects.StopAnimation(unit, Flag(call, "Blend", true));
     }

@@ -516,17 +516,21 @@ public static partial class ChampionLiveRegressionChecks
         var enemy = match.Hero(1);
 
         match.Cast(0, 2, hero);
-        var expectedLanding = runtime.Movement.FurthestWalkableLanding(enemy.Position,
+        var start = enemy.Position;
+        var rawLanding = runtime.Movement.FurthestWalkableLanding(enemy.Position,
             enemy.Position + new Position2(80.0, 0), enemy);
         TestAssert.True(runtime.Combat.ApplyHit(hero.NetId, enemy.NetId, hero.AttackDamage,
             DamageType.Physical, DamageSourceKind.Basic), "Power Fist hit lands");
         var move = enemy.ForcedMove ?? throw new InvalidOperationException("Power Fist did not start a move");
+        // Restated in batch 916: the fixed roll is due east, along a lattice row, so the end goes across the row (MovementSystem.OffClientAxis).
+        var expectedLanding = runtime.Movement.OffClientAxis(start, rawLanding, move.Speed);
+        var step = Math.Sqrt(Math.Pow(expectedLanding.X - rawLanding.X, 2) + Math.Pow(expectedLanding.Z - rawLanding.Z, 2));
         var distance = Math.Sqrt(Math.Pow(move.Destination.X - enemy.Position.X, 2) +
             Math.Pow(move.Destination.Z - enemy.Position.Z, 2));
         TestAssert.Equal(expectedLanding, move.Destination,
             "Power Fist uses the fixed eastward roll and quantized FURTHEST_WITHIN_RANGE landing");
-        TestAssert.True(distance <= 80.0 + 1e-6 && distance > 0.0,
-            "Power Fist stays within the shipped 80-unit ring on a clear floor");
+        TestAssert.True(distance <= Math.Sqrt(80.0 * 80.0 + step * step) + 1e-6 && distance > 0.0,
+            "Power Fist stays within the shipped 80-unit ring (and the step across the row) on a clear floor");
         TestAssert.True(runtime.Movement.Navigation.IsMovementWalkable(move.Destination) &&
             runtime.Movement.Navigation.PointClearance(move.Destination) >= enemy.Radius + 4.0,
             "Power Fist's quantized landing clears the target body");
