@@ -41,10 +41,9 @@ public sealed partial class CombatService
         (attacker.UnitType != UnitType.Turret ||
             !target.IsWard || target.IsSummonerBeacon);
 
-    // Provisional reconstruction: Map1 ar_StopAttackRangeModifier permits
-    // 100 extra units beyond the shared start reach while an
-    // admitted attack winds up. Large escapes and explicit Move/Hold/Stop
-    // can still interrupt it; launched attacks have their own lifetime.
+    // Provisional reconstruction: Map1 ar_StopAttackRangeModifier, the start reach + 100. It is the scripts' TargetInCancelAttackRange
+    // (consulted between swings) and the start test of a swing planted for the next step; a swing already winding up is not leashed by
+    // it (batch 888, TargetJumpedOutOfWindup).
     public bool InCommittedAttackRange(Entity attacker, Entity target)
     {
         var reach = AttackReach(attacker, target) + 100.0;
@@ -52,14 +51,40 @@ public sealed partial class CombatService
     }
 
     // A swing planted for the next combat step counts as committed, so
-    // pursuit neither re-routes nor cancels it in between.
+    // pursuit neither re-routes nor cancels it in between; so does a swing
+    // winding up, until its target jumps out of it (TargetJumpedOutOfWindup).
     public bool HasCommittedWindup(Entity attacker, Entity target) =>
         (_plantedHeroSwings.TryGetValue(attacker.NetId, out var planted) &&
          planted == target.NetId && InCommittedAttackRange(attacker, target)) ||
         _pendingHits.Any(hit => hit.SourceNetId == attacker.NetId &&
             hit.TargetNetId == target.NetId && hit.WindupRemaining > 0.0 &&
             hit.SourceKind == DamageSourceKind.Basic && hit.MissileNetId != 0 &&
-            InCommittedAttackRange(attacker, target));
+            !TargetJumpedOutOfWindup(hit, attacker, target));
+
+    /// <summary>
+    /// Reconstruction (batch 888, owner decision, 18 November 2026: "check at start, cut on blink"): a basic attack's reach is tested
+    /// when the swing starts (<see cref="CanAttack(Entity, Entity)"/>), and a target that walks away during the windup is still hit at
+    /// the cast frame. The windup is cut only when the target is beyond reach + 100 (<see cref="InCommittedAttackRange"/>) and the
+    /// step that put it there was not a walk: the gap between the two moved more than those 100 units since the previous step (a
+    /// blink such as Flash or a teleport, of either unit), or a displacement moved the target in this step or the previous one (a
+    /// dash, a knockback, a pull: a forced move still running; a fear wander is a walk), or one is moving the attacker now (a
+    /// knockback with no stun, which the old leash also measured). Turrets never leash. Evidence (batch 884's record, follow-up research): the stock client's windup
+    /// and cast frame test no distance; the shipped Hero, Minion, Leashed,
+    /// Pet and Aggro scripts consult <c>TargetInCancelAttackRange</c> only to turn the attack off; the reach + 100 tested every step
+    /// cut a melee swing on a champion walking straight away from the reach edge (100 / windup is below every champion's speed),
+    /// which reached the client at about its cast frame. The retail server's rule is not shipped; the blink cut is the owner's.
+    /// </summary>
+    private static bool TargetJumpedOutOfWindup(PendingHit hit, Entity source, Entity target)
+    {
+        if (source.UnitType == UnitType.Turret) return false;
+        var reach = AttackReach(source, target) + 100.0;
+        if (DistanceSquared(source.Position, target.Position) <= reach * reach) return false;
+        return IsDisplaced(target) || hit.TargetLastDisplaced || IsDisplaced(source) ||
+            (hit.TargetLastOffset is { } last && DistanceSquared(last, target.Position - source.Position) > 100.0 * 100.0);
+    }
+
+    // A completed forced move can stay attached until its owner retires it (MovementSystem.AdvanceForcedMove); it moves nothing.
+    private static bool IsDisplaced(Entity unit) => unit.ForcedMove is { Completed: false, Effect: not "Fear" };
 
     /// <summary>
     /// A basic attack of <paramref name="attacker"/>'s is wound up on <paramref name="target"/> and

@@ -331,6 +331,7 @@ public sealed partial class CombatService : IEndOfGameEngine
             TargetChampionDeaths = target.ChampionDeaths,
             TargetYorickRevival = target.YorickRevival,
             AttackOverride = CombatRules.HasAttackOverride(attacker),
+            TargetLastOffset = target.Position - attacker.Position,
         };
         _pendingHits.Add(queued);
         if (windup <= 0.0)

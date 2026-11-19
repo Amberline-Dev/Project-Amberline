@@ -1097,9 +1097,13 @@ public sealed class BbChampionModule : IChampionSpellModule
             BbTargetType.TTYPE_Target => unitTarget is { Alive: true } ? [unitTarget] : Array.Empty<Entity>(),
             BbTargetType.TTYPE_SelfAOE => BbSpellTargeting.Area(sys, hero, hero.Position, data.CastRadius, flags),
             BbTargetType.TTYPE_Area => BbSpellTargeting.Area(sys, hero, child.Position, data.CastRadius, flags),
-            // A cone child (Udyr's Phoenix Breath, cast from the third attack): the units in the cone from the caster toward the point, by the
-            // spell's own cone data, as for a slot cone (CastCone).
-            BbTargetType.TTYPE_Cone => Cone.Units(sys, data, hero.Position, new Position2(child.End.X - hero.Position.X, child.End.Z - hero.Position.Z), hero),
+            // A cone child (Udyr's Phoenix Breath, cast from the third attack): the units in the cone from the cast position toward the point, by
+            // the spell's own cone data, as for a slot cone (CastCone). Reconstruction (batch 893; the retail server's cone origin is not in the
+            // exe): the cast position is the script's OverrideCastPosition when it names one (launchFrom), as for the launch of every other child.
+            // Graves' GravesChargeShotXplode is cast from a marker the script puts 150 units short of where the shell stopped, facing its end, and
+            // its tooltip says the shell "explodes dealing damage in a cone"; from Graves the cone (CastConeDistance 800) missed the units behind
+            // the target and hit the ones beside him. No other cone child cast in a champion closure (126 or 132) overrides its cast position.
+            BbTargetType.TTYPE_Cone => Cone.Units(sys, data, launchFrom, new Position2(child.End.X - launchFrom.X, child.End.Z - launchFrom.Z), hero),
             _ => Array.Empty<Entity>(),
         };
         void Land(SpellSystem sys)

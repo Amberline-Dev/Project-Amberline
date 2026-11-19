@@ -261,6 +261,16 @@ public sealed class PetLuaAiEngine : ILuaAiPetEngine
 
     public void TurnOffAutoAttack(Entity unit, double stopReason)
     {
+        // Batch 888: Pet.lua passes STOPREASON_MOVING only when the target left TargetInCancelAttackRange; a swing winding up on it
+        // lands unless the target jumped out (CombatService.TargetJumpedOutOfWindup), the hero engine's rule. A walk order
+        // (LeaveFight) still drops it.
+        if (stopReason == StoppedMoving && CurrentTarget(unit) is { } target &&
+            _combat.HasCommittedWindup(unit, target)) return;
+        StopAutoAttack(unit, stopReason);
+    }
+
+    private void StopAutoAttack(Entity unit, double stopReason)
+    {
         // The stop reason (STOPREASON_*) is the engine's own; nothing in this build sends it.
         // The attack ends and its clients are told, whatever the reason, the way the lane minions' native does
         // (MinionAiNatives.NativeTurnOffAutoAttack): the stock client runs a pet as an obj_AI_Minion, whose attack state starts the
@@ -270,9 +280,9 @@ public sealed class PetLuaAiEngine : ILuaAiPetEngine
         // reached, rooted or walking after it (batch 716). CombatPackets.StopAttack sends the packet only to a client still in that state.
         // PET-01: a re-targeting (STOPREASON_TARGET_LOST, before every ORDER_ATTACKTO/ORDER_PETHARDATTACK/ORDER_PETHARDSTOP) keeps the
         // swing it is winding up, so a repeated attack order against one target lands its hits; <see cref="SetTarget"/> retires it when
-        // the target actually changes. STOPREASON_IMMEDIATELY (fear, HaltAI) drops it, and so does STOPREASON_MOVING, which Pet.lua
-        // passes only for a target outside the committed range the combat tick drops a windup at anyway: dropped first, the stop tells
-        // the client not to play it (0x10) rather than forcing the cast frame of a hit the server then drops.
+        // the target actually changes. STOPREASON_IMMEDIATELY (fear, HaltAI) drops it, and so does a walk's STOPREASON_MOVING
+        // (LeaveFight): dropped first, the stop tells the client not to play it (0x10) rather than forcing the cast frame of a hit the
+        // server then drops.
         // The retained target survives the stop (Turret.luaobj's classified difference 2 is the same shape): the native state chases
         // it, and the states that must not keep a target take their replacement from <see cref="SetStateAndCloseToTarget"/> in the
         // same callback.
@@ -461,7 +471,7 @@ public sealed class PetLuaAiEngine : ILuaAiPetEngine
     /// </summary>
     private void LeaveFight(Entity unit)
     {
-        TurnOffAutoAttack(unit, StoppedMoving);
+        StopAutoAttack(unit, StoppedMoving);
         SetTarget(unit, null);
     }
 

@@ -1193,8 +1193,8 @@ public static class CombatChecks
         TestAssert.True(ReferenceEquals(preexistingBurning, renewed),
             "Dragon takes over a pre-existing same-name Burning instance in place");
         // The renewal is the script's own clock kept, not the engine ticker's PeriodElapsed: Burning 0033's
-        // LastTimeExecuted lives in the instance's InstanceVars, a BUFF_RENEW_EXISTING hands over only the add's own
-        // vars, and the payload reports the scheduled periodic instead of a ticker of its own.
+        // LastTimeExecuted lives in the instance's InstanceVars, a BUFF_RENEW_EXISTING keeps all of the instance's
+        // vars (batch 896), and the payload reports the scheduled periodic instead of a ticker of its own.
         TestAssert.True(renewed.Payload.ScriptSchedulesPeriodic,
             "a same-instance Dragon renewal keeps the script's own periodic");
         var beforeRenewedTick = target.Health;
@@ -3340,11 +3340,14 @@ public static class CombatChecks
     }
 
     // Playtest #24, 25 Sept 2026: Map1 ar_StopAttackRangeModifier (+100)
-    // leashes every mobile attacker's windup, ranged included.
+    // leashes every mobile attacker's windup, ranged included. Batch 888: only
+    // a target that jumps beyond it in one step (this fixture's teleport) cuts
+    // the windup, and ranged heroes are leashed here too.
     [Check("combat.committed-range-leashes-ranged-npc-windups")]
     public static void CommittedRangeLeashesRangedNpcWindups()
     {
         foreach (var (kind, type) in new[] {
+                     (EntityKind.Hero, UnitType.Hero),
                      (EntityKind.Pet, UnitType.Monster),
                      (EntityKind.ShacoClone, UnitType.Monster),
                      (EntityKind.YorickRevenant, UnitType.Monster),
@@ -3370,11 +3373,9 @@ public static class CombatChecks
                 TestAssert.True(test.Target.Health < 1000.0, $"{kind} committed ranged windup lands");
         }
 
-        // Turrets never leash, and ranged heroes keep theirs in
-        // HeroAttackOrderSystem.Chase, so the combat tick leaves both alone.
+        // Turrets never leash.
         foreach (var (kind, type) in new[] {
                      (EntityKind.Turret, UnitType.Turret),
-                     (EntityKind.Hero, UnitType.Hero),
                  })
         {
             var test = Setup(kind, type, ranged: true);

@@ -256,6 +256,7 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
 
     private void ApplyDamage(BbCall call)
     {
+        if (_host.DeathCleanup) return; // batch 892: a corpse's move cleanup deals no damage (BbScriptMoves.EndForDeath)
         var attacker = Unit(call, "AttackerVar");
         var target = Unit(call, "TargetVar");
         // The client's damage native stores nothing without a target: it tests the Target lookup first.
@@ -833,6 +834,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     {
         var target = Unit(call, "TargetVar");
         if (target is null) return;
+        // Batch 892: a corpse's move cleanup adds buffs to the corpse only (BbScriptMoves.EndForDeath).
+        if (_host.DeathCleanup && !ReferenceEquals(target, _host.Frame.Owner)) return;
         // A placemarker that applies a buff to another unit (Propel's control, whose AttackerVar is the placemarker that casts it) applies as the unit
         // that owns it (see PlacemarkerApplier); every other add keeps its attacker, and the target when it names none. A placemarker that applies a
         // buff to its own owner keeps its attacker: Gragas's barrel adds GragasBarrelRollBoom to him with the barrel as AttackerVar, and the shipped
@@ -1252,6 +1255,7 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     /// </summary>
     private void SpellCast(BbCall call)
     {
+        if (_host.DeathCleanup) return; // batch 892: a corpse's move cleanup casts nothing (BbScriptMoves.EndForDeath)
         var caster = Unit(call, "CasterVar") ?? throw new BbRuntimeException("BBSpellCast has no caster");
         var type = (BbSlotType)(int)(call.Value("SlotType") as double? ?? 0.0);
         // InventorySlots children are only the disconnect trigger: 83 shipped scripts cast inventory slot 6, all of them CharOnDisconnect or the

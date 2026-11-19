@@ -224,8 +224,9 @@ public sealed class BbLoadoutHooks
     /// hero's first poll.
     /// <para>
     /// Batch 246: <paramref name="due"/> is the hero's self-buff line (<see cref="BbSelfUpdate"/>, Reconstruction: the engine's 0.25 s
-    /// <c>BuffOnUpdateActions</c> grid, the client holding no period for these hooks). Every shipped talent's hook is bare, so the
-    /// utility marker is renewed four times a second, not once per simulation step (about 30, batch 241's measurement).
+    /// <c>BuffOnUpdateActions</c> grid, the client holding no period for these hooks), so the utility marker is renewed four times a
+    /// second, not once per simulation step (about 30, batch 241's measurement). Batch 897: a hook that owns a periodic runs on the line
+    /// too (Talents/224.luaobj's 3 s); batch 246 polled it on every step.
     /// </para>
     /// </summary>
     public void PollSelfBuffs(Entity hero, bool due)
@@ -235,7 +236,7 @@ public sealed class BbLoadoutHooks
         if (!ReferenceEquals(page.Masteries, hero.Masteries) || page.Level != hero.Level) return;
         foreach (var talent in page.Talents.Values)
         {
-            if (!talent.HasHook("UpdateSelfBuffActions") || !BbSelfUpdate.Runs(talent.Binding.Script, "UpdateSelfBuffActions", due)) continue;
+            if (!due || !talent.HasHook("UpdateSelfBuffActions")) continue;
             foreach (var add in RunAdd(talent, "UpdateSelfBuffActions", name => hero.Buffs.Count(buff => buff.Name == name)))
             {
                 if (!IsLiveAdd(add)) continue;

@@ -197,7 +197,7 @@ public sealed class BbUnitCharacterModule
     /// its actions hook runs and the script guards on <c>IS_NOT_DEAD</c> itself.
     /// <para>
     /// Batch 256: each unit polls on its own self-buff line (<paramref name="due"/>, <c>SpellSystem.StepSelfUpdate</c>; <see cref="BbSelfUpdate"/>:
-    /// a bare hook every 0.25 s, a hook that owns a periodic every update), the hero's rule. Reconstruction for the period, as the
+    /// every hook every 0.25 s, since batch 897 one that owns a periodic too), the hero's rule. Reconstruction for the period, as the
     /// hero's: the layout puts the server's update throttle (<c>srvNextUpdate</c>) and the character script (<c>CharScript</c>)
     /// on <c>obj_AI_Base</c>, the class a hero, a turret, a minion and a monster share, so
     /// none of them updates its script on a cadence of its own. CharScriptWorm's stats hook (0039-0057) writes <c>SetCanAttack</c>

@@ -446,6 +446,9 @@ public static class BbTaricChecks
         // The aura is renewed once a second while the buff lives, and lapses with it.
         match.Advance(7.0);
         TestAssert.Near(allyAttack + 25.0, match.Ally.AttackDamage, 1e-6, "the aura is still on after seven seconds");
+        // Batch 896: the renewals keep the instance's variables, so the minion keeps the third its activation cut (it took the hero half
+        // when each renewal handed the add's variables over).
+        TestAssert.Near(allyMinionAttack + 50.0 * 0.5 / 3.0, allyMinion.AttackDamage, 1e-6, "seven renewals later the minion still has a third");
         match.Advance(5.0);
         TestAssert.True(Buff(match.Hero, "Radiance") is null, "Radiance ends after ten seconds");
         TestAssert.Near(heroAttack, match.Hero.AttackDamage, 1e-6, "attack damage restored");

@@ -326,9 +326,10 @@ public static class ItemRuntimeChecks
             TestAssert.Near(2, basicAttacker.AttackSpeedMod, 1e-6);
 
             // Batch 149 step 2: 3143 opens its RanduinsOmen window from UpdateSelfBuffActions on the next poll
-            // (ExecuteImmediately true), and that buff's BuffOnBeingHit is the retaliation pair.
+            // (ExecuteImmediately true), and that buff's BuffOnBeingHit is the retaliation pair. Batch 897: the poll is the holder's next 0.25 s
+            // self-update line (BbSelfUpdate), which a quarter second always reaches; the hook ran on every update before.
             warden.Inventory = [new InventorySlot(3143), null, null, null, null, null];
-            production.Tick(0.01);
+            production.Tick(0.25);
             TestAssert.True(warden.Buffs.Any(buff => buff.Name == "RanduinsOmen"),
                 "the copy opens its own window on the poll");
             // Batch 222: the retaliation's roll is the BuildingBlocks roll on the match's Lua stream; the next Lua draw is 0 (the proc passes).

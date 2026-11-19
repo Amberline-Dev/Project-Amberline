@@ -233,7 +233,7 @@ public sealed class BbLoadoutHooks
         if (!ReferenceEquals(page.Masteries, hero.Masteries) || page.Level != hero.Level) return;
         foreach (var talent in page.Talents.Values)
         {
-            if (!talent.HasHook("UpdateSelfBuffActions") || !BbSelfUpdate.Runs(talent.Binding.Script, "UpdateSelfBuffActions", due)) continue;
+            if (!due || !talent.HasHook("UpdateSelfBuffActions")) continue;
             foreach (var add in RunAdd(talent, "UpdateSelfBuffActions", name => hero.Buffs.Count(buff => buff.Name == name)))
             {
                 if (!IsLiveAdd(add)) continue;

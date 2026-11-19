@@ -196,7 +196,7 @@ public sealed class HeroLuaAiEngine : ILuaAiHeroEngine
         // HaltAI. The immediate stop ends the fight outright. The moving one only stands auto-attack
         // down for the walk ahead — the same body re-arms it with TurnOnAutoAttack(GetTarget()) once
         // the target is back in reach — so it drops just the swings that are no longer admitted: a
-        // swing inside its ar_StopAttackRangeModifier leash lands (the rule CombatService.
+        // swing winding up lands unless its target jumped out (batch 888: the rule CombatService.
         // HasCommittedWindup states and the chase keeps). Both send 0x39 only when a swing was cut.
         if (stopReason == StoppedImmediately)
         {

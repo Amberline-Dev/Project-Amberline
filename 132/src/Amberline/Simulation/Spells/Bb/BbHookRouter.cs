@@ -650,13 +650,13 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// (<c>BbItemModule.Poll</c>, which must not lapse a corpse's <c>DoranT2Health</c> or its Will Revive marker).
     /// </para>
     /// Reconstruction (hook timing is server-only). Batch 246: a hero's poll runs on its self-buff line (<paramref name="due"/>,
-    /// <see cref="BbSelfUpdate"/>: a bare hook on the 0.25 s line, a hook that owns a periodic every update); batch 256: a bound unit's
+    /// <see cref="BbSelfUpdate"/>: every hook on the 0.25 s line, since batch 897 one that owns a periodic too); batch 256: a bound unit's
     /// poll (<see cref="BbUnitCharacterModule.Poll"/>) runs on its own line by the same rule.
     /// </summary>
     public void RunUpdateSelfBuffActions(Entity unit, bool due = true)
     {
         if (CharacterOf(unit) is not { } script || script.Event("UpdateSelfBuffActions") is null || !Owns(unit)) return;
-        if (!BbSelfUpdate.Runs(script, "UpdateSelfBuffActions", due)) return;
+        if (!due) return;
         // The shipped scripts name the hero as Owner, Attacker or Target interchangeably (tooltip calls use all three).
         var scope = NewScope(unit, unit, unit, unit, null, CharInstanceVars(unit));
         Run(script, "UpdateSelfBuffActions", scope, new BbHookFrame("UpdateSelfBuffActions", script.Name, unit) { Caster = unit });
@@ -680,7 +680,7 @@ internal sealed partial class BbHookRouter : IBbHookSink
     public void RunUpdateSelfBuffStats(Entity unit, bool due = true)
     {
         if (CharacterOf(unit) is not { } script || script.Event("UpdateSelfBuffStats") is null || !Owns(unit)) return;
-        if (!BbSelfUpdate.Runs(script, "UpdateSelfBuffStats", due)) return;
+        if (!due) return;
         var collector = new BbStatCollector();
         if (unit.Alive)
         {
@@ -1719,6 +1719,8 @@ internal sealed partial class BbHookRouter : IBbHookSink
     public void OnUnitDeath(Entity unit, uint killerNetId) =>
         Guard("sink", "OnUnitDeath", () =>
         {
+            // Batch 892: the death ends the unit's script moves first, while their buffs are still on it (BbScriptMoves.EndForDeath).
+            _host.Moves.EndForDeath(unit);
             Buffs.OnUnitDeath(unit, killerNetId);
             RunNearbyDeath(unit, killerNetId);
         });
@@ -1804,7 +1806,17 @@ internal sealed partial class BbHookRouter : IBbHookSink
     public double ModifyBasicAttackDamage(Entity attacker, Entity target, double damage, bool attackOverride, BasicAttackOutcome outcome)
     {
         var result = damage;
+        // Batch 892: a hit hook's own DAMAGESOURCE_ATTACK hits are swings of their own for the hit pipeline (the 132 dragon Twin Bite's
+        // BuffOnHitUnit cleaves every other unit in front of Shyvana that way), and each re-enters OnAttackOverrideDamage and OnBasicAttackHit,
+        // which take this attacker's swing record. The swing whose hooks are running keeps the spell it was fired with, so its TargetExecute
+        // still runs after its hit (ShyvanaDoubleAttackHitDragon's second strike). Reconstruction: retail's attack routine is server-only.
+        var swung = _hitAttacks.TryGetValue(attacker.NetId, out var hit) ? hit : null;
+        var live = _liveRuns.TryGetValue(attacker.NetId, out var run) ? run : null;
         Guard("sink", "ModifyBasicAttackDamage", () => result = RunHitUnit(attacker, target, damage, outcome));
+        if (swung is not null) _hitAttacks[attacker.NetId] = swung;
+        else _hitAttacks.Remove(attacker.NetId);
+        if (live is not null) _liveRuns[attacker.NetId] = live;
+        else _liveRuns.Remove(attacker.NetId);
         return result;
     }
 

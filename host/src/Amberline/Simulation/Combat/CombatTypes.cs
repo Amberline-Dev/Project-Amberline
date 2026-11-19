@@ -60,6 +60,10 @@ public readonly record struct PendingHit(
     // BBOverrideAutoAttack buff (VayneTumbleAttack, Takedown) is empowered,
     // one started before it is a plain basic attack wherever it lands.
     internal bool AttackOverride { get; init; }
+    // Batch 888: the target at the previous step (where it stood from the attacker, and whether a displacement moved it), for the
+    // windup's blink test (CombatService.TargetJumpedOutOfWindup).
+    internal Position2? TargetLastOffset { get; init; }
+    internal bool TargetLastDisplaced { get; init; }
 }
 
 /// <summary>

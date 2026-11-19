@@ -35,6 +35,9 @@ public sealed class NeutralLuaAiEngine : ILuaAiLeashedEngine
     /// <summary>The stop reason Leashed passes to <c>TurnOffAutoAttack</c> from fear and <c>HaltAI</c>.</summary>
     public const double StoppedImmediately = 100.0;
 
+    /// <summary>The stop reason Leashed passes to <c>TurnOffAutoAttack</c> when the target left the cancel range.</summary>
+    public const double StoppedMoving = 101.0;
+
     private readonly WorldState _world;
     private readonly MovementSystem _movement;
     private readonly CombatService _combat;
@@ -185,6 +188,10 @@ public sealed class NeutralLuaAiEngine : ILuaAiLeashedEngine
         // The stop reason (STOPREASON_*) is the engine's own; nothing in this build sends it.
         // A moving re-path cancels only a swing that has not been launched yet and says nothing to
         // the client unless one was cancelled; IMMEDIATELY (fear, HaltAI) always stops the swing.
+        // Batch 888: Leashed passes MOVING only when the target left TargetInCancelAttackRange; a swing winding up on it lands
+        // unless the target jumped out (CombatService.TargetJumpedOutOfWindup), the hero engine's rule.
+        if (stopReason == StoppedMoving && CurrentTarget(unit) is { } target &&
+            _combat.HasCommittedWindup(unit, target)) return;
         var cancelled = _combat.InterruptBasicAttack(unit);
         if (cancelled > 0 || stopReason == StoppedImmediately)
             if (unit.Created) _wire.StopAttack(unit);
@@ -495,8 +502,8 @@ public sealed class NeutralLuaAiEngine : ILuaAiLeashedEngine
         // the next order rounded back to the same cell, so the monster neither moved nor swung.
         var reach = CombatService.AttackReach(monster, target) - WireRoundingMargin;
         // playtest #24: hold on the combat gates champion chase and minion AI
-        // use. A committed windup keeps Map1's 100-unit stop-attack margin,
-        // so a legal swing is neither re-chased nor cancelled.
+        // use. A committed windup (batch 888: until its target jumps out) is
+        // neither re-chased nor cancelled.
         if (distance <= reach || _combat.CanAttack(monster, target) ||
             _combat.HasCommittedWindup(monster, target))
         {

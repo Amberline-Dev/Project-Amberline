@@ -293,6 +293,36 @@ internal sealed class BbScriptMoves
     }
 
     /// <summary>
+    /// Batch 892: a death ends the unit's displacements as failed moves, and their <c>BuffOnMoveFailure</c> hooks run at once, as cleanup,
+    /// while the buffs that started them are still on the corpse. The death's buff clear comes after, and <see cref="Tick"/> would only find
+    /// buffs that are gone. Fizz's hop holds <c>FizzJumpBuffer</c> in the E slot and only its <c>BuffOnMoveFailure</c> puts <c>FizzJump</c>
+    /// back, so a death in the hop left him the buffer spell for the rest of the game.
+    /// <para>
+    /// NOT RETAIL (owner decision, 18 November 2026): a champion who dies mid-dash deals no landing damage. So <c>BuffOnMoveEnd</c> does not run
+    /// (Gragas's Body Slam lands there), and while the failure hook runs (<see cref="BbSpellHost.DeathCleanup"/>) its damage, its spell casts and
+    /// its buff adds on other units are dropped (Riven's <c>RivenTriCleaveDamage</c>, Ahri's <c>AhriTumbleKick</c>). Retail's order at a death is
+    /// not recovered (the move's stop callback is server code). The hook still writes the corpse's own slots, cooldowns, statuses and buffs.
+    /// </para>
+    /// </summary>
+    public void EndForDeath(Entity unit)
+    {
+        var entries = _moves.Where(item => ReferenceEquals(item.Unit, unit)).ToArray();
+        if (entries.Length == 0) return;
+        _host.DeathCleanup = true;
+        try
+        {
+            foreach (var entry in entries)
+            {
+                if (!_moves.Remove(entry)) continue;
+                entry.Move.Completed = true;
+                entry.Move.Succeeded = false;
+                Finish(entry, attached: false, death: true);
+            }
+        }
+        finally { _host.DeathCleanup = false; }
+    }
+
+    /// <summary>
     /// Once per spell step (<c>IChampionSpellModule.TickSharedProjectilePhase</c>, after the movement phase of the step): finishes the
     /// displacements that are over and hands postponed hero orders back.
     /// </summary>
@@ -342,7 +372,7 @@ internal sealed class BbScriptMoves
         }
     }
 
-    private void Finish(BbScriptMove entry, bool attached)
+    private void Finish(BbScriptMove entry, bool attached, bool death = false)
     {
         var unit = entry.Unit;
         var move = entry.Move;
@@ -358,7 +388,7 @@ internal sealed class BbScriptMoves
             if (unit.Alive && spells.Effects.IsReferenceReady(unit))
                 spells.Effects.SendWaypoints(unit, spells.Movement.InstallStop(unit), spells.World.Clock.SyncId());
         }
-        if (entry.Buff is { } buff) _host.Router.RunMoveHooks(buff, success, terrain);
+        if (entry.Buff is { } buff) _host.Router.RunMoveHooks(buff, success, terrain, endHook: !death);
         else if (entry.HeldBefore is { } held)
         {
             // A move a spell's own hook started (Amumu's Bandage Toss moves the caster and adds the buff after it; Tristana's Rocket Jump, Pantheon's
@@ -368,7 +398,7 @@ internal sealed class BbScriptMoves
             foreach (var added in _host.Buffs.OfUnit(unit).Where(item => !held.Contains(item) &&
                          (item.Script.Event("BuffOnMoveSuccess") is not null || item.Script.Event("BuffOnMoveFailure") is not null ||
                           item.Script.Event("BuffOnMoveEnd") is not null)))
-                _host.Router.RunMoveHooks(added, success, terrain);
+                _host.Router.RunMoveHooks(added, success, terrain, endHook: !death);
         }
         // A hero's action word keeps the move and attack bits cleared while a displacement runs (HeroStatsService.Snapshot), and the lock
         // buff of a knock-up ends before the move does (PowerFistSlow: 0.5 s against about 0.9 s). The landing publishes it at once, after

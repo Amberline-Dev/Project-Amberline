@@ -639,22 +639,19 @@ public sealed class BbItemModule
     /// </para>
     /// <para>
     /// Batch 246: <paramref name="due"/> is the holder's self-buff line (<see cref="BbSelfUpdate"/>). The inventory sync runs every
-    /// update; a bare hook runs on the line, a hook that owns a <c>BBExecutePeriodically</c> every update. The stat sample is one merge
-    /// of every copy, so it is taken whole whenever one copy's stat hook owns a periodic (3001's and 3110's aura loops): a bare stat
-    /// hook sampled between its lines reads the same state and changes nothing the signature does not already hold.
+    /// update; every hook runs on the line, and the stat sample (one merge of every copy) is taken on it. Batch 897: a hook that owns a
+    /// <c>BBExecutePeriodically</c> runs on the line too (3001's and 3110's 0.9 s aura loops, the Tear family's stack timers), its period
+    /// tested on the runs the line gives it; batch 246 polled such a hook, and the whole sample, on every step.
     /// </para>
     /// </summary>
     public void Poll(Entity hero, bool due = true)
     {
         if (_router is null || _host is null) return;
         SyncInventory(hero);
-        if (OwnerOf(hero) is not { } owner) return;
-        var sample = due;
-        for (var slot = 0; slot < Amberline.Simulation.Inventory.SlotCount && !sample; slot++)
-            sample = owner.Item(slot) is { Active: true } binding && StatHooks.Any(hook => BbSelfUpdate.CarriesPeriodic(binding.Script, hook));
+        if (!due || OwnerOf(hero) is not { } owner) return;
         var merged = new BbStatCollector();
         var any = false;
-        for (var slot = 0; slot < Amberline.Simulation.Inventory.SlotCount && sample; slot++)
+        for (var slot = 0; slot < Amberline.Simulation.Inventory.SlotCount; slot++)
         {
             if (owner.Item(slot) is not { Active: true } binding) continue;
             any = true;
@@ -665,7 +662,7 @@ public sealed class BbItemModule
         for (var slot = 0; slot < Amberline.Simulation.Inventory.SlotCount; slot++)
         {
             if (owner.Item(slot) is not { Active: true } binding) continue;
-            if (BbSelfUpdate.Runs(binding.Script, "UpdateSelfBuffActions", due)) Run(hero, binding, "UpdateSelfBuffActions");
+            Run(hero, binding, "UpdateSelfBuffActions");
         }
     }
 

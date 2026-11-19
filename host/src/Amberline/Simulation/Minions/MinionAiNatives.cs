@@ -96,10 +96,17 @@ public sealed partial class MinionAiSystem
 
     /// <summary>
     /// <c>TurnOffAutoAttack(STOPREASON_*)</c>: the attack ends and its client is told. Every
-    /// reason drops a swing still wound up, which is what the hand-written stops already did.
+    /// reason drops a swing still wound up, which is what the hand-written stops already did,
+    /// except STOPREASON_MOVING over a swing winding up on the target: Minion.lua passes it only when
+    /// the target left <c>TargetInCancelAttackRange</c>, and a swing started in reach lands on a target
+    /// that walked away (batch 888, <c>CombatService.TargetJumpedOutOfWindup</c>; the hero engine's rule).
     /// </summary>
-    internal void NativeTurnOffAutoAttack(Entity minion, double stopReason) =>
+    internal void NativeTurnOffAutoAttack(Entity minion, double stopReason)
+    {
+        if (stopReason == StopReasonMoving && NativeCurrentTarget(minion) is { } target &&
+            _combat.HasCommittedWindup(minion, target)) return;
         TurnOffAutoAttack(minion, StopReasonName(stopReason));
+    }
 
     // ---- the ownership half ----
 

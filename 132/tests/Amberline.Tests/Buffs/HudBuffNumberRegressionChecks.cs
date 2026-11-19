@@ -523,8 +523,9 @@ public static partial class ChampionLiveRegressionChecks
         TestAssert.False(hero.Buffs.Any(buff => buff.Name == "LeviathanStats"),
             "Leviathan re-buy has no stale icon");
         // The fresh copy re-seeds its own BBExecutePeriodically clock, so the check buff that pays the stacks is
-        // back one second after the purchase.
-        runtime.Tick(1.1);
+        // back one second after the purchase. Batch 897: the copy's hook runs on the holder's 0.25 s self-update line, so the clock is seeded
+        // up to a line after the purchase and fires on the first line at or after one second on: 1.25 s at most.
+        runtime.Tick(1.35);
         runtime.Combat.ScheduleRespawn(secondEnemy);
         TestAssert.True(runtime.Combat.RespawnImmediately(secondEnemy),
             "second enemy respawns for duplicate-copy check");

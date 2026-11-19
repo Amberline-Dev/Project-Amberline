@@ -105,8 +105,9 @@ public static class ItemAcceptanceFollowupChecks
                 var health = hero.Health;
                 hero.Level += 1;
                 // Batch 246: 3010's UpdateSelfBuffActions is bare, so it reads the level on the hero's next 0.25 s self-buff line
-                // (BbSelfUpdate), which one quarter-second step always reaches; 3027's carries its ageing periodic and runs every update.
-                runtime.Spells.Tick(item == 3010 ? 0.25 : 1.0 / 30);
+                // (BbSelfUpdate), which one quarter-second step always reaches. Batch 897: 3027's, which carries its ageing periodic, runs
+                // on the same line (it ran on every update).
+                runtime.Spells.Tick(0.25);
                 runtime.Spells.Tick(0.5);
                 runtime.Buffs.TickBuffs(hero, 0.5);
                 runtime.Spells.Tick(0.5);

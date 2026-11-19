@@ -190,8 +190,9 @@ public static partial class ChampionLiveRegressionChecks
 
             // Batch 145 step 2: Items/3001.luaobj re-adds both auras from BBExecutePeriodically (0.9 s,
             // ExecuteImmediately false), so "the next sync" this check's name means is the script's own next fire —
-            // one period after the copy binds, then every period again.
-            runtime.Tick(1.0);
+            // one period after the copy binds, then every period again. Batch 897: the copy's hook runs on the holder's 0.25 s self-update
+            // line, so the first run is up to a line after the bind and the 0.9 s fire lands on the first line at or after it: 1.25 s at most.
+            runtime.Tick(1.25);
             runtime.Delivery.Flush();
             TestAssert.True(source.Buffs.Any(buff => buff.Name == "AbyssalScepterAuraSelf"),
                 $"{team}: normal self aura still applies");

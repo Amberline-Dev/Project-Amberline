@@ -104,6 +104,10 @@ internal sealed class BbSpellHost : IBbHost
     public BbHookRouter Router { get; internal set; } = null!;
     /// <summary>The displacements this host's scripts started (<c>BBMove</c> and its siblings); the module ticks them.</summary>
     internal BbScriptMoves Moves { get; }
+
+    /// <summary>Batch 892 (NOT RETAIL, owner decision 18 November 2026): a dying unit's move failure hooks run as cleanup (BbScriptMoves.EndForDeath):
+    /// their damage, spell casts and buff adds on other units are dropped.</summary>
+    internal bool DeathCleanup { get; set; }
     /// <summary>The channelled spells this host's scripts run (<c>ChannelDuration</c> and the <c>Channeling*</c> hooks); the module ticks them.</summary>
     internal BbScriptChannels Channels { get; }
     public BbHookFrame Frame => _frames.Count > 0 ? _frames.Peek()

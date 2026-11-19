@@ -135,8 +135,8 @@ public static partial class ChampionLiveRegressionChecks
                 $"{team} {name}: renewal records the latest source");
             if (entropy)
             {
-                // The renewal hands over fresh NextBuffVars and keeps the instance's own LastTimeExecuted (the two
-                // merge by name), so the phase the first script update seeds survives it. One pulse at the boundary
+                // The renewal keeps the instance's variables, its own LastTimeExecuted with them (batch
+                // 896), so the phase the first script update seeds survives it. One pulse at the boundary
                 // that seeding set, and none at the one a restarted clock would have moved it to.
                 var beforeSeed = target.Health;
                 Step(0.4);
@@ -153,8 +153,8 @@ public static partial class ChampionLiveRegressionChecks
             }
             else
             {
-                // The red burn keeps the clock the renewal did not move (BUFF_RENEW_EXISTING merges the add's vars
-                // by name, so the live instance's LastTimeExecuted survives), the same shape as the entropy branch.
+                // The red burn keeps the clock the renewal did not move (BUFF_RENEW_EXISTING keeps the instance's vars,
+                // batch 896, so the live instance's LastTimeExecuted survives), the same shape as the entropy branch.
                 var beforeSeed = target.Health;
                 Step(0.4);
                 TestAssert.Near(beforeSeed, target.Health, 1e-9,

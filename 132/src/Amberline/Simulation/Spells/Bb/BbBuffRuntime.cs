@@ -924,9 +924,10 @@ internal sealed class BbBuffRuntime
             _host.Spells.CurrentTime + request.Duration * 0.5 < renewed.WireEndsAt)
         {
             live.ExpiresAt = request.Duration;
-            var pendingPop = PendingVeilPop(renewed);
-            foreach (var entry in request.Vars.Entries) renewed.InstanceVars[entry.Key] = entry.Value;
-            if (pendingPop) renewed.InstanceVars["WillRemove"] = true;
+            // Batch 896: a renewal keeps the instance's variables (see the renewal in the loop below); the replace kept in place here stands
+            // for the new instance retail makes, which starts from the add's.
+            if ((BbBuffAddType)request.AddType == BbBuffAddType.BUFF_REPLACE_EXISTING)
+                foreach (var entry in request.Vars.Entries) renewed.InstanceVars[entry.Key] = entry.Value;
             return live;
         }
         // Reconstruction (batch 326): a BUFF_RENEW_EXISTING add of a buff from that same buff's own OnBuffDeactivate renews the instance whose
@@ -1029,8 +1030,18 @@ internal sealed class BbBuffRuntime
         // OnBuffActivate (BbHookFrame.PreActivation), so what this run writes must not reach the instance: Wither's BuffOnUpdateStats ticked
         // its BBExecutePeriodically here with TimeBetweenTicks still unset (period 0), one step of the slow before the activation sized it,
         // and the slow reached -0.50 instead of the script's -0.35 - 4 x 0.03 = -0.47 (the tooltip's 47 percent).
+        // Batch 896: a BUFF_RENEW_EXISTING add that renews a live script buff without raising its count keeps the instance's variables (see
+        // the renewal in the loop below), so its sample is taken from them: the renewal's payload swap and stats push carry what the buff
+        // holds, not the add's fresh values (Burnout's speed would flash back to +30 % until the hook's end).
+        var renewing = addType == BbBuffAddType.BUFF_RENEW_EXISTING &&
+                       request.Target.Buffs.FirstOrDefault(buff => string.Equals(buff.Name, request.Name, StringComparison.Ordinal)) is { } held &&
+                       held.Stacks >= Math.Min(Math.Max(1, request.Stacks), Math.Max(1, request.MaxStack)) &&
+                       _instances.TryGetValue(held, out var heldInstance)
+            ? heldInstance
+            : null;
+        var ownVars = renewing?.InstanceVars ?? request.Vars;
         var sampled = script is null ? new StatsSample(new BuffPayload(), "") : TrySample(script, request.Target, request.Caster,
-            Copy(request.Vars), frame, instance: null);
+            Copy(ownVars), frame, instance: null);
         var payload = sampled.Payload;
         // The particle of a buff whose own script draws it in OnBuffActivate is the script's, not the server-owned
         // persistent one (see DrawsActivationEffect): the add carries the claim with it, so the buff lifecycle leaves
@@ -1086,7 +1097,7 @@ internal sealed class BbBuffRuntime
         // the way a hand-written one is (ItemPassiveService.AddMourning reads the same two blocks of Mourning.luaobj).
         // SummonerDot.luaobj is the shipped case: before this, its Period / DamagePerTick / MaxTicks read 0 and the DoT
         // existed only as running script, which the record, the tick numbers and the checks all disagree with.
-        FillScriptPeriodic(script, payload, request.Vars, request.Caster);
+        FillScriptPeriodic(script, payload, ownVars, request.Caster);
         // Reconstruction: BUFF_STACKS_AND_RENEWS with StacksExclusive (the default; the client's add reader defaults it to true) keeps its
         // stacks per caster. The shipped Silver Bolts mark counts and removes its stacks by caster (BBGetBuffCountFromCaster, BBSpellBuffRemove with
         // the caster as Attacker) and its first stack clears only that caster's other marks, so two Vaynes on one target each own a mark with its own
@@ -1148,7 +1159,7 @@ internal sealed class BbBuffRuntime
                             canMitigateDuration: request.CanMitigateDuration);
                     break;
                 case BbBuffAddType.BUFF_RENEW_EXISTING:
-                    // The live instance keeps its slot, start time and visuals; duration and variables are refreshed. The first application
+                    // The live instance keeps its slot, start time, visuals and variables (batch 896); its duration is refreshed. The first application
                     // keeps the count (the cap is the live count); the later ones raise it.
                     state = present is null
                         ? services.Add(request.Target, request.Name, type, request.Duration, request.Caster.NetId, payload,
@@ -1242,15 +1253,25 @@ internal sealed class BbBuffRuntime
                 });
                 instance.InstanceVars = vars;
             }
-            else
+            else if (periodicReapply)
             {
-                // A renewal hands over fresh NextBuffVars; the live instance keeps what its own hooks stored since (the effect ids
-                // OnBuffActivate wrote for OnBuffDeactivate to remove) and takes the new values over by name. Replacing the table lost
-                // those ids: Radiance's aura on allies and Taric's Shatter-ready sparks were never removed.
-                var pendingPop = PendingVeilPop(instance);
+                // Batch 407's overlapping re-add stands for the new instance retail makes, which starts from the add's variables: the live
+                // instance keeps what its own hooks stored (the effect ids OnBuffActivate wrote for OnBuffDeactivate to remove) and takes
+                // the new values over by name.
                 foreach (var entry in vars.Entries) instance.InstanceVars[entry.Key] = entry.Value;
-                if (pendingPop) instance.InstanceVars["WillRemove"] = true;
             }
+            // Batch 896 (owner decision, 18 November 2026: "Fix in its own batch"): every other add that makes no new instance or stack (a
+            // BUFF_RENEW_EXISTING of a live buff, a STACKS_AND_RENEWS or STACKS_AND_CONTINUE one at its MaxStack) renews the instance and
+            // hands it none of its variables: the duration, caster, tick rate and spell chain are the add's, the variables stay the ones
+            // the instance's own hooks keep. Reconstruction from the shipped scripts (the retail buff manager is server code the client
+            // does not hold), on both lines: AuraofDespairParticle re-adds AuraofDespairDrainLife with BUFF_RENEW_EXISTING only while
+            // CharVars.LifeLossPercent equals the LastLifeLossPercent it noted, and with BUFF_REPLACE_EXISTING when it changed, so a new
+            // value needs a new instance; RadianceAura's OnBuffActivate cuts a minion's share to a third and its ability power to 0 while
+            // Radiance renews it with the hero half every second; DeadlyVenom_Internal's LastCount guard, BansheesVeil's and
+            // OdinDebacleCloak's WillRemove and 1.0.0.132's Burnout (Shyvana: the activation's +0.2 bonus AD in DamagePerTick, the x0.85
+            // decay of MovementSpeed, renewed by every hit) all assume the same. Handing the variables over (the earlier rule) lost Burnout's bonus
+            // AD and reset its speed at each hit (batch 892), gave Radiance's minions the hero half and undid a popped veil (the
+            // BansheesVeil special case batch 188 needed, now gone).
             instance.TickRate = request.TickRate;
             instance.StatsSignature = sampled.Signature;
             ApplyForeign(instance, sampled.Foreign); // null removes the carriers of a hook that no longer asks for another unit (batch 318)
@@ -1266,15 +1287,14 @@ internal sealed class BbBuffRuntime
             // ConsecrationAuraNoParticle with BUFF_RENEW_EXISTING (pc 0038-0039) every second, and that buff's OnBuffActivate is
             // BBIncPermanentStat IncPermanentFlatSpellBlockMod +16 (pc 0006-0012), its OnBuffDeactivate -16 (pc 0035-0041): a rerun
             // would pile up 16 spell block a second, where Consecration gives a flat 16. A stacking add is a new instance in retail and
-            // keeps running the hook (Pyromania counts its stacks there). Reconstruction: that the renewal also hands over the add's
-            // variables (NextBuffVars) is not shown by a script.
+            // keeps running the hook (Pyromania counts its stacks there). The renewal keeps the instance's variables (batch 896, above).
             // Batch 490: a BUFF_STACKS_AND_RENEWS add at MaxStack raises nothing either, so it is the same renewal. Running OnBuffActivate
             // there gave each capped add an activation no stack deactivates: Rageblade's BBIncPermanentStat pair (+0.04 attack speed,
             // +6 AP per stack, MaxStack 8) kept a stack per hit past the cap for good (owner: 2078 AP that never came down).
             if (known && !raised && addType is BbBuffAddType.BUFF_RENEW_EXISTING or BbBuffAddType.BUFF_STACKS_AND_RENEWS)
             {
-                // The renewal replaced the payload with the sample taken before the variables were handed over; take it again (when the
-                // hook that renewed it ends, batch 467).
+                // The renewal's payload is the sample taken before the add; take it again from the live instance (when the hook that
+                // renewed it ends, batch 467).
                 ResampleAfterAdd(instance, frame, sampled);
                 instance.StatsNextAt = _host.Spells.CurrentTime + StatsUpdateInterval;
                 continue;
@@ -1290,14 +1310,6 @@ internal sealed class BbBuffRuntime
         }
         return state;
     }
-
-    // Reconstruction (batch 188): a BansheesVeil that has popped (WillRemove) keeps the pop through a renewal. The item's periodic
-    // re-add (Items/3102, every 2 s while no BansheesVeilTimer is on the unit) hands over WillRemove = false in NextBuffVars, and
-    // the veil's swap (BuffOnUpdateStats, the next 0.25 s sample) has not run yet when the re-add lands inside that window: the
-    // renewal would undo the pop and the veil would stay up with no timer (spell-shields-eat-the-first-ability...). The item's
-    // no-timer test cannot see a pending swap, so the renewal keeps the pop. Retail's renewal of a popped veil is not recovered.
-    private static bool PendingVeilPop(BbBuffInstance instance) =>
-        instance.Name == "BansheesVeil" && instance.InstanceVars["WillRemove"] is true;
 
     private static BbTable Copy(BbTable source)
     {
@@ -1433,7 +1445,7 @@ internal sealed class BbBuffRuntime
     }
 
     /// <summary>
-    /// Batch 467: the stats sample an add takes after its activation (or a renewal after it takes the new variables) runs when the hook
+    /// Batch 467: the stats sample an add takes after its activation (or a renewal's, from the instance's own variables) runs when the hook
     /// that made the add ends, not inside it. Retail polls <c>BuffOnUpdateStats</c> when the holder's stats are rebuilt, which no running
     /// script can interleave with, and the shipped scripts are written to that order: OdinCaptureChannel's ChannelingStart adds
     /// OdinGuardianSuppression (block 2) before the channeller's team stack (blocks 8 and 9), and the suppression's stats hook clears it

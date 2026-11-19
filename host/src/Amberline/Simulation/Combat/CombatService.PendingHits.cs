@@ -24,6 +24,7 @@ public sealed partial class CombatService
         {
             TargetChampionDeaths = target.ChampionDeaths,
             TargetYorickRevival = target.YorickRevival,
+            TargetLastOffset = target.Position - source.Position,
         });
     }
 
@@ -153,19 +154,13 @@ public sealed partial class CombatService
                 continue;
             }
             var source = _world.Get(hit.SourceNetId);
-            // Map1's ar_StopAttackRangeModifier gives a legal basic attack a
-            // 100-unit live-range leash during its positive windup, melee or
-            // ranged, for every mobile attacker (pets, clones, minions,
-            // neutrals). Ranged heroes keep the leash in
-            // HeroAttackOrderSystem.Chase (HasCommittedWindup); turrets never
-            // leash. Launched shots and non-basic scripted hits keep their
-            // own lifetimes.
+            // Batch 888: a basic attack winding up, melee or ranged, of every mobile attacker (heroes, pets, clones, minions,
+            // neutrals) is cut when its target jumps beyond reach + 100 (TargetJumpedOutOfWindup); a target that walks away is hit.
+            // Turrets never leash. Launched shots and non-basic scripted hits keep their own lifetimes.
             if (hit.WindupRemaining > 0.0 &&
                 hit.SourceKind == DamageSourceKind.Basic && hit.MissileNetId != 0 &&
                 source is not null && source.Alive &&
-                (hit.MissileSpeed <= 0.0 ||
-                 source.UnitType is not (UnitType.Hero or UnitType.Turret)) &&
-                !InCommittedAttackRange(source, target))
+                TargetJumpedOutOfWindup(hit, source, target))
             {
                 _pendingHits.RemoveAt(index);
                 NotifyHitCanceled(hit);
@@ -180,7 +175,9 @@ public sealed partial class CombatService
                 // client/source keeps a negative wind-up until the next tick
                 // begins projectile travel; clamping here loses that state
                 // and makes replayed pending-hit snapshots diverge.
-                var released = hit with { WindupRemaining = hit.WindupRemaining - dt };
+                var released = hit with { WindupRemaining = hit.WindupRemaining - dt,
+                    TargetLastOffset = source is null ? hit.TargetLastOffset : target.Position - source.Position,
+                    TargetLastDisplaced = IsDisplaced(target) };
                 _pendingHits[index] = released;
                 var castFrame = hit.WindupRemaining <= dt && hit.SourceKind == DamageSourceKind.Basic && hit.MissileNetId != 0;
                 if (castFrame && source is not null)

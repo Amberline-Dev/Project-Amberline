@@ -14,7 +14,7 @@ internal sealed partial class BbHookRouter
     /// (<c>BlindMonkQTwoDash</c> deals its landing damage in MoveSuccess and removes itself in MoveEnd, <c>VayneCondemnMissile</c> removes
     /// itself in CollisionTerrain and stuns in its deactivation). A hook that removed the buff ends the sequence for it.
     /// </summary>
-    public void RunMoveHooks(BbBuffInstance instance, bool success, bool terrainCollision)
+    public void RunMoveHooks(BbBuffInstance instance, bool success, bool terrainCollision, bool endHook = true)
     {
         var caster = _host.Spells.World.Get(instance.CasterNetId);
         void RunLive(string hook)
@@ -23,7 +23,7 @@ internal sealed partial class BbHookRouter
         }
         if (terrainCollision) RunLive("BuffOnCollisionTerrain");
         RunLive(success ? "BuffOnMoveSuccess" : "BuffOnMoveFailure");
-        RunLive("BuffOnMoveEnd");
+        if (endHook) RunLive("BuffOnMoveEnd");
     }
 
     /// <summary>

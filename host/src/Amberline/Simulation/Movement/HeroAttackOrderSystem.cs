@@ -245,8 +245,8 @@ public sealed class HeroAttackOrderSystem
         if (hero.ActiveScriptChannels > 0) return;
         var distance = Math.Sqrt(DistanceSquared(hero.Position, target.Position));
         var targetMoving = HasLiveRoute(target);
-        // Admission and pursuit share the gameplay-radius boundary; a committed swing keeps its
-        // separate cancellation leash.
+        // Admission and pursuit share the gameplay-radius boundary; a committed swing holds the
+        // hero until it lands or its target jumps out (batch 888, CombatService.TargetJumpedOutOfWindup).
         if (combat.CanAttack(hero, target) || combat.HasCommittedWindup(hero, target))
         {
             // An attack-move's opening engage corrects the walk the client predicted for the ground
