@@ -137,13 +137,14 @@ public static class StartHereChecks
                 "Nothing is copied or deleted on this PC.", $"-Output '{package}'",
                 $"Step 6 of 6: Putting it on your server Do these in order: 1. Copy this folder to your server: {package}",
                 "2. Copy your game and AIR client folders to the server too.", "3. On the server, edit", "4. In your hosting company's firewall", "5. On the server",
-                "6. Make each user a login", $"7. Give each user their login and this Play file: {Path.Combine(package, "Play.cmd")}",
+                "6. Make each user a login", $"7. Give each user their login and the invite link in this file: {Path.Combine(package, "INVITE-LINK.txt")}",
                 "four numbers with dots", $"Summary Server package folder: {package} Built. File Explorer shows the folder now. Next: the checklist above.",
-                "The same folder keeps your users' Play files working. Log:");
+                "The same folder keeps your users' invite link working. Log:");
             AssertPlain(rented.Output, root);
             TestAssert.False(rented.Output.Contains("Delete the originals", StringComparison.Ordinal), "a rented server deletes nothing:\n" + rented.Output);
             TestAssert.False(rented.Output.Contains("would install it with", StringComparison.Ordinal), "a no installs nothing:\n" + rented.Output);
-            TestAssert.False(rented.Output.Contains("-Version", StringComparison.Ordinal), "a server build takes no -Version:\n" + rented.Output);
+            // Batch 917 (restated): a server build names its release, which the users' invite link names (INVITE-LINK.txt).
+            TestAssert.True(rented.Output.Contains("-Version '", StringComparison.Ordinal), "a server build names its release for the invite link:\n" + rented.Output);
 
             // An address build-server.ps1 would refuse: the guide stops in plain words (what, what to do, the log), no stack trace.
             var refused = Run(windowsPowerShell, guide, state, standIns, root, "refused", new
@@ -649,7 +650,7 @@ public static class StartHereChecks
 
     /// <summary>
     /// Batch 653, the owner's word list (3 November 2026): every yes or no in START-HERE, the Start Amberline window, Uninstall
-    /// Amberline.cmd and the Play file asks "Type Y for yes or N for no.", every pause says "Press Enter to continue." and every
+    /// Amberline.cmd (and before batch 917 the Play file) asks "Type Y for yes or N for no.", every pause says "Press Enter to continue." and every
     /// window's end "Press Enter to close.". The sources are read as text, so no other phrasing of the three is left anywhere in them.
     /// Allowed besides: a typed answer's default ("or press Enter for C:\Amberline"), the folder prompt's window, the typed word that
     /// confirms an uninstall, and two sentences that only describe Enter (the intro, and the update's new window in the summary).
@@ -661,7 +662,7 @@ public static class StartHereChecks
         string[] sentences = ["Press Enter to continue.", "Press Enter to close.", "Type Y for yes or N for no.", "press Enter to uninstall Amberline now.",
             "Type Y to update, N to keep it, or R to build a rented server package."];
         var found = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var name in new[] { "START-HERE.cmd", Path.Combine("tools", "guide.ps1"), Path.Combine("tools", "play-bootstrap.cmd"),
+        foreach (var name in new[] { "START-HERE.cmd", Path.Combine("tools", "guide.ps1"),
                      Path.Combine("src", "Amberline.Platform", "HostMode.cs"), Path.Combine("src", "Amberline.Platform", "HostInstall.cs"),
                      Path.Combine("src", "Amberline.Platform", "HostUninstall.cs") })
         {

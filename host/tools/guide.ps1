@@ -725,7 +725,7 @@ try {
         # server's package is built instead (step 1 answered "rented").
         # Batch 645: an update, which also repairs. HostInstall starts an equal version without copying it, and a build made here
         # always has a new number, so "rebuild the same version" is this update. A second install elsewhere is not offered: the
-        # pointer, the desktop icon, the ports and the users' Play files belong to one install.
+        # pointer, the desktop icon, the ports and the users' invite links belong to one install.
         $folder = Split-Path -Parent $app
         Say
         Say "Your Amberline $(if ($have) { $have } else { 'without a version number' }) is in:"
@@ -938,8 +938,9 @@ try {
         $output = $choice.packageFolder
         Say "Building the server package for $($choice.host) ($($choice.system)) into:"
         SayPath $output
+        # Batch 917: the version names the release in the users' invite link (INVITE-LINK.txt).
         Invoke-Build ([ordered]@{ Layout = 'Server'; Runtime = $runtime; PublicHost = $choice.host; ServerName = $choice.serverName
-            GameRoot = $choice.gameRoot; AirRoot = $choice.airRoot; Output = $output }) $found['pwsh']
+            GameRoot = $choice.gameRoot; AirRoot = $choice.airRoot; Output = $output; Version = $version }) $found['pwsh']
 
         Step 6 'Putting it on your server'
         $windows = $runtime -eq 'win-x64'
@@ -959,11 +960,11 @@ try {
             SayPath ' ./Amberline.Platform'
         }
         Say '  6. Make each user a login on the management page (see README-DEPLOY.txt).'
-        Say '  7. Give each user their login and this Play file:'
-        SayPath (' ' + (Join-Path $output 'Play.cmd'))
+        Say '  7. Give each user their login and the invite link in this file:'
+        SayPath (' ' + (Join-Path $output 'INVITE-LINK.txt'))
         if ($DryRun) { Say "DRY RUN: would open $output in File Explorer." -Whole } else { Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$output`"" }
         Finish @('Built. File Explorer shows the folder now. Next: the checklist above.',
-            'To rebuild: double-click START-HERE.cmd. The same folder keeps your users'' Play files working.') 'Server package folder' $output
+            'To rebuild: double-click START-HERE.cmd. The same folder keeps your users'' invite link working.') 'Server package folder' $output
     }
 } catch {
     Stop-Guide $_.Exception.Message 'Double-click START-HERE.cmd to try again. If it happens again, open an issue on GitHub with the log.'

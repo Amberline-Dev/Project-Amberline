@@ -69,10 +69,10 @@ public static class HomeReleaseLineChecks
         Expect(Path.Combine("local", own.HomeName, "install.json"), FolderMove.PointerPath("local"), "FolderMove.PointerPath");
         if (own.HomeName == sibling.HomeName) problems.Add($"the {patch} home install name {own.HomeName} is the other line's");
         if (own.Marker == sibling.Marker) problems.Add($"the {patch} install marker {own.Marker} is the other line's");
-        // Batch 829: the friend's player install and the release take the same name (build-server.ps1 passes "<home> Player" to
-        // player-file.ps1 and names the zip "<home with hyphens>-<v>-win-x64.zip").
+        // Batch 829: the friend's player install and the release take the same name (the player folder is "<home> Player", the zip
+        // "<home with hyphens>-<v>-win-x64.zip"; batch 917: the players' app "<home with hyphens>-Player-<v>.exe").
         Expect(Path.Combine("local", own.HomeName + " Player"), FolderMove.PlayerFolder("local"), "FolderMove.PlayerFolder");
-        Expect(own.HomeName + " Player", PlatformBootstrap.PlayerFolderName, "PlatformBootstrap.PlayerFolderName (the Play file's folder)");
+        Expect(own.HomeName + " Player", PlatformBootstrap.PlayerFolderName, "PlatformBootstrap.PlayerFolderName (the player app's folder)");
         Expect(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + own.HomeName, PlayerUninstall.AppsKey, "PlayerUninstall.AppsKey");
         Expect(own.HomeName.Replace(' ', '-') + "-1.2.3-win-x64.zip", HostUpdates.ZipName(new(1, 2, 3)), "HostUpdates.ZipName");
         // The player folder from before batch 647 (Amberline\player) is the 1.0.0.126 line's alone; 132's lies inside its own player folder.

@@ -9,8 +9,8 @@ namespace Amberline.AirCompanion;
 /// NOT RETAIL (batch 856, design 2026-11-17 Part 1; retail had no player tool): a server that moved from patch 1.0.0.126 to 1.0.0.132. While
 /// its 1.0.0.126 side is closed, the host's 1.0.0.132 server answers on the old port with the old manifest plus <c>movedTo</c> (the 1.0.0.132
 /// port, pin, server name and player folder). The tool then never plays: it says so first, before every other check of the shortcut's
-/// start and of the <c>--install</c> window, and offers to set up 1.0.0.132 for the same server the way that line's Play file does
-/// (<c>host/tools/play-bootstrap.cmd</c>), or to start this PC's 1.0.0.132 install of it. The 1.0.0.132 tool carries this code too; no
+/// start and of the <c>--install</c> window, and offers to set up 1.0.0.132 for the same server the way that line's invite does
+/// (<see cref="PlayerInvite.SetUpAsync"/>), or to start this PC's 1.0.0.132 install of it. The 1.0.0.132 tool carries this code too; no
 /// server sends it <c>movedTo</c>.
 /// </summary>
 internal static class ServerMoved
@@ -56,7 +56,7 @@ internal static class ServerMoved
     /// DIAGNOSTICS: the windows and the process start as delegates (a test seam), so a check drives the dialog, Set up and its failures
     /// without a window, a real profile or a started program. <see cref="Ask"/> is true for Set up (or Start it); <see cref="Start"/> gets the
     /// program and its arguments; <see cref="Log"/> gets the log's lines (the shortcut's log, or the install log: the <c>--install</c>
-    /// window's console is the Play file's).
+    /// window has no console of its own).
     /// </summary>
     internal sealed record Ui(string LocalAppData, Action<string> Status, Func<Question, bool> Ask, Func<PlayerProblem, bool> TryAgain,
         Action<string, IReadOnlyList<string>> Start, Action<string> Log)
@@ -80,7 +80,7 @@ internal static class ServerMoved
     internal const string SettingUp = "Setting up patch 1.0.0.132. This takes a minute or two.";
 
     /// <summary>
-    /// The <c>--install</c> window's first step (the path an old Play file takes): the manifest of the server the Play file reached. Null
+    /// The <c>--install</c> window's first step (the path an old Play file or an invite takes): the manifest of the server it reached. Null
     /// when it did not move, or when the manifest cannot be read (the install goes on as before); otherwise the moved dialog's exit code. A
     /// <c>movedTo</c> that <see cref="Problem"/> refuses is the plain "could not start" problem, whose Try again reads the manifest again.
     /// </summary>
@@ -89,7 +89,7 @@ internal static class ServerMoved
         while (true)
         {
             PlayerInstall.Manifest manifest;
-            // The Play file's console shows this program's output, and it never shows the server's address: nothing is printed here.
+            // Nothing is printed here: the server's address is never shown.
             try { manifest = await PlayerInstall.ReadManifestAsync(connection.Host, connection.Port, connection.CertificateSha25664hex, CancellationToken.None); }
             catch (Exception exception) when (exception is not OutOfMemoryException) { return null; }
             if (manifest.MovedTo is not { } moved) return null;
@@ -135,7 +135,7 @@ internal static class ServerMoved
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                // The address is kept out, as the Play file keeps it out of its console.
+                // The address is kept out of the log, as every window keeps it out.
                 ui.Log(string.IsNullOrEmpty(host) ? exception.ToString() : exception.ToString().Replace(host, "the server", StringComparison.OrdinalIgnoreCase));
                 var problem = PlayerMode.StartProblem(exception, title, host, log);
                 // A refusal of the setup's own (a check that failed, a file) names the setup, not the start.
@@ -149,8 +149,8 @@ internal static class ServerMoved
 
     /// <summary>
     /// What is wrong with <paramref name="moved"/>, or null: a port, a 64-hex pin, a server name by the desktop file name rule, and a player
-    /// folder by the Play file's rule (<c>host/tools/player-file.ps1</c>: <c>^Amberline( [0-9]+)? Player\z</c>, any case, as PowerShell's
-    /// ValidatePattern matches), never this line's own player folder, the host's folder or <c>Amberline</c>.
+    /// folder by the player folders' rule (<c>^Amberline( [0-9]+)? Player\z</c>, any case, as the old Play file's script checked it),
+    /// never this line's own player folder, the host's folder or <c>Amberline</c>.
     /// </summary>
     internal static string? Problem(Target moved) =>
         moved.Port is < 1 or > 65535 ? "no valid port"
@@ -188,49 +188,24 @@ internal static class ServerMoved
     }
 
     /// <summary>
-    /// What the 1.0.0.132 Play file does (<c>host/tools/play-bootstrap.cmd</c>, Update-Companion and the <c>--install</c> call), with the host
-    /// this tool reached and <paramref name="moved"/>'s port, pin, name and player folder. The manifest and the player tool come from that
-    /// host over the pinned port (the Play file's <c>$Server</c>); the host the manifest advises, checked as the Play file checks it, goes
-    /// into the connection file only. The tool's archive must match the published SHA-256 before anything is written; it is unpacked in the
-    /// Play file's layout under <c>%LOCALAPPDATA%\&lt;playerFolder&gt;</c> (<c>companion</c>, <c>companion.sha256</c>, <c>server.json</c>). Returns
-    /// the program to start and its arguments.
+    /// What the 1.0.0.132 line's invite does (<see cref="PlayerInvite.SetUpAsync"/>, which does what that line's Play file did), with the host
+    /// this tool reached and <paramref name="moved"/>'s port, pin, name and player folder: the manifest and the player tool from that host over
+    /// the pinned port, unpacked under <c>%LOCALAPPDATA%\&lt;playerFolder&gt;</c> (<c>companion</c>, <c>companion.sha256</c>, <c>server.json</c>).
+    /// Returns the program to start and its arguments.
     /// </summary>
-    internal static async Task<(string File, string[] Arguments)> SetUpAsync(string localAppData, string host, Target moved, CancellationToken cancel)
+    internal static Task<(string File, string[] Arguments)> SetUpAsync(string localAppData, string host, Target moved, CancellationToken cancel)
     {
         if (Problem(moved) is { } invalid) throw Invalid(invalid);
         if (!Path.IsPathFullyQualified(localAppData))
             throw new IOException("Windows has no app data folder for your user. Sign in to Windows with your own account, then try again.");
-        var pin = moved.CertificateSha256!;
-        var manifest = await PlayerInstall.ReadManifestAsync(host, moved.Port, pin, cancel);
-        if (manifest.Host is not { } advised || !Regex.IsMatch(advised, @"^[A-Za-z0-9.-]{1,253}\z") ||
-            Uri.CheckHostName(advised) is not (UriHostNameType.Dns or UriHostNameType.IPv4))
-            throw new InvalidDataException("The server sent no valid address. Ask the host for a new Play file.");
-        var sha = PlayerInstall.ToolSha256(manifest);
-        var root = Path.Combine(localAppData, moved.PlayerFolder!);
-        var companion = Path.Combine(root, PlayerInstall.ToolFolder);
-        var executable = Path.Combine(companion, "Amberline.AirCompanion.exe");
-        if (!File.Exists(executable) || PlayerInstall.Mark(companion) != sha)
-        {
-            var next = companion + ".next";
-            await PlayerInstall.DownloadToolAsync(host, moved.Port, pin, sha, next, cancel);
-            if (!FolderMove.TryDeleteTree(companion))
-            {
-                FolderMove.TryDeleteTree(next);
-                throw new IOException("The 1.0.0.132 player tool on this PC is in use. Close it, then choose Try again.");
-            }
-            Directory.Move(next, companion);
-            File.WriteAllText(companion + ".sha256", sha);
-        }
-        var connection = Path.Combine(root, "server.json");
-        PlayerMode.WriteJson(connection, new { host = advised, port = moved.Port, certificateSha256 = pin });
-        return (executable, ["--install", "--connection", connection, "--server-name", moved.Name!]);
+        return PlayerInvite.SetUpAsync(Path.Combine(localAppData, moved.PlayerFolder!), host, moved.Port, moved.CertificateSha256!, moved.Name!, cancel);
     }
 
     /// <summary>
-    /// Starts <paramref name="file"/> from its own folder with no console window: the 1.0.0.132 tool's console program shows only its setup
-    /// window, as the Play file's console stays behind it.
+    /// Starts <paramref name="file"/> from its own folder with no console window: the player tool's console program shows only its setup
+    /// window (the 1.0.0.132 tool's here, the server's tool for an invite, <see cref="PlayerInvite"/>).
     /// </summary>
-    private static void Launch(string file, IReadOnlyList<string> arguments)
+    internal static void Launch(string file, IReadOnlyList<string> arguments)
     {
         var start = new ProcessStartInfo(file) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(file)! };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);

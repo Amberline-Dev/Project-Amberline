@@ -11,8 +11,8 @@ namespace Amberline.Platform;
 /// NOT RETAIL: Users and Add a user (Amberline Host design, section 2.4; batch 748 made Invite a friend and Friends one page; retail players
 /// signed up on Riot's website and downloaded Riot's installer). Under <c>/host</c>, behind <see cref="HostGate"/>. Add a user makes the
 /// login with <see cref="PlatformAccounts.RegisterPublic"/> and a generated password shown once (never logged, never stored in plain text),
-/// and hands out the one Play file, rendered from the template beside the Platform (<c>tools/play-bootstrap.cmd</c>) with the
-/// server's name and address. Users lists every login but the host's own (<c>hostAccount</c>), with its marks (Signed up, Disabled), its
+/// and gives the server's invite link (batch 917, <see cref="InviteLink"/>; it replaced the Play file, which Microsoft Defender quarantined),
+/// with Copy. Users lists every login but the host's own (<c>hostAccount</c>), with its marks (Signed up, Disabled), its
 /// status (in a game, online, last seen) and its actions, each ending the user's sign-in token and sessions: New password; Disable, a
 /// password nobody knows that deletes nothing (<see cref="PlatformAccounts.RemoveAccess"/>), and Enable, a new password that lets a
 /// disabled user in again; and Delete, behind its confirm page, which removes the login for good while history keeps its names
@@ -20,13 +20,11 @@ namespace Amberline.Platform;
 /// </summary>
 public static class HostInvite
 {
-    public const string UsersPath = "/host/users", AddPath = "/host/users/add", PlayFilePath = "/host/play-file";
+    public const string UsersPath = "/host/users", AddPath = "/host/users/add";
     /// <summary>Batch 748: the old pages' addresses, Invite a friend and Friends; a GET goes on to Add a user and Users (303).</summary>
     public const string InvitePath = "/host/invite", FriendsPath = "/host/friends";
-    /// <summary>The Play-file template's name beside the Platform (<c>tools/build-server.ps1 -Layout Home</c> puts it there).</summary>
-    public const string TemplateFile = "play-bootstrap.cmd";
-    /// <summary>The downloaded file's name, as batch 619 names it.</summary>
-    public const string PlayFileName = "Play.cmd";
+    /// <summary>Batch 917: where Users shows the invite link (the address change and the new certificate send the host there).</summary>
+    public const string InviteLinkPath = UsersPath + "#invite";
     /// <summary>What the dashboard and Add a user say while the host chose Only people on my home network (<see cref="HostAddress.Lan"/>).</summary>
     public const string HomeNetworkNote = "Players must be on the same home network as this PC.";
     /// <summary><c>tools/player-file.ps1</c>'s default for a server without a name.</summary>
@@ -56,7 +54,7 @@ public static class HostInvite
 
     /// <summary>
     /// The host's pages for users. <paramref name="publicHost"/> and <paramref name="serverName"/> are read on each request
-    /// (<see cref="HostSteps"/> changes them without a restart); the Play file pins <paramref name="certificateSha256"/> on
+    /// (<see cref="HostSteps"/> changes them without a restart); the invite link pins <paramref name="certificateSha256"/> on
     /// <paramref name="remotePort"/>, as <c>/bootstrap/client.json</c> does. Batch 656: while <paramref name="signUp"/>'s switch is on,
     /// Add a user also shows its link (and Users its Copy sign-up link). Batch 748: <paramref name="games"/> gives the status In game and
     /// keeps Delete from a user in a game (without it the store's own rule decides), and <paramref name="chat"/> forgets a deleted user.
@@ -74,6 +72,7 @@ public static class HostInvite
         bool HomeOnly() => HostMode.ReadOrDefault(loop.Paths.Settings).AddressSource == HostAddress.Lan;
         string Link() => signUp?.Link(publicHost()) is { Length: > 0 } link
             ? $"<h2>Or send this link</h2><p>Anyone with it can make their own login.</p>{link}" : "";
+        (string? Link, string? Missing) Invite() => InviteFor(loop.Paths.App, publicHost(), remotePort, certificateSha256, Name());
         // Batch 748: the old pages' addresses (a bookmark, an open tab) go on to the new pages; their forms' addresses are gone.
         app.MapGet(InvitePath, (HttpContext context) => SeeOther(context, AddPath));
         app.MapGet(FriendsPath, (HttpContext context) => SeeOther(context, UsersPath));
@@ -99,7 +98,7 @@ public static class HostInvite
                     var account = accounts.RegisterPublic(username, password, stored, maxed: mode == "maxed");
                     // NOT RETAIL: the host page's activity feed names the user the host added (batch 748), never the password.
                     loop.Activity.Add($"{account.Username} added");
-                    return HostMode.Page(Ready(account.Username, password, Name(), HomeOnly()));
+                    return HostMode.Page(Ready(account.Username, password, Name(), HomeOnly(), Invite()));
                 }
                 catch (ArgumentException ex) { problems = [ex.Message]; }
             }
@@ -115,16 +114,6 @@ public static class HostInvite
             return [.. new[] { name, typed.Length == 0 ? null : secret, stored == username ? null : nick, accounts.TakenRefusal(username, stored),
                 mode is "maxed" or "fresh" ? null : "Choose where their login starts." }.OfType<string>()];
         }
-        app.MapGet(PlayFilePath, () =>
-        {
-            if (!File.Exists(Template(loop)))
-                return HostMode.Page("<h1>The Play file is missing</h1><p>play-bootstrap.cmd is not in Amberline's folder " +
-                    $"({WebUtility.HtmlEncode(loop.Paths.App)}). Download Amberline again and start it.</p>",
-                    StatusCodes.Status404NotFound);
-            if (publicHost() is not { } host) return AddressFirst();
-            return PlayFile(loop, host, remotePort, certificateSha256, Name()) ?? Results.NotFound();
-        });
-
         app.MapGet(UsersPath, (HttpContext context, IAntiforgery antiforgery) => HostMode.Page(UsersPage(Program.RegistrationToken(context, antiforgery))));
         // New password: shown once. A user disabled meanwhile (a page open from before) is let in only by Enable.
         app.MapPost(UsersPath + "/password", (HttpContext context, IAntiforgery antiforgery) => ActAsync(context, antiforgery, (user, token) =>
@@ -250,18 +239,19 @@ public static class HostInvite
                 (address is null ? ""
                     : "<button type=button class=secondary data-copy=account-link data-needs-script hidden>Copy the My account link</button>" +
                       $"<span id=account-link class=vh>{WebUtility.HtmlEncode($"https://{address}:{remotePort}{HostAccountPage.PagePath}")}</span>");
+            // Batch 917: the invite link, in its box with Copy invite link beside the other Copy buttons, or why there is none yet.
+            var (invite, missing) = Invite();
+            if (invite is not null) copy = "<button type=button data-copy=invite-link data-needs-script hidden>Copy invite link</button>" + copy;
             if (copy.Length != 0) copy += "<span id=copy-status role=status class=tip></span>";
-            // Get the Play file, once the address is known and Amberline's template is there: else the link would download an error page.
-            var play = address is not null && File.Exists(Template(loop))
-                ? $"<a class=\"button secondary\" href={PlayFilePath} download>Get the Play file</a>" : "";
+            var inviteBox = $"<section id=invite aria-labelledby=invite-title><h2 id=invite-title>Invite link</h2>{InviteBox(invite, missing)}</section>";
             // The search box filters the rows in the page (page.js); without the script it stays hidden and the table is simply complete.
             var list = users.Length == 0 ? "<p class=empty>No users yet. Add one or turn on sign-ups.</p>"
                 : "<p class=table-search data-needs-script hidden><label for=user-search>Search users</label><input type=search id=user-search autocomplete=off></p>" +
                   "<table><thead><tr><th scope=col>User</th><th scope=col>Status</th><th scope=col>Actions</th></tr></thead>" +
                   $"<tbody id=users>{string.Concat(users.Select(Row))}</tbody></table><p id=users-none class=empty hidden>No users match your search.</p>" +
                   "<p class=tip>New password and Disable log the user out at once and keep their games. Delete cannot be undone.</p>";
-            return $"<h1>Users ({users.Length})</h1>{shown}<div class=\"buttons user-actions\"><a class=button href={AddPath}>Add a user</a>{copy}{play}</div>" +
-                $"{loginCopy?.Offer(token, setup: false)}{oldShortcuts?.Offer(token)}{list}";
+            return $"<h1>Users ({users.Length})</h1>{shown}<div class=\"buttons user-actions\"><a class=button href={AddPath}>Add a user</a>{copy}</div>" +
+                $"{inviteBox}{loginCopy?.Offer(token, setup: false)}{oldShortcuts?.Offer(token)}{list}";
         }
     }
 
@@ -298,22 +288,30 @@ public static class HostInvite
             $"<button type=submit>Delete user</button> <a class=\"button secondary\" href={UsersPath}>Cancel</a></div></form>";
     }
 
-    private static string Template(HostLoop loop) => Path.Combine(loop.Paths.App, TemplateFile);
-
     /// <summary>
-    /// The server's Play file (Invite's download, and batch 656's sign-up page), or null when its template is missing. CRLF and ASCII, as
-    /// tools/player-file.ps1 writes Play.cmd: cmd.exe reads the file.
+    /// NOT RETAIL (batch 917): the server's invite link (Users, Add a user, batch 656's sign-up page and the operator's /manage), or why there
+    /// is none: no address yet. The tag is the host's own release (<see cref="PlatformLine.ReleaseTagPrefix"/> and the version in the
+    /// BUILD.json beside <paramref name="platformFolder"/>), so the Join page offers that release's player app; a development build or an
+    /// older one names the line's first player-app release (<see cref="InviteLink.Tag"/>).
     /// </summary>
-    internal static IResult? PlayFile(HostLoop loop, string host, int remotePort, string certificateSha256, string name)
+    public static (string? Link, string? Missing) InviteFor(string platformFolder, string? host, int remotePort, string certificateSha256, string name)
     {
-        var template = Template(loop);
-        if (!File.Exists(template)) return null;
-        var text = PlatformBootstrap.RenderLauncher(File.ReadAllText(template).ReplaceLineEndings("\r\n"), host, remotePort, certificateSha256, name);
-        return Results.File(Encoding.ASCII.GetBytes(text), "application/octet-stream", PlayFileName);
+        if (string.IsNullOrWhiteSpace(host)) return (null, "The invite link appears here once Amberline knows your address.");
+        var version = HostVersion.Read(Path.GetFullPath(Path.Combine(platformFolder, ".."))).Version;
+        var invite = new InviteLink.Invite(InviteLink.Tag(version), host, remotePort, certificateSha256, name);
+        return InviteLink.Valid(invite) ? (InviteLink.Link(invite), null)
+            : (null, "Amberline cannot make an invite link from this server's address, port and name. Check them in Settings.");
     }
 
+    /// <summary>
+    /// The invite link in its box (<c>invite-link</c>, which a Copy invite link button copies), or the sentence why there is none. The box is
+    /// selectable text, so the link can be copied by hand without the script too.
+    /// </summary>
+    public static string InviteBox(string? link, string? missing) => link is null ? $"<p class=tip>{WebUtility.HtmlEncode(missing)}</p>"
+        : $"<p>Send it to your users in Discord, WhatsApp or an email. It opens their Join page.</p><pre id=invite-link class=message>{WebUtility.HtmlEncode(link)}</pre>";
+
     private static IResult AddressFirst() => HostMode.Page(
-        $"<h1>Your address first</h1><p>The Play file needs your address, which Amberline does not know yet.</p>" +
+        $"<h1>Your address first</h1><p>The invite link needs your address, which Amberline does not know yet.</p>" +
         $"<p><a class=button{HostSteps.AddressWait} href={HostSteps.Start}>Give your address</a></p>", StatusCodes.Status409Conflict);
 
     private static async Task<IFormCollection?> FormAsync(HttpContext context, IAntiforgery antiforgery)
@@ -335,7 +333,7 @@ public static class HostInvite
         string? At(string id) => shown.FirstOrDefault(problem => problem.Field == id).Text;
         return $$"""
             <h1>Add a user</h1>
-            <p>Make their login, then send them the Play file and a message.</p>
+            <p>Make their login, then send them the invite link and a message.</p>
             {{HomeNote(homeOnly)}}
             {{HostPages.Errors(shown)}}
             <form method=post action={{AddPath}} novalidate>{{token}}
@@ -359,22 +357,24 @@ public static class HostInvite
         $"<pre id=message class=message>{WebUtility.HtmlEncode(text)}</pre>" +
         "<p class=buttons><button type=button data-copy=message>Copy</button> <span id=copy-status role=status></span></p>";
 
-    private static string Ready(string username, string password, string name, bool homeOnly)
+    /// <param name="invite">Batch 917: the invite link (step 1, with Copy invite link), or why there is none yet.</param>
+    private static string Ready(string username, string password, string name, bool homeOnly, (string? Link, string? Missing) invite)
     {
         var user = WebUtility.HtmlEncode(username);
-        var server = WebUtility.HtmlEncode(name);
         var message = Message($"""
             Join my game server "{name}"!
             You need your own {RetailClients.Year} game and AIR client.{(homeOnly ? "\nYour PC must be on the same home network as mine." : "")}
-            Double-click the file I sent; it puts "{name}" on your desktop. Then log in with:
+            Open the invite link I sent and follow its page; it puts "{name}" on your desktop. Then log in with:
               username: {username}
               password: {password}
             """);
+        var copy = invite.Link is null ? "" : "<p class=buttons><button type=button data-copy=invite-link>Copy invite link</button></p>";
         return $"""
             <h1>{user} is ready</h1>
             {HomeNote(homeOnly)}
             <ol class=send>
-            <li><p>Send them the Play file: <a href={PlayFilePath} download>Download the Play file for {server}</a></p></li>
+            <li><p>Send them the invite link:</p>
+            {InviteBox(invite.Link, invite.Missing)}{copy}</li>
             <li><p>Send them this message:</p>
             {message}</li>
             </ol>

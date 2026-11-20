@@ -24,15 +24,19 @@ public static class Program
 
     public static async Task<int> Run(string[] args)
     {
+        // NOT RETAIL (batch 917): the invite (PlayerInvite). A web page writes the link a Join click passes, so only args[1] is read, and nothing
+        // else on such a command line. Started without arguments as the one downloaded file, the app sets itself up and asks for the invite.
+        if (args.Length > 0 && args[0] == "--invite") return PlayerInvite.Run(args.Length > 1 ? args[1] : null);
+        if (args.Length == 0 && PlayerInvite.Bundled) return PlayerInvite.Welcome();
         if (args.Length == 0 || args.Contains("--help", StringComparer.OrdinalIgnoreCase))
         {
             PrintUsage();
             return 0;
         }
-        // NOT RETAIL: the player's bring-your-own-clients mode (PlayerMode.cs), started by Play.cmd.
+        // NOT RETAIL: the player's bring-your-own-clients mode (PlayerMode.cs), started by the Play.cmd beside the tool (player/Play.cmd).
         if (args.Contains("--play", StringComparer.OrdinalIgnoreCase))
             return await PlayerMode.RunAsync(args);
-        // NOT RETAIL: the player's installer (started by Play.cmd) and the windowless desktop shortcut it creates.
+        // NOT RETAIL: the player's installer (started by the invite, PlayerInvite) and the windowless desktop shortcut it creates.
         if (args.Contains("--install", StringComparer.OrdinalIgnoreCase))
             return PlayerInstallWindow.Run(args);
         if (args.Contains("--shortcut", StringComparer.OrdinalIgnoreCase))

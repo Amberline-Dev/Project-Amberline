@@ -46,7 +46,7 @@ public static class HostSettingsChecks
             hostId = accounts.RegisterPublic("cheat_host", "Synthetic-host-Pw-41", "Cheat Host").Id;
             friendId = accounts.RegisterPublic("cheat_friend", "Synthetic-friend-Pw-41", "<b>Friend</b>").Id;
         }
-        // A friend's session: the tunnel token its Play file's companion holds.
+        // A friend's session: the tunnel token its player tool holds.
         var tunnel = new AirRemoteAccess(Path.Combine(home.Loop.Paths.Data, "remote")).Issue(friendId).Token;
         // Batch 666's switch on, no list yet.
         HostInviteChecks.WriteSettings(home, new { serverName = "Cheat League", publicHost = "127.0.0.1", addressSource = HostAddress.Typed, hostAccount = hostId, allowCheats = true });
@@ -286,13 +286,13 @@ public static class HostSettingsChecks
             await WaitForStartsAsync(home.Loop, 2, run);
             await WaitForHealthAsync(browser, "ready", run);
 
-            // Settings, in the nav: every first-run answer, each with its own change link, the Play file and the uninstall.
+            // Settings, in the nav: every first-run answer, each with its own change link, the invite link (batch 917) and the uninstall.
             var page = await GetAsync(browser, HostSettingsPage.PagePath);
             Has(page, "Settings", "aria-current=page>Settings</a>", "<b>Friday League</b>", $"<a href={HostSettingsPage.NamePath}>Change the server name</a>",
                 // Batch 652: the two links whose pages load slowly say so at once (data-wait).
                 $"<a href={HostSettingsPage.AddressPath} data-wait=", ">Change your address</a>", $"Game folder: {home.Game}", $"AIR client folder: {home.Air}",
                 $"<a href={HostSettingsPage.FoldersPath} data-wait=", ">Change the folders</a>", "<a href=/host/updates>Change the update check</a>",
-                $"<a href={HostInvite.PlayFilePath} download>Download the Play file</a>", $"<a href=\"{HostAttention.CertificatePath}?from=settings\">Make new Play files</a>",
+                $"<a href={HostInvite.InviteLinkPath}>Copy the invite link</a>", $"<a href=\"{HostAttention.CertificatePath}?from=settings\">Make a new invite link</a>",
                 $"<a href={HostSettingsPage.UninstallPath}>Uninstall Amberline</a>");
             // Batch 646: from Settings, Cancel (batch 652's word) goes back to Settings (from the dashboard's card, to the dashboard).
             Has(await GetAsync(browser, HostAttention.CertificatePath + "?from=settings"), $"<a class=\"button secondary\" href={HostSettingsPage.PagePath}>Cancel</a>",
@@ -308,8 +308,8 @@ public static class HostSettingsChecks
             Has(refused, HostAddress.NameProblem("Friday/League")!, $"action={HostSettingsPage.NamePath}");
             await SavedAsync(browser, HostSettingsPage.NamePath, "name", ("name", "Saturday League"));
             var renamed = await GetAsync(browser, HostSettingsPage.PagePath + "?saved=name");
-            Has(renamed, "<p class=server><span class=light aria-hidden=true></span>Saturday League</p>", "<p class=notice role=status>Saved. Send your users the new Play file",
-                $"<a href={HostInvite.PlayFilePath} download>Download the Play file</a></p>");
+            Has(renamed, "<p class=server><span class=light aria-hidden=true></span>Saturday League</p>", "<p class=notice role=status>Saved. Send your users the new invite link",
+                $"<a href={HostInvite.InviteLinkPath}>Copy the invite link</a></p>");
             TestAssert.Equal("Saturday League", Setting(home, "serverName"), "platform.json holds the new name");
 
             // The address: the first run's choices and checks, the home network only too, without the update question.
@@ -325,7 +325,7 @@ public static class HostSettingsChecks
             Has(wrong, WebUtility.HtmlEncode(HostAddress.Check("192.168.1.20").Problem!));
             await SavedAsync(browser, HostSettingsPage.AddressPath, "address", ("choice", HostAddress.Lan), ("lan", "192.168.1.20"));
             var moved = await GetAsync(browser, HostSettingsPage.PagePath + "?saved=address");
-            Has(moved, "<p class=notice role=status>Saved. Send your users the new Play file: their old one looks at the old address.",
+            Has(moved, "<p class=notice role=status>Saved. Send your users the new invite link: their old one looks at the old address.",
                 "<b>192.168.1.20</b> (home network only)");
             TestAssert.Equal("192.168.1.20", Setting(home, "publicHost"), "platform.json holds the new address");
             TestAssert.Equal(HostAddress.Lan, Setting(home, "addressSource"), "and where it came from");

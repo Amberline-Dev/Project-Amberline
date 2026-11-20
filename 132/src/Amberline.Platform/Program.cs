@@ -306,7 +306,7 @@ public static class Program
         if (host is not null) HostPages.Use(app, host, () => steps!.ServerName, nav: true);
         if (host is not null) HostPlay.Map(app, host, settings);
         if (host is not null) HostUpdates.Map(app, host, () => HostDashboard.RunningGames(manager).Count);
-        // NOT RETAIL: Users and Add a user: the logins, their status and actions, and the Play file, under the gated /host pages.
+        // NOT RETAIL: Users and Add a user: the logins, their status and actions, and the invite link, under the gated /host pages.
         if (host is not null) HostInvite.Map(app, host, () => steps!.PublicHost, () => steps!.ServerName, accounts, sessions, remoteAccess,
             settings.RemotePort, pin, signUp, games, chat, copy, oldShortcuts);
         signUp?.Map(app);
@@ -328,10 +328,13 @@ public static class Program
                 services.Broadcast = text is null ? null : notice;
                 hostNotice = text is null ? null : new PlatformHomeNotice("Notice from the host", text, DateTimeOffset.UtcNow);
                 return rtmp.Broadcast(notice);
-            }, sessions, host is null ? null : HostInvite.UsersPath);
+            }, sessions, host is null ? null : HostInvite.UsersPath,
+            // NOT RETAIL (batch 917 follow-up): the operator page's invite link, made as the host pages make it.
+            () => HostInvite.InviteFor(AppContext.BaseDirectory, steps is null ? settings.PublicHost : steps.PublicHost, settings.RemotePort,
+                tls.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256), steps?.ServerName ?? settings.ServerName ?? HostInvite.DefaultName));
         PlatformStore.Map(app, accounts, sessions, airRoot, (account, body) => rtmp.Push(account, body, "cn"));
         PlatformStore.Map152(app, accounts, sessions, (account, body) => rtmp.Push(account, body, "cn"));
-        PlatformBootstrap.Map(app, host?.Paths.Bootstrap ?? Path.Combine(home, "bootstrap"), Path.Combine(AppContext.BaseDirectory, "air-client-bootstrap.cmd"),
+        PlatformBootstrap.Map(app, host?.Paths.Bootstrap ?? Path.Combine(home, "bootstrap"),
             steps is null ? () => settings.PublicHost : () => steps.PublicHost, settings.RemotePort, tls, () => steps?.ServerName);
         MapRegistration(app, accounts, signUp);
         // NOT RETAIL (batch 761): the 2011 launcher's news and server status (LauncherNews); retail served its news from the publisher's site.

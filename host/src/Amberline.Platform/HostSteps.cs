@@ -440,7 +440,7 @@ public sealed class HostSteps
 
     private const string NewName = """
         <h1>Change the server name</h1>
-        <p>Users see the new name once you send them the new Play file.</p>
+        <p>Users see the new name once you send them the new invite link.</p>
         """;
 
     private static string NameForm(string token, string? problem, string name, StepPlace place)

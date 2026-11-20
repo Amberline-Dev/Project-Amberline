@@ -119,7 +119,7 @@ public static class HostAccountPageChecks
             await PostAsync(browser, "/host/settings/register", Token(await browser.GetStringAsync(HostSettingsPage.PagePath)), HttpStatusCode.Redirect, ("on", "on"));
             form = await FormAsync(person, "the friends' port, sign-ups on");
             var signUp = await person.GetStringAsync("/register");
-            TestAssert.True(signUp.Contains("<p class=already>Already have a login?</p><p><a class=button href=/register/Play.cmd download>Download the Play file</a></p>", StringComparison.Ordinal) &&
+            TestAssert.True(signUp.Contains("<p class=already>Already have a login?</p><p>", StringComparison.Ordinal) && !signUp.Contains("Play.cmd", StringComparison.Ordinal) &&
                 signUp.Contains($"<p><a href={Account}>Change your password or delete your account</a></p></main>", StringComparison.Ordinal), "the sign-up page links My account: " + signUp);
             var users = await browser.GetStringAsync(HostInvite.UsersPath);
             TestAssert.True(users.Contains("<button type=button class=secondary data-copy=account-link data-needs-script hidden>Copy the My account link</button>" +

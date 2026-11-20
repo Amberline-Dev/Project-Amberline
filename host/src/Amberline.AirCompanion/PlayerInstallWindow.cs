@@ -5,13 +5,13 @@ using System.Windows.Forms;
 namespace Amberline.AirCompanion;
 
 /// <summary>
-/// NOT RETAIL: the player's windows: the installer (<c>--install</c>, started by Play.cmd), the removal window (<c>--uninstall</c>), the
+/// NOT RETAIL: the player's windows: the installer (<c>--install</c>, started by the invite, <see cref="PlayerInvite"/>), the removal window (<c>--uninstall</c>), the
 /// shortcut's start window and the error dialogs. Windows' own controls, folder picker and task dialogs, in plain words; every decision
 /// is PlayerInstall's or PlayerUninstall's, which the checks drive without a window. Batch 639: a tab order, Enter and Escape, an
 /// accessible name and description on every control, Segoe UI at 10 pt (or the system's larger text), per-monitor DPI awareness, and
 /// Windows' own colours only, so a high-contrast theme applies.
 /// </summary>
-internal static class PlayerInstallWindow
+internal static partial class PlayerInstallWindow
 {
     /// <summary>Sharp at 150% and 200%, and again after the window moves to a monitor with another scale.</summary>
     internal const HighDpiMode DpiMode = HighDpiMode.PerMonitorV2;
@@ -26,15 +26,14 @@ internal static class PlayerInstallWindow
         var connection = Program.ReadRemoteInvitation(Path.GetFullPath(file)) with { Token64hex = "", Bearer = null, RegistrationCode = null };
         var name = PlayerInstall.ServerName(Program.Option(args, "--server-name") ?? PlayerInstall.DefaultServerName);
         var tool = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
-        // NOT RETAIL (batch 856, design Part 1 step 2): a server that moved to patch 1.0.0.132 says so before anything is installed. Play.cmd
-        // reports any exit but 0 as a failure, so a started 1.0.0.132 setup ends with 0. This console is the Play file's: the steps go to the
-        // install log, which the dialogs name.
+        // NOT RETAIL (batch 856, design Part 1 step 2): a server that moved to patch 1.0.0.132 says so before anything is installed. A started
+        // 1.0.0.132 setup ends with 0. The steps go to the install log, which the dialogs name.
         var profile = PlayerProfile.Current();
         using (var status = new StatusWindow(name))
             if (ServerMoved.BeforeInstallAsync(connection, name, profile.InstallLog, ServerMoved.Ui.Windows(status, line => PlayerInstall.Log(profile, line)))
                 .GetAwaiter().GetResult() is { } moved)
             {
-                if (moved != 0) Console.WriteLine($"{name} now runs patch 1.0.0.132. To set it up later, double-click the Play file again.");
+                if (moved != 0) Console.WriteLine($"{name} now runs patch 1.0.0.132. To set it up later, open the invite link again.");
                 return moved;
             }
         var finished = false;
@@ -45,7 +44,7 @@ internal static class PlayerInstallWindow
             finished = window.Finished;
         });
         if (finished) return 0;
-        Console.WriteLine("Setup was canceled. To set up later, double-click the Play file again.");
+        Console.WriteLine("Setup was canceled. To set up later, open the invite link again.");
         return 1;
     }
 
@@ -520,7 +519,7 @@ internal static class PlayerInstallWindow
             {
                 status.Font = bold;
                 status.Text = status.AccessibleDescription = "The game and the AIR client are not in place any more, so the 2011 launcher is not added. " +
-                    "Double-click the Play file again to repair the setup.";
+                    "Open the invite link again to repair the setup.";
                 return;
             }
             // NOT RETAIL (classic start, batch 761): a launcher folder the player picked is the install's own; the list's launcher files are not fetched then.

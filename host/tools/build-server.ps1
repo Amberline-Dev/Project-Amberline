@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
 Builds the deployable server: server/ and platform/ for one runtime, the natives beside the server, the configuration with the
-server's public address, the Platform's TLS certificate, the players' companion archive, Play.cmd (the one file a player needs),
+server's public address, the Platform's TLS certificate, the players' companion archive, the invite link (INVITE-LINK.txt, batch 917),
 README-DEPLOY.txt and BUILD.json. Checks that no file of the game or AIR folders went into the output.
-With -Layout Home it builds the Amberline release zip for a host's own PC instead (batch 625, see the .DESCRIPTION).
+With -Layout Home it builds the Amberline release zip and the players' app for a host's own PC instead (batch 625, see the .DESCRIPTION).
 
 .DESCRIPTION
 Batch 611. The operator supplies the stock game folder of the patch line (-GameRoot: the game executable, DATA, LEVELS) and the
@@ -16,18 +16,21 @@ published here. The natives are built for the runtime with Zig (batch 634: nativ
 linux-x64 alike). The server's --validate-only preflight runs only for win-x64 on Windows. Nothing is started.
 Batch 615: the operator also names the address players reach (-PublicHost). The build makes the Platform's TLS certificate
 (platform/platform-data/remote/host.pfx, where the Platform loads it), publishes the companion for Windows x64 into
-platform/platform-data/bootstrap/companion.zip (served at /bootstrap/companion.zip) and writes Play.cmd with the host, the port
-and the certificate's SHA-256 baked in (tools/player-file.ps1). A rebuild into an existing -Output keeps its host.pfx, so every
-Play.cmd handed out keeps working; the old folder is moved to <Output>.previous-<stamp>, never deleted.
+platform/platform-data/bootstrap/companion.zip (served at /bootstrap/companion.zip). Batch 917: it writes the invite link (INVITE-LINK.txt
+and the summary: the release tag, the host, the port, the certificate's SHA-256 and the server name, in the invite format the player app
+and the Join page read); Play.cmd is gone. A rebuild into an existing -Output keeps its host.pfx, so every invite link
+handed out keeps working; the old folder is moved to <Output>.previous-<stamp>, never deleted.
 Batch 625, -Layout Home: the release zip a host unpacks and starts. Start Amberline.cmd runs app\platform\<Platform> --home with
 its own arguments (START-HERE passes the install folder, the game, the AIR client and the delete answer, batch 637), which installs
 or updates the copy in the install folder (C:\Amberline unless the host chooses another; installs before batch 637 are in
 %LOCALAPPDATA%\Amberline\app) and starts that one (batch 627); the
 server, the friends' companion.zip and the host's own companion (app\companion, batch 629) sit beside the Platform's folder, where
 the Platform derives them (HostPaths, batch 620; HostPlay). No
-address, certificate, Play.cmd or platform.json is made: the host's setup page writes those on the host's PC. A git checkout must
+address, certificate, invite link or platform.json is made: the host's setup page makes those on the host's PC. A git checkout must
 have no local changes (batch 634: a folder without git builds, its source commit unknown) and the release folder must be new. The zip, its .sha256 and a release-notes stub are written to the release
-folder. The script never publishes: it prints the gh command for the owner to run.
+folder. Batch 917: so is the players' app, one self-contained compressed win-x64 file (<name>-Player-<version>.exe: Amberline-Player-1.4.0.exe
+on 126, Amberline-132-Player-1.4.0.exe on 132), with its .sha256; the release attaches both. The script never publishes: it prints the
+gh command for the owner to run.
 Batch 682 (one guide): the zip also carries the repository's START-HERE.cmd and tools/guide.ps1, unchanged, and BUILD.json names
 the game executable's SHA-256 (gameExecutableSha256) for the guide's search. Start Amberline.cmd started without options opens
 that guide; with options (the guide's install request, Update now's --update-confirmed) it runs the Platform as before.
@@ -38,7 +41,7 @@ START-HERE.cmd are in <emu>/<Patch>, the git checkout is <emu>.
 
 .PARAMETER PublicHost
 Required for -Layout Server, refused for -Layout Home. The DNS name or IPv4 address players reach this server on: no scheme, port,
-path or spaces. Baked into Play.cmd and platform.json (publicHost; an IPv4 address is also the advertised gameHost).
+path or spaces. Put into the invite link and platform.json (publicHost; an IPv4 address is also the advertised gameHost).
 
 .PARAMETER RemotePort
 The Platform's public HTTPS port (platform.json remotePort). Default: the line's ports.remote in patch.json (8391 on 126).
@@ -51,7 +54,7 @@ An existing Platform certificate (a server's platform-data/remote/host.pfx) to k
 without a password. Default: the host.pfx of an existing -Output, else a new one.
 
 .PARAMETER ServerName
-The server's display name, baked into Play.cmd: the players' installer names the desktop shortcut after it. 1 to 40 letters,
+The server's display name, put into the invite link: the players' installer names the desktop shortcut after it. 1 to 40 letters,
 digits, spaces, dots, hyphens or underscores, starting and ending with a letter or digit. Default Amberline.
 
 .PARAMETER GameRoot
@@ -65,7 +68,10 @@ Server (the default): the deployment folder described above. Home (batch 625): t
 -PublicHost and is win-x64 only.
 
 .PARAMETER Version
-Home only: the release version as x.y.z (for example 1.4.0). It names the zip and, by default, the release folder.
+The release version as x.y.z (for example 1.4.0). Home (required): it names the zip, the players' app and, by default, the release
+folder. Server (batch 917, optional): the release this package is built from, which the invite link names (the line's tag prefix and the
+version), so the Join page offers that release's player app, and BUILD.json's version. Without it, or before the line's first player-app
+release (patch.json firstPlayerRelease), the link names that first release (InviteLink.Tag).
 
 .PARAMETER Runtime
 win-x64 or linux-x64. Default: win-x64 on Windows, linux-x64 elsewhere.
@@ -95,8 +101,9 @@ param(
     [string]$Certificate,
     [string]$ServerName = 'Amberline',
     [string]$Version,
-    # DIAGNOSTICS: a check seam for -Layout Home. The server, platform and companion.zip parts are copied from this folder instead of
-    # being published, so the checks reach the layout, the refusals and the scans without a full build. Never used for a release.
+    # DIAGNOSTICS: a check seam. The server, platform and companion.zip parts (and, for Home, the players' app,
+    # player-app/Amberline.AirCompanion.exe) are copied from this folder instead of being published, so the checks reach the layout,
+    # the refusals and the scans without a full build. Never used for a release.
     [string]$PartsFrom
 )
 $ErrorActionPreference = 'Stop'
@@ -105,8 +112,7 @@ if ($Layout -eq 'Home') {
     if ($PublicHost) { throw '-PublicHost is for -Layout Server only: a home release has no address, the host sets it in the setup page.' }
     if (-not $Version -or $Version -cnotmatch '^\d+\.\d+\.\d+\z') { throw '-Version is required for -Layout Home, as x.y.z (for example 1.4.0).' }
     if ($Runtime -ne 'win-x64') { throw '-Runtime must be win-x64 for -Layout Home: the release is Windows x64 only.' }
-} elseif ($Version) { throw '-Version is for -Layout Home only.' }
-if ($PartsFrom -and $Layout -ne 'Home') { throw '-PartsFrom is a check seam for -Layout Home only.' }
+} elseif ($Version -and $Version -cnotmatch '^\d+\.\d+\.\d+\z') { throw '-Version must be x.y.z (for example 1.4.0): the release the invite link names.' }
 # PlatformBootstrap.IsHost's rule (tools/player-file.ps1 checks it again): the Platform serves the players' download only for such a host.
 if ($PublicHost -and ($PublicHost -notmatch '^[A-Za-z0-9.-]{1,253}\z' -or [uri]::CheckHostName($PublicHost) -notin 'Dns', 'IPv4')) {
     throw '-PublicHost must be the bare DNS name or IPv4 address players reach (no scheme, port, path or spaces).'
@@ -126,6 +132,8 @@ $patchVersion = $facts.label -replace ' \(.*\)$', ''
 $releaseName = [string]$facts.home.name
 $releaseFile = $releaseName.Replace(' ', '-')
 $zipName = "$releaseFile-$Version-win-x64.zip"
+# Batch 917: the players' app, the release asset the Join page downloads (b917-918 invite spec).
+$playerName = "$releaseFile-Player-$Version.exe"
 if ($RemotePort -eq 0) { $RemotePort = [int]$facts.ports.remote }
 if ($FirstGamePort -eq 0) { $FirstGamePort = [int]$facts.ports.gameFirst }
 if ($RemotePort -in [int]$facts.ports.web, [int]$facts.ports.rtmp, [int]$facts.ports.chat) { throw "-RemotePort must differ from the loopback ports $($facts.ports.web) (management), $($facts.ports.rtmp) (RTMP) and $($facts.ports.chat) (XMPP)." }
@@ -214,13 +222,24 @@ $stage = Join-Path $work 'stage'
 $app = if ($Layout -eq 'Home') { Join-Path $stage 'app' } else { $destination }
 New-Item -ItemType Directory -Path $destination, $work | Out-Null
 New-Item -ItemType Directory -Force -Path $app | Out-Null
-# The certificate and Play.cmd come first: a -Certificate that cannot be used fails before the long build. Server only: a home
-# release has neither (its host's Platform makes the certificate at its first start).
+# The certificate comes first: a -Certificate that cannot be used fails before the long build. Server only: a home release has none
+# (its host's Platform makes the certificate at its first start).
 $pin = $null
+$invite = $null
 if ($Layout -eq 'Server') {
-    $playerFile = @{ Root = $destination; PublicHost = $PublicHost; Port = $RemotePort; ServerName = $ServerName; PlayerFolder = "$releaseName Player" }
-    if ($Certificate) { $playerFile.Certificate = $Certificate }
-    $pin = & (Join-Path $PSScriptRoot 'player-file.ps1') @playerFile
+    $certificateFile = @{ Root = $destination }
+    if ($Certificate) { $certificateFile.Certificate = $Certificate }
+    $pin = & (Join-Path $PSScriptRoot 'player-file.ps1') @certificateFile
+    # Batch 917: the invite link (InviteLink.Encode's format: compact JSON in this key order, base64url without padding). Every value is
+    # plain ASCII by its rule above, so nothing needs escaping. The tag is InviteLink.Tag's: -Version, unless there is none or it is before the
+    # line's first player-app release, which is then named (the tag only picks the Join page's download; the app fetches this server's tool).
+    $first = [string]$facts.firstPlayerRelease
+    $release = if ($Version -and [version]$Version -ge [version]$first) { $Version } else { $first }
+    $json = '{"v":1,"line":"' + $Patch + '","tag":"' + $facts.releaseTagPrefix + $release + '","host":"' + $PublicHost + '","port":' + $RemotePort +
+        ',"pin":"' + $pin.ToUpperInvariant() + '","name":"' + $ServerName + '"}'
+    $invite = 'https://amberline-dev.github.io/Project-Amberline/join/#' +
+        [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    [IO.File]::WriteAllText((Join-Path $destination 'INVITE-LINK.txt'), "$invite`r`n", [Text.Encoding]::ASCII)
 }
 
 # Server: the package-remote server stage (publish, natives, BUILD.json, and the preflight where this system can run it).
@@ -243,16 +262,14 @@ if ($PartsFrom) {
 # Platform: the same runtime, self-contained, a folder (its platform-data is created at first start).
 Write-Stage 4 'Building the Platform'
 if ($PartsFrom) {
-    # DIAGNOSTICS: the check seam (-PartsFrom), the Platform comes from the folder.
-    Copy-Item -LiteralPath (Join-Path $PartsFrom 'platform') -Destination $app -Recurse
+    # DIAGNOSTICS: the check seam (-PartsFrom), the Platform comes from the folder. Its contents: a server package already has
+    # platform\platform-data\remote (the certificate, made first).
+    New-Item -ItemType Directory -Force -Path (Join-Path $app 'platform') | Out-Null
+    Copy-Item -Path (Join-Path $PartsFrom 'platform/*') -Destination (Join-Path $app 'platform') -Recurse
 } else {
     & dotnet publish (Join-Path $repository 'src/Amberline.Platform/Amberline.Platform.csproj') -c Release -r $Runtime --self-contained true `
         --artifacts-path (Join-Path $work 'Amberline.Platform') -o (Join-Path $app 'platform') "-p:InformationalVersion=$identity"
     if ($LASTEXITCODE -ne 0) { throw 'Amberline.Platform publish failed.' }
-}
-if ($Layout -eq 'Home') {
-    # The Play-file template (tools/play-bootstrap.cmd) beside the Platform: the host's Platform renders each friend's Play file from it.
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'play-bootstrap.cmd') -Destination (Join-Path $app 'platform')
 }
 
 $serverExecutable = if ($Runtime -eq 'win-x64') { 'Amberline.Server.exe' } else { 'Amberline.Server' }
@@ -303,6 +320,24 @@ if ($PartsFrom) {
 }
 # The host's own play (Play on this PC, batch 629): the same companion unpacked in app\companion, where the Platform starts it.
 if ($Layout -eq 'Home') { [IO.Compression.ZipFile]::ExtractToDirectory($companionZip, (Join-Path $app 'companion')) }
+# NOT RETAIL (batch 917): the players' app for the release, the same companion published as one self-contained, compressed Windows program
+# (AmberlinePlayerApp: no console window), without the client-files installer as companion.zip. Only its one file is taken: the
+# Play.cmd and capabilities.json the publish puts beside it stay out (the host reads capabilities.json from companion.zip).
+$playerApp = $null
+if ($Layout -eq 'Home') {
+    $playerOut = Join-Path $work 'player-app'
+    if ($PartsFrom) {
+        # DIAGNOSTICS: the check seam (-PartsFrom), the app comes from the folder.
+        Copy-Item -LiteralPath (Join-Path $PartsFrom 'player-app') -Destination $playerOut -Recurse
+    } else {
+        & dotnet publish (Join-Path $repository 'src/Amberline.AirCompanion/Amberline.AirCompanion.csproj') -c Release -r win-x64 --self-contained true `
+            --artifacts-path (Join-Path $work 'Amberline.AirCompanion.Player') -o $playerOut -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true -p:AmberlinePlayerApp=true -p:AmberlineArchiveInstaller=false "-p:InformationalVersion=$identity"
+        if ($LASTEXITCODE -ne 0) { throw 'The players'' app publish failed.' }
+    }
+    $playerApp = Join-Path $playerOut 'Amberline.AirCompanion.exe'
+    if (-not (Test-Path -LiteralPath $playerApp -PathType Leaf)) { throw 'The players'' app publish made no Amberline.AirCompanion.exe.' }
+}
 
 Write-Stage 6 'Packing'
 $requirements = if ($Runtime -eq 'win-x64') { 'Windows x64 (Windows Server 2019 or later, or Windows 10/11).' } else {
@@ -319,9 +354,9 @@ WHAT IS HERE
   platform/platform-data/platform.json   the configuration. publicHost and the ports are the ones this package was built
               for; replace every <...> value before the first start.
   platform/platform-data/remote/host.pfx   the Platform's TLS certificate and its private key. Keep it private. Every
-              Play.cmd pins its SHA-256 ({PIN}): replace this file and every player needs a new Play.cmd.
-  platform/platform-data/bootstrap/companion.zip   the player tool (Windows x64), served to Play.cmd.
-  Play.cmd    the one file each player needs (see PLAYERS).
+              invite link pins its SHA-256 ({PIN}): replace this file and every player needs a new invite link.
+  platform/platform-data/bootstrap/companion.zip   the player tool (Windows x64), served to the player app.
+  INVITE-LINK.txt   the link each player needs (see PLAYERS); /manage shows it too.
   BUILD.json  the build identity and the SHA-256 of every file.
   No game or AIR file is in this package. Copy your own {PATCHVERSION} game folder (the game executable, DATA, LEVELS)
   and your own {PATCHVERSION} AIR client folder (its .swf file, assets) to this machine; dataRoot and airRoot name them.
@@ -346,18 +381,19 @@ ADMINISTRATION
   and open http://127.0.0.1:{WEBPORT}/manage in a browser on your PC. Create each player's login there.
 
 PLAYERS
-  Send each player Play.cmd (the only file they need) and, privately, the login you created for them. Each player needs
+  Send each player the invite link (INVITE-LINK.txt) and, privately, the login you created for them. Each player needs
   Windows 10 or 11 and their own {PATCHVERSION} game and AIR client folders, or the client zip ({CLIENTZIP}).
-  Play.cmd downloads the player tool from this server (the server's certificate must match the pin, the archive its SHA-256)
-  and opens a setup window: it unpacks the client zip the player chooses, or finds or asks for the two folders, and moves
-  them into one install folder the player picks (on another drive: copied, every file checked, then the originals removed),
-  and puts a shortcut named "{SERVERNAME}" on the desktop, with a copy in that folder. The shortcut asks this server for a newer
-  player tool, updates it when there is one, and starts the AIR client, without a console window. A player who already
-  installed for another server keeps that install: your Play.cmd only adds your server and its shortcut. Running Play.cmd
-  again repairs the shortcut.
+  The link opens the Join page: the player downloads the player app from the project's release, opens it once, then
+  chooses Join. The app asks before it adds "{SERVERNAME}", downloads the player tool from this server (the server's
+  certificate must match the pin in the link, the archive its SHA-256) and opens a setup window: it unpacks the client zip
+  the player chooses, or finds or asks for the two folders, and moves them into one install folder the player picks (on
+  another drive: copied, every file checked, then the originals removed), and puts a shortcut named "{SERVERNAME}" on the
+  desktop, with a copy in that folder. The shortcut asks this server for a newer player tool, updates it when there is one,
+  and starts the AIR client, without a console window. A player who already installed for another server keeps that
+  install: your link only adds your server and its shortcut. Opening the link again repairs the shortcut.
 
 REBUILDING AND UPDATING
-  A rebuild into this folder keeps platform-data/remote/host.pfx, so every Play.cmd keeps working; the old folder is moved
+  A rebuild into this folder keeps platform-data/remote/host.pfx, so every invite link keeps working; the old folder is moved
   to <folder>.previous-<stamp>. A build into another folder keeps it with -Certificate <this host.pfx>.
   To update a running server, stop the Platform and copy the new package over it, except platform-data/platform.json.
   The Platform reads companion.zip's SHA-256 when it starts, so players get the new tool at their next start.
@@ -394,12 +430,15 @@ if ($Layout -eq 'Home') {
     # Batch 828: the AIR client's entries the line adds (132's 1.52 modules), which the guide counts as the client's own; 126 has none.
     if ($facts.airAddedEntries) { $patchFacts.airAddedEntries = @($facts.airAddedEntries) }
     $manifest.Insert(2, 'patch', $patchFacts)
+} elseif ($Version) {
+    # Batch 917 follow-up: a server package names its release too, so its /manage gives the same invite link as INVITE-LINK.txt.
+    $manifest.Insert(0, 'version', $Version)
 }
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $app 'BUILD.json') -Encoding utf8
 
 # The natives and both executables must be where the deployment expects them.
 $natives = if ($Runtime -eq 'win-x64') { @('amberline_enet.dll', 'exehost.exe') } else { @('libamberline_enet.so', 'exehost') }
-$players = if ($Layout -eq 'Home') { @('platform/play-bootstrap.cmd', 'bootstrap/companion.zip', 'companion/Amberline.AirCompanion.exe') } else { @('Play.cmd', 'platform/platform-data/remote/host.pfx', 'platform/platform-data/bootstrap/companion.zip') }
+$players = if ($Layout -eq 'Home') { @('bootstrap/companion.zip', 'companion/Amberline.AirCompanion.exe') } else { @('platform/platform-data/remote/host.pfx', 'platform/platform-data/bootstrap/companion.zip', 'INVITE-LINK.txt') }
 foreach ($required in @("server/$serverExecutable") + ($natives | ForEach-Object { "server/$_" }) + @("platform/$platformExecutable") + $players) {
     if (-not (Test-Path -LiteralPath (Join-Path $app $required) -PathType Leaf)) { throw "The output has no $required." }
 }
@@ -561,6 +600,11 @@ if ($Layout -eq 'Home') {
     $zipPath = Join-Path $destination $zipName
     $sha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText("$zipPath.sha256", "$sha  $zipName`n", [Text.Encoding]::ASCII)
+    # Batch 917: the players' app beside the zip, with its .sha256 in the same form.
+    $playerPath = Join-Path $destination $playerName
+    Move-Item -LiteralPath $playerApp -Destination $playerPath
+    $playerSha = (Get-FileHash -LiteralPath $playerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText("$playerPath.sha256", "$playerSha  $playerName`n", [Text.Encoding]::ASCII)
     # The notes stub for the release page: the owner writes the changes; the warnings and the hash are already in it.
     $notesPath = Join-Path $destination "$releaseFile-$Version-release-notes.md"
     $notes = @'
@@ -570,6 +614,8 @@ if ($Layout -eq 'Home') {
 
 - Zip: {ZIP}
 - SHA-256: {HASH}
+- Players' app: {PLAYER}
+- Its SHA-256: {PLAYERHASH}
 
 ## What changed
 
@@ -580,7 +626,7 @@ if ($Layout -eq 'Home') {
 Windows will warn you because Amberline is new and not signed. Check that you downloaded it from this releases page and that its SHA-256 matches the one above, then choose More info, then Run anyway. On Windows 11 with Smart App Control on, Windows blocks Amberline completely; Amberline cannot change that.
 '@
     $source = if ($gitCheckout) { "Built from source commit $commit, with no local changes." } else { 'Built from a folder without git: the source commit is unknown.' }
-    Set-Content -LiteralPath $notesPath -Value $notes.Replace('{RELEASE}', $releaseName).Replace('{VERSION}', $Version).Replace('{SOURCE}', $source).Replace('{ZIP}', $zipName).Replace('{HASH}', $sha) -Encoding utf8
+    Set-Content -LiteralPath $notesPath -Value $notes.Replace('{RELEASE}', $releaseName).Replace('{VERSION}', $Version).Replace('{SOURCE}', $source).Replace('{ZIP}', $zipName).Replace('{HASH}', $sha).Replace('{PLAYERHASH}', $playerSha).Replace('{PLAYER}', $playerName) -Encoding utf8
 }
 Remove-Item -LiteralPath $work -Recurse -Force
 $size = [math]::Round((Get-ChildItem -LiteralPath $destination -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB, 1)
@@ -592,12 +638,13 @@ if ($previous) {
     Write-Output "The previous build is now $aside; delete it when it is no longer needed."
 }
 if ($Layout -eq 'Home') {
-    Write-Output "Built the Amberline release: $zipPath ($size MB; the .sha256 and the release-notes stub are beside it)."
+    Write-Output "Built the Amberline release: $zipPath ($size MB; the .sha256, the players' app $playerName with its .sha256 and the release-notes stub are beside it)."
     Write-Output 'The script does not publish. When you have checked the zip and the notes, publish it yourself with:'
     # The line's tag (patch.json releaseTagPrefix: v on 126, the latest release; p132-v on 132, never the latest; owner, 16 November 2026).
     $latest = if ($facts.releaseTagPrefix -eq 'v') { '' } else { ' --latest=false' }
-    Write-Output "  gh release create $($facts.releaseTagPrefix)$Version `"$zipPath`" `"$zipPath.sha256`" --notes-file `"$notesPath`"$latest"
+    Write-Output "  gh release create $($facts.releaseTagPrefix)$Version `"$zipPath`" `"$zipPath.sha256`" `"$playerPath`" `"$playerPath.sha256`" --notes-file `"$notesPath`"$latest"
 } else {
     Write-Output "Built $Runtime server package: $([IO.Path]::GetRelativePath($repository, $destination)) ($($outputFiles.Count) files, $size MB, identity $identity)"
-    Write-Output "Hand each player $(Join-Path $destination 'Play.cmd'); it pins the certificate SHA-256 $pin."
+    Write-Output "Send each player this invite link (also in $(Join-Path $destination 'INVITE-LINK.txt')); it pins the certificate SHA-256 $($pin):"
+    Write-Output "  $invite"
 }

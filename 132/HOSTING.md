@@ -290,7 +290,7 @@ After a restart the page comes back by itself; after a stop, start Amberline aga
 2. **Windows Firewall lets players in**.
 3. **Found your router; it opened the ports for this PC** (the sign-in and game ports).
 4. **Your router has a public internet address** (no second router, no shared provider address).
-5. **A player reached Amberline from the internet**. Until then: **Waiting for the first player to start the Play file.**
+5. **A player reached Amberline from the internet**. Until then: **Waiting for the first player to open the invite link.**
 
 Below them, an installed Amberline adds **Only your Windows account can change this install**. Amberline locks its install folder so
 that other Windows accounts on this PC cannot change its files: the folder's **Security** tab (in its **Properties**) then lists only
@@ -309,7 +309,7 @@ needs one:
   **Yes**; the button says **Waiting…** until you answer. Amberline then adds two rules, **Amberline 132 sign-in** and
   **Amberline 132 games** (a 1.0.0.126 Amberline keeps its own two), and a third, **Amberline 132 old sign-in**, while it guides old 1.0.0.126 shortcuts.
 - **Test again**: runs the network checks again (up to a minute), for example after you changed something on your router.
-- **Download the Play file**, **Make new Play files**, **Hide** and **Open the support log**: see the codes in
+- **Copy the new invite link**, **Make a new invite link**, **Hide** and **Open the support log**: see the codes in
   [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ### Your router
@@ -336,11 +336,17 @@ The dashboard fills in your router's address, this PC's address, your router's m
 3. Leave **Password** empty and Amberline makes one (four common words and two digits), or type one of at least 10 characters.
 4. Choose **Create their login**. If more than one thing needs changing, the page lists every problem at once, each beside its
    field. When it works, the page says **user1 is ready** and shows two things to send:
-   - **Download the Play file for** your server: the file `Play.cmd`. It is the same file for every user. It sets up their game
-     and puts your server's name on their desktop. Their setup is this line's own: its settings in `%LOCALAPPDATA%\Amberline 132 Player`
-     and its entry **Amberline 132** in Windows' list of installed apps. A user who also plays on a 1.0.0.126 server keeps that
-     server's setup (**Amberline Player**, **Amberline**) apart, in its own install folder.
+   - Your server's **invite link**: **Copy invite link** copies it. Paste it in Discord, WhatsApp or an email. It is the same link
+     for every user. It opens their Join page, where they download this line's player app (**Amberline 132 Player**) once; the app
+     then sets up their game and puts your server's name on their desktop. Their setup is this line's own: its settings in
+     `%LOCALAPPDATA%\Amberline 132 Player` and its entry **Amberline 132** in Windows' list of installed apps. A user who also plays
+     on a 1.0.0.126 server keeps that server's setup (**Amberline Player**, **Amberline**) apart, in its own install folder.
    - A message with their username and password. **Copy** copies it. Send it privately.
+
+The invite link holds your address in encoded form (anyone with the link can read it, as with any address you send) and names your
+Amberline's release, so the Join page offers the player app of that release. A development build (one without a release version),
+or one older than the line's first release with the player app, names that first release instead (the app then downloads your
+Amberline's own player tool, so any of them works).
 
 The password is shown only now. If the user loses it, use [Users](#users), **New password**.
 
@@ -356,7 +362,8 @@ instead.
 on the sign-up page is marked **Signed up**, and a user whose access you turned off is marked **Disabled**. The title counts the users.
 Your own login is not in the list: it is the one you play with, and [Advanced](#advanced) sets its password.
 
-Above the list are **Add a user**, **Get the Play file** (once your address is known) and **Copy sign-up link** (while sign-ups are on).
+Above the list are **Add a user**, **Copy invite link** (once your address is known) and **Copy sign-up link** (while sign-ups are on).
+Below them the **Invite link** box shows the link itself, or why there is none yet.
 Type in **Search users** to filter the list as you type. **Copy the My account link** copies the address where users change their own
 password or delete their login (see [My account](#my-account)). While your Amberline for 1.0.0.126 has a login that is not here yet,
 **Copy the logins** stands above the list (see [Moving from the 1.0.0.126 line](#moving-from-the-100126-line)). While your Amberline for 1.0.0.126 is on this PC, a section named **Old 1.0.0.126 shortcuts** holds **Move my 1.0.0.126 players here** as well (see [Move my 1.0.0.126 players here](#move-my-100126-players-here)).
@@ -394,10 +401,10 @@ When a form has a problem, the page comes back with **There is a problem** at th
 **Settings** shows what the first run asked, each part with a link to change it. Each form there ends in **Save**, and **Cancel**
 leaves it without saving; after **Save** Settings says **Saved.**
 
-- **Server name**: **Change the server name** has the same rule as the first step. After **Save** the page offers **Download the
-  Play file**. Your users' desktop icons show the name their Play file holds, so send them the new one.
+- **Server name**: **Change the server name** has the same rule as the first step. After **Save** the page offers **Copy the
+  invite link**. Your users' desktop icons show the name their invite link held, so send them the new one.
 - **Your address**: **Change your address** has the same choices as the address step (for example to switch the LAN party on
-  or off). After **Save**, send your users the new Play file: the one they have still looks for this PC at the old address.
+  or off). After **Save**, send your users the new invite link: the one they have still looks for this PC at the old address.
 - **Your game folders**: **Change the folders** works like the folder step. Amberline restarts to use new folders, so it refuses
   while a game is running. In an installed Amberline it offers to copy folders from elsewhere into the install folder. The page is
   headed **Change the folders**; after **Save** Amberline restarts and comes back here, where **Saved.** says so.
@@ -405,10 +412,10 @@ leaves it without saving; after **Save** Settings says **Saved.**
   port; the page shows the ports, for example UDP 5319 to 5322. After **Save** it counts for the next game that starts: a running
   game goes on, and with a lower number a new game waits until fewer run. The router gets the new ports at once. Windows Firewall
   asks you first: with more games the dashboard says **Windows Firewall's rule must be updated for the new game ports.** Choose
-  **Allow through Windows Firewall** there and press **Yes**. Fewer games need nothing. Play files stay as they are.
+  **Allow through Windows Firewall** there and press **Yes**. Fewer games need nothing. Invite links stay as they are.
 - **Updates**: whether the daily check is on; **Change the update check** opens the [Updates](#updates) page.
-- **Play file**: **Download the Play file**, and **Make new Play files**, which makes a new certificate and restarts: every
-  user's Play file stops working, so send them all the new one. It asks first; **Cancel** comes back to Settings.
+- **Invite link**: **Copy the invite link** (on Users), and **Make a new invite link**, which makes a new certificate and restarts:
+  every user's old link and desktop icon stop working, so send them all the new link. It asks first; **Cancel** comes back to Settings.
 - **Skins and RP**: **Offer skins and RP** is ticked at first. Untick it and choose **Save** to turn skins and RP off: everyone plays
   the default looks, the store shows no skins and no RP anywhere, and nothing can be bought or given with RP. Nothing anyone owns is
   removed; tick the box again to bring everything back.
@@ -432,10 +439,10 @@ login, and Settings shows the link, `https://<your address>:<the public port>/re
 like; Add a user shows it too.
 
 - The page asks for a username, a summoner name (empty means the username), a password of at least 10 characters and the start
-  level. It lists every problem at once. When it works, it offers **Download the Play file**, the same file Add a user gives. Under **Already have a login?** it offers that file too.
+  level. It lists every problem at once. When it works, it offers **Open the invite** and shows the invite link, the same link Add a user gives. Under **Already have a login?** it offers them too.
 - Their browser warns that the connection is not private: Amberline's own certificate is not one the browser knows. They choose
   **Advanced**, then the button that goes on (Chrome: **Proceed to ... (unsafe)**, Edge: **Continue to ... (unsafe)**, Firefox:
-  **Accept the Risk and Continue**). Another PC or browser warns again; it is the same certificate the Play file checks.
+  **Accept the Risk and Continue**). Another PC or browser warns again; it is the same certificate the invite link checks.
 - Each address can make 12 sign-up attempts an hour (every submit counts, refused ones too), and the page takes 30 new logins an hour in all. After that it says **Too many sign-ups. Try again
   in an hour.**
 - New logins appear in [Users](#users), where **Disable** stops one. Untick the box and **Save** to close the page at
@@ -459,7 +466,7 @@ the sign-up page uses. The page is there whether or not sign-ups are open.
 Your folder does two things. It switches **Play on this PC** to the original 2011 launcher: the launcher opens first, as in 2011, shows
 your news and your server's status, and its **Play** starts the game client and the game. With **Share the game files with players**
 on, it also lets your players download the launcher along with the game. A player's own start follows that player's install, not your
-folder: it uses the launcher when the player picked one in setup, added it by running the Play file again, or downloaded it when you
+folder: it uses the launcher when the player picked one in setup, added it by opening the invite link again, or downloaded it when you
 share it. A player whose install has no launcher starts the usual way. Without a launcher folder, Play on this PC starts the game the
 usual way.
 
@@ -495,7 +502,7 @@ server answers). Settings' **Launcher news** box holds them:
 
 **Share the game files with players** is off at first. Beside it Settings says: you share your own copy of the game, so make sure
 you may share it; Amberline itself never ships these files. Tick it and choose **Save**: a player whose PC has no game or AIR client
-of their own can then download yours with the Play file. Anyone with your Play file can download it.
+of their own can then download yours during setup. Anyone with your invite link can download it.
 
 - Amberline first checks every file once, which takes a few minutes; Settings says so until it is done, then shows what it shares:
   the game folder and the AIR client folder, each with its size. The download uses your internet upload.
@@ -519,7 +526,7 @@ player's own copy would go. A player who has their own copy uses it as before.
 small file that tells a later Amberline where its folder is, the two Windows Firewall rules (if you let Amberline through,
 Windows asks once, for **Windows Command Processor**: press **Yes**), and the ports Amberline opened on your router. Two tick
 boxes, both off: **Also delete the game and AIR client copies** and **Also delete your logins and settings** (your users'
-logins and Play files then stop working for good). What you keep stays in the folder, and its `READ ME.txt` says how to use it
+logins and invite links then stop working for good). What you keep stays in the folder, and its `READ ME.txt` says how to use it
 again (install Amberline into the same folder). Type `uninstall` and choose **Uninstall Amberline**; **Cancel** leaves the page.
 While a game runs, the page says so and offers no button.
 
@@ -581,16 +588,16 @@ the address step.
 - The network checks leave the router out, and a player from your home network shows as having reached Amberline.
 - A router problem the address step finds (a second router, a shared provider address) shows there as a tip, not a problem: it
   matters only for players outside your home.
-- To switch it on or off later: **Settings**, **Change your address**. Then send your users the new Play file.
+- To switch it on or off later: **Settings**, **Change your address**. Then send your users the new invite link.
 
 ## When your address changes
 
 Most home internet addresses change now and then, often when the router restarts.
 
 - If you chose **Use the address your router reports**, Amberline asks the router again every 5 minutes. When the address
-  changes, Amberline uses the new one at once and the dashboard says **Your address changed** (code A-NET-09). Choose **Get the
-  new Play file** and send it to every user: their old icons cannot reach you until they run it. Then choose **Hide this
-  message**.
+  changes, Amberline uses the new one at once and the dashboard says **Your address changed** (code A-NET-09). Choose **Copy the
+  new invite link** (it opens Users) and send the link to every user: their old icons cannot reach you until they open it. Then
+  choose **Hide this message**.
 - A name for your address (a dynamic DNS name) avoids this: the name follows your address.
 - To type a new address or name yourself: **Settings**, **Change your address**.
 
@@ -634,9 +641,9 @@ its icon, its logins and everything else) stays as it is and keeps working.
 - **Ports**: this line has its own, sign-in TCP 8491 and games UDP 5319 to 5322 (1.0.0.126: TCP 8391 and UDP 5219 to 5222), and its
   own Windows Firewall rules. If you forwarded the 1.0.0.126 ports on your router by hand, forward these too
   ([Your router](#your-router)). Both use chat port 5222, so only one Amberline runs at a time.
-- **New users need this server's Play file.** The 1.0.0.126 Play file is for the 1.0.0.126 server, and it never plays this one.
-  Send new users this server's Play file (**Get the Play file** on [Users](#users)). While guiding is on, a user who still has the
-  1.0.0.126 Play file is offered this server instead: see [What users see](#what-users-see).
+- **New users need this server's invite link.** The 1.0.0.126 server's link (or its old Play file) is for the 1.0.0.126 server, and it
+  never plays this one. Send new users this server's invite link (**Copy invite link** on [Users](#users)). While guiding is on, a
+  user who still has the 1.0.0.126 setup is offered this server instead: see [What users see](#what-users-see).
 
 ### Move my 1.0.0.126 players here
 
@@ -660,7 +667,7 @@ PC you host from: a rented server cannot do it, because both Amberlines must be 
 
 ### What users see
 
-- Their old desktop icon (or old Play file) may first update its player tool. Then it shows the server's name and **now runs patch
+- Their old desktop icon (or an old 1.0.0.126 Play file) may first update its player tool. Then it shows the server's name and **now runs patch
   1.0.0.132 (January 2012).** It asks **Set it up now?** and says **You sign in with the same username and password as before. Your
   1.0.0.126 setup stays.**
 - **Set up** opens the 1.0.0.132 setup window. They give it the 1.0.0.132 client zip, or use the copy you share (see
@@ -717,10 +724,10 @@ goes (press Enter for `C:\Amberline 132\server-package`). Nothing is copied or d
    ```
 
 6. Make a login for each user on the management page (see below).
-7. Give each user their login and the Play file, the package's `Play.cmd`. It is the only file they need.
+7. Give each user their login and the invite link, the package's `INVITE-LINK.txt`.
 
 File Explorer opens the package folder, and the guide ends with a **Summary** that names it. Building into the same package
-folder again keeps its certificate, so the `Play.cmd` files you gave out keep working.
+folder again keeps its certificate, so the invite link you gave out keeps working.
 
 ### By hand
 
@@ -733,9 +740,11 @@ pwsh -NoProfile -File ./host/tools/build-server.ps1 -Patch 132 -GameRoot <game r
 - `-Runtime linux-x64` builds for a Linux server.
 - `-RemotePort` (default 8491) and `-FirstGamePort` (default 5319) change the ports; `-ServerName` (default `Amberline`) is the
   name of the users' desktop icon.
-- The output folder holds `server/`, `platform/` (with the settings, the server's certificate and the player tool), `Play.cmd`
-  and `README-DEPLOY.txt`, which explains every file.
-- Keep `platform/platform-data/remote/host.pfx` private: it is the server's TLS key, and every `Play.cmd` checks it. A rebuild
+- `-Version <x.y.z>` names the release you built from: the invite link names it, so the Join page offers that release's player app.
+  Without it, or with a version older than the line's first release with the player app, the link names that first release.
+- The output folder holds `server/`, `platform/` (with the settings, the server's certificate and the player tool),
+  `INVITE-LINK.txt` (the link each user needs) and `README-DEPLOY.txt`, which explains every file.
+- Keep `platform/platform-data/remote/host.pfx` private: it is the server's TLS key, and every invite link checks it. A rebuild
   into the same output folder keeps it; for a build into another folder, pass `-Certificate <that host.pfx>`.
 - The build never copies your game or AIR client into the package; its last step checks that.
 

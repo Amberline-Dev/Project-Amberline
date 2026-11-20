@@ -13,7 +13,7 @@ namespace Amberline.Platform;
 /// folder, the page's port, Maestro 8393, the local game address) and starts the companion beside the program
 /// (<c>..\companion</c>) with <c>--desktop --stage-root data\stage</c>. The companion's local path does the rest: it reuses this
 /// running Platform, makes the stage's AIR copy from the host's AIR folder (the source is only read) and opens AIR. The game and AIR
-/// folders stay where the host keeps them. The friends' Play file is never used here: its proxy would take this Platform's loopback
+/// folders stay where the host keeps them. The friends' player app is never used here: its proxy would take this Platform's loopback
 /// ports. One companion at a time: a second press while the first still runs starts nothing.
 /// </summary>
 public sealed class HostPlay(Func<ProcessStartInfo, Process?> start)

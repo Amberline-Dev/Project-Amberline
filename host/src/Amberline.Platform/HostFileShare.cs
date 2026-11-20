@@ -8,8 +8,8 @@ namespace Amberline.Platform;
 /// <summary>
 /// NOT RETAIL: the host shares their own game and AIR client with players who have none (batch 681; the owner, 4 November 2026: "Where
 /// the person hosting the server can decide if they want to also host the game and air client files for the players"; anyone with the
-/// Play file may download, off by default). Retail players got both from Riot's patcher. While Settings' switch is on
-/// (<see cref="PlatformSettings.ShareFiles"/>), the friends' port (HTTPS with the certificate the Play file pins) serves two things more:
+/// player app may download, off by default). Retail players got both from Riot's patcher. While Settings' switch is on
+/// (<see cref="PlatformSettings.ShareFiles"/>), the friends' port (HTTPS with the certificate the invite link pins) serves two things more:
 /// <see cref="Prefix"/>, the manifest (each file's path in the player's install, size and SHA-256), and <c>/files/&lt;path&gt;</c>, one
 /// file of that manifest with ranges, so a download resumes. Nothing else of the host reaches that port (<see cref="Serves"/>).
 /// <list type="bullet">
@@ -121,7 +121,7 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
         var shared = built.Result;
         if (shared.Problem is { } problem)
             return $"<p class=problem role=alert>Your copy cannot be shared: {WebUtility.HtmlEncode(problem)} Nothing is shared.</p>";
-        return $"<p>Shared: {SharedParts(shared)}. A player who has no copy of their own downloads them with their Play file, through your internet upload.</p>" +
+        return $"<p>Shared: {SharedParts(shared)}. A player who has no copy of their own downloads them during setup, through your internet upload.</p>" +
             (shared.LauncherNote is { } note ? $"<p class=warn>The 2011 launcher is not shared. {WebUtility.HtmlEncode(note)}</p>" : "") +
             (shared.Open ? $"<p class=warn>{OpenWarning}</p>" : "");
     }

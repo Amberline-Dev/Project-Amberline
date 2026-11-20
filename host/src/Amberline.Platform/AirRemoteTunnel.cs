@@ -57,7 +57,7 @@ public static class AirRemoteTunnel
 
     /// <summary>
     /// NOT RETAIL: retail's platform always sent its own game server address in the game start. A friend's player tool sends, on its RTMP
-    /// tunnel's upgrade, the IPv4 address it reached this host at (the Play file's host, resolved on the friend's PC), so the game start
+    /// tunnel's upgrade, the IPv4 address it reached this host at (the connection's host, resolved on the friend's PC), so the game start
     /// built for that session can name it: the 2011 launcher's own Maestro starts the game with the game start unchanged (spec §7). The
     /// value is the client's word, so it only ever reaches that same player's own game start.
     /// </summary>
@@ -79,7 +79,7 @@ public static class AirRemoteTunnel
     // host's own sign-up is the one exception, outside this list, while Settings' switch is on (HostSelfRegistration.Serves).
     public static bool IsPublicPath(string path) => path is "/" or "/health" or "/ip" or "/landing" or "/story" or "/ladder" or
         "/login-queue/rest/queue/authenticate" or Path or ChatPath or SignInPath or
-        "/bootstrap/client.json" or "/bootstrap/companion.zip" or "/bootstrap/Play.cmd" or
+        "/bootstrap/client.json" or "/bootstrap/companion.zip" or
         // NOT RETAIL (batch 761): the 2011 launcher's news (LauncherNews.Route) is read by the friends' launchers through the tunnel too.
         "/launcher/news" ||
         // NOT RETAIL (batch 806): the champion detail page's store routes (batch 800), public on the friends' port. A GET reaches routing:

@@ -396,7 +396,6 @@ public static class HostInstallChecks
     {
         var app = Path.Combine(folder, "app");
         WriteFile(Path.Combine(app, "platform", HostInstall.PlatformFile), "platform " + version);
-        WriteFile(Path.Combine(app, "platform", "play-bootstrap.cmd"), "template " + version);
         WriteFile(Path.Combine(app, "server", "Amberline.Server.exe"), "server " + version);
         Directory.CreateDirectory(Path.Combine(app, "bootstrap"));
         File.WriteAllBytes(Path.Combine(app, "bootstrap", "companion.zip"), RandomNumberGenerator.GetBytes(128));

@@ -25,7 +25,7 @@ public static class HostSelfRegistrationChecks
     private const string Password = "Synthetic-self-Pw-77";
     private const string Switch = "/host/settings/register";
     private const string Warning = "Their browser warns that the connection is not private. They choose Advanced, then Continue.";
-    private static readonly string[] SignUpPaths = ["/register", "/register/Play.cmd", "/register/style.css"];
+    private static readonly string[] SignUpPaths = ["/register", "/register/style.css"];
     /// <summary>The sign-up pages' own stylesheet (batch 706): the AIR client's look, at the address the sign-up pages link.</summary>
     private static readonly string Style = HostPages.PublicStyleHref;
 
@@ -39,8 +39,8 @@ public static class HostSelfRegistrationChecks
         var champions = ChampionCatalog.All.Count;
         var home = Home.Create("league-host-self-registration");
         Directory.CreateDirectory(home.Loop.Paths.App);
-        File.WriteAllText(Path.Combine(home.Loop.Paths.App, HostInvite.TemplateFile),
-            File.ReadAllText(AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", HostInvite.TemplateFile))));
+        // Batch 917: a release (its BUILD.json version), so the sign-up pages give the invite link.
+        File.WriteAllText(Path.Combine(home.Loop.Paths.App, "..", "BUILD.json"), "{\"version\":\"1.4.0\"}");
         long hostId;
         using (var store = new PlatformAccounts(home.Loop.Paths.Data)) hostId = store.RegisterPublic("host_one", HostPassword, "Host One").Id;
         WriteSettings(home, new { serverName = "Test Server", publicHost = TestHost, addressSource = HostAddress.Typed, hostAccount = hostId });
@@ -91,7 +91,8 @@ public static class HostSelfRegistrationChecks
                 form.Contains("name=password type=password", StringComparison.Ordinal) && form.Contains("name=mode value=maxed checked", StringComparison.Ordinal) &&
                 form.Contains("name=mode value=fresh>", StringComparison.Ordinal) && form.Contains("<form method=post action=/register novalidate>", StringComparison.Ordinal) &&
                 form.Contains($"href=\"{HostPages.PublicStyleHref}\"", StringComparison.Ordinal) &&
-                form.Contains("<p class=already>Already have a login?</p><p><a class=button href=/register/Play.cmd download>Download the Play file</a></p>", StringComparison.Ordinal) &&
+                form.Contains($"<p class=already>Already have a login?</p><p><a class=button href=\"{Invite(home)}\">Open the invite</a></p>", StringComparison.Ordinal) &&
+                form.Contains($"<pre class=message>{Invite(home)}</pre>", StringComparison.Ordinal) && !form.Contains("Play file", StringComparison.Ordinal) &&
                 // Owner, 7 November 2026: the Amberline wordmark above the panel, no footer.
                 form.Contains($"<header><p class=wordmark>{HostPages.Product}</p></header>", StringComparison.Ordinal) && !form.Contains("<footer>", StringComparison.Ordinal), form);
             using (var sheet = await person.GetAsync(Style))
@@ -120,11 +121,11 @@ public static class HostSelfRegistrationChecks
             refused = await PostAsync(person, "/register", null, HttpStatusCode.BadRequest, ("username", "self1"), ("password", Password), ("mode", "maxed"));
             TestAssert.True(refused.Contains("The page expired", StringComparison.Ordinal) && !refused.Contains(Password, StringComparison.Ordinal), refused);
 
-            // A sign-up: the login is ready and logs in; the page offers the Play file and never shows the password.
+            // A sign-up: the login is ready and logs in; the page offers the invite link (batch 917) and never shows the password.
             var ready = await PostAsync(person, "/register", Token(form), HttpStatusCode.OK,
                 ("username", "Self1"), ("summoner", ""), ("password", Password), ("mode", "fresh"));
             TestAssert.True(ready.Contains("<h1>Your login is ready</h1>", StringComparison.Ordinal) && ready.Contains("<b>self1</b>", StringComparison.Ordinal) &&
-                ready.Contains("<a class=button href=/register/Play.cmd download>Download the Play file</a>", StringComparison.Ordinal) &&
+                ready.Contains($"<a class=button href=\"{Invite(home)}\">Open the invite</a>", StringComparison.Ordinal) &&
                 ready.Contains($"href=\"{HostPages.PublicStyleHref}\"", StringComparison.Ordinal) && !ready.Contains(Password, StringComparison.Ordinal), ready);
             Public(ready, "POST /register (ready)", HostPages.Policy);
             using (var login = JsonDocument.Parse(await LoginAsync(browser, "self1", Password, HttpStatusCode.OK)))
@@ -133,28 +134,20 @@ public static class HostSelfRegistrationChecks
             TestAssert.True((await browser.GetStringAsync(HostInvite.UsersPath)).Contains("<b>self1</b> <span class=mark>Signed up</span>", StringComparison.Ordinal),
                 "the new login is in Users, marked as signed up");
 
-            // The Play file is Invite's own for this server.
-            byte[] play;
-            using (var download = await person.GetAsync("/register/Play.cmd"))
-            {
-                TestAssert.Equal(HttpStatusCode.OK, download.StatusCode, await download.Content.ReadAsStringAsync());
-                TestAssert.Equal("application/octet-stream", download.Content.Headers.ContentType?.MediaType);
-                TestAssert.True(download.Content.Headers.ContentDisposition?.ToString().Contains("filename=Play.cmd", StringComparison.Ordinal) == true, "named Play.cmd");
-                play = await download.Content.ReadAsByteArrayAsync();
-            }
-            using (var invited = await browser.GetAsync(HostInvite.PlayFilePath))
-            {
-                var invites = await invited.Content.ReadAsByteArrayAsync();
-                TestAssert.True(play.AsSpan().SequenceEqual(invites), "the same file Invite makes");
-            }
+            // The invite link is the one Users gives for this server; batch 917: the Play file's address is gone, even with sign-ups on.
+            TestAssert.True((await browser.GetStringAsync(HostInvite.UsersPath)).Contains($"<pre id=invite-link class=message>{Invite(home)}</pre>", StringComparison.Ordinal),
+                "the same link Users gives");
+            using (var gone = await person.GetAsync("/register/Play.cmd"))
+                TestAssert.Equal(HttpStatusCode.NotFound, gone.StatusCode, "no Play.cmd on the friends' port");
 
             // With the switch on, nothing else of the host is on the friends' port: every route but the public allow-list and the three
             // sign-up paths is 404 there, the host's session cookie notwithstanding (as server.host-routes-never-public walks them off).
             var routes = home.Loop.Routes().OfType<RouteEndpoint>().Select(endpoint => (
                 Path: Regex.Replace(endpoint.RoutePattern.RawText ?? "", @"\{[^}]*\}", "x"),
                 Methods: endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? ["GET"])).ToArray();
-            foreach (var expected in new[] { "/open", "/setup", "/manage", "/host", "/host/style.css", "/host/page.js", "/host/play-file", "/host/invite", Switch })
+            foreach (var expected in new[] { "/open", "/setup", "/manage", "/host", "/host/style.css", "/host/page.js", "/host/invite", Switch })
                 TestAssert.True(routes.Any(route => route.Path == expected) || expected == "/setup", expected + " is one of the routes walked");
+            TestAssert.False(routes.Any(route => route.Path is "/host/play-file" or "/register/Play.cmd" or "/bootstrap/Play.cmd"), "batch 917: no Play.cmd route");
             foreach (var (path, methods) in routes.Append(("/setup", ["GET", "POST"])).Append(("/register/x", ["GET"])))
             {
                 // Batch 751: My account is served there too, whether sign-ups are on or off (server.host-account-page-*).
@@ -271,6 +264,10 @@ public static class HostSelfRegistrationChecks
     }
 
     /// <summary>Every sign-up path answers 404 on the friends' port, for GET and POST.</summary>
+    /// <summary>Batch 917: the server's invite link as the pages show it (release 1.4.0, the test address, the friends' port, its pin, Test Server).</summary>
+    private static string Invite(Home home) => Amberline.AirCompanion.InviteLink.Link(
+        new(PlatformLine.ReleaseTagPrefix + "1.4.0", TestHost, home.RemotePort, Pin(home), "Test Server"));
+
     private static async Task NotFoundAsync(HttpClient person, string when)
     {
         foreach (var path in SignUpPaths)
@@ -291,7 +288,7 @@ public static class HostSelfRegistrationChecks
 
     /// <summary>
     /// A stranger's browser on the friends' port from <paramref name="from"/> (every 127.x address is this PC's loopback), which has
-    /// clicked through the certificate warning: it takes Amberline's own certificate, the one the Play file pins.
+    /// clicked through the certificate warning: it takes Amberline's own certificate, the one the invite link pins.
     /// </summary>
     internal static HttpClient Person(Home home, IPAddress from)
     {

@@ -1,56 +1,29 @@
 <#
 .SYNOPSIS
-Writes the one file a player needs, <Root>/Play.cmd, and the Platform's TLS certificate that it pins. Returns the certificate's SHA-256.
+Makes or keeps the Platform's TLS certificate, which the players' invite link pins, and returns its SHA-256.
 
 .DESCRIPTION
-Batch 615. tools/build-server.ps1 runs it on its output; run it alone to write Play.cmd again for an existing deployment folder.
-The certificate is <Root>/platform/platform-data/remote/host.pfx, where the deployed Platform loads it. HostFiles.Certificate
-(src/Amberline.Host/HostSettings.cs) makes one only when that file is missing, so the deployed server keeps this one, and every
-player's Play.cmd keeps working as long as the file stays. -Certificate copies an existing one there; without it the one already in
-Root is kept, else a new one is made the way HostFiles.Certificate makes it.
-Play.cmd is tools/play-bootstrap.cmd with the host (Base64 of host XOR 0x5A, as PlatformBootstrap.RenderLauncher writes
-Play.cmd), the HTTPS port, the certificate's SHA-256 and the server's display name put in.
+Batch 615; batch 917 removed Play.cmd from it (the invite link replaced Play.cmd: tools/build-server.ps1 writes it to INVITE-LINK.txt).
+tools/build-server.ps1 runs it on its output. The certificate is <Root>/platform/platform-data/remote/host.pfx, where the deployed Platform
+loads it. HostFiles.Certificate (src/Amberline.Host/HostSettings.cs) makes one only when that file is missing, so the deployed server keeps
+this one, and every player's invite link and shortcut keep working as long as the file stays. -Certificate copies an existing one there;
+without it the one already in Root is kept, else a new one is made the way HostFiles.Certificate makes it.
 
 .PARAMETER Root
 The deployment folder (the -Output of tools/build-server.ps1).
 
-.PARAMETER PublicHost
-The DNS name or IPv4 address players reach the server on: no scheme, port, path or spaces.
-
-.PARAMETER Port
-The Platform's public HTTPS port (platform.json remotePort).
-
 .PARAMETER Certificate
 An existing host.pfx to keep (the one a running server has in platform-data/remote). It must load without a password.
 
-.PARAMETER ServerName
-The server's display name, the name of the players' desktop shortcut. Default Amberline.
-
-.PARAMETER PlayerFolder
-Batch 829: the name of the player tool's per-user folder that Play.cmd downloads into (FolderMove.PlayerFolder of the patch line):
-Amberline Player on 1.0.0.126 (the default), Amberline 132 Player on 1.0.0.132. tools/build-server.ps1 passes the line's own.
-
 .EXAMPLE
-pwsh -NoProfile -File ./tools/player-file.ps1 -Root <deployment folder> -PublicHost <your server's address> -Port 8391
+pwsh -NoProfile -File ./host/tools/player-file.ps1 -Root <deployment folder>
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Root,
-    [Parameter(Mandatory)][string]$PublicHost,
-    [Parameter(Mandatory)][ValidateRange(1, 65535)][int]$Port,
-    [string]$Certificate,
-    [string]$ServerName = 'Amberline',
-    [ValidatePattern('^Amberline( [0-9]+)? Player\z')][string]$PlayerFolder = 'Amberline Player'
+    [string]$Certificate
 )
 $ErrorActionPreference = 'Stop'
-# PlatformBootstrap.IsHost's rule: the Platform serves the player's download only for such a host.
-if ($PublicHost -notmatch '^[A-Za-z0-9.-]{1,253}\z' -or [uri]::CheckHostName($PublicHost) -notin 'Dns', 'IPv4') {
-    throw '-PublicHost must be the bare DNS name or IPv4 address players reach (no scheme, port, path or spaces).'
-}
-# PlayerInstall.ServerName's rule (a desktop file name): keep the two in step.
-if ($ServerName -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,38}[A-Za-z0-9])?\z' -or $ServerName -match '^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?\z') {
-    throw '-ServerName must be 1 to 40 letters, digits, spaces, dots, hyphens or underscores, starting and ending with a letter or digit.'
-}
 
 # The pin, read the way the Platform loads the file (HostFiles.Certificate: PKCS#12 without a password).
 function Get-Pin([string]$Path) {
@@ -58,7 +31,7 @@ function Get-Pin([string]$Path) {
     catch { throw "The certificate $Path cannot be read without a password, as the Platform reads it: $($_.Exception.Message)" }
     try {
         if (-not $certificate.HasPrivateKey) { throw "The certificate $Path holds no private key; the Platform serves HTTPS with it." }
-        if ($certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow) { throw "The certificate $Path has expired; Play.cmd refuses an expired one." }
+        if ($certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow) { throw "The certificate $Path has expired; the player app refuses an expired one." }
         $certificate.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256)
     } finally { $certificate.Dispose() }
 }
@@ -91,11 +64,4 @@ if ($Certificate) {
         finally { $created.Dispose() }
     } finally { $rsa.Dispose() }
 }
-$pin = Get-Pin $pfx
-
-# CRLF whatever the checkout's line endings: cmd.exe reads the file.
-$template = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'play-bootstrap.cmd')).Replace("`r`n", "`n").Replace("`n", "`r`n")
-$token = [Convert]::ToBase64String([byte[]]@([Text.Encoding]::ASCII.GetBytes($PublicHost) | ForEach-Object { $_ -bxor 0x5A }))
-$text = $template.Replace('__HOST__', $token).Replace('__PORT__', [string]$Port).Replace('__CERT__', $pin).Replace('__PLAYER__', $PlayerFolder).Replace('__NAME__', $ServerName)
-[IO.File]::WriteAllText((Join-Path $Root 'Play.cmd'), $text, [Text.Encoding]::ASCII)
-$pin
+Get-Pin $pfx

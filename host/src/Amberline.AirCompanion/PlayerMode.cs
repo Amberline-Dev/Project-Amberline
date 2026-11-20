@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace Amberline.AirCompanion;
 
 /// <summary>
-/// NOT RETAIL: bring-your-own-clients mode (<c>--play</c>, started by <c>Play.cmd</c>). The player keeps the stock 1.0.0.126 game and AIR
+/// NOT RETAIL: bring-your-own-clients mode (<c>--play</c>, started by the <c>Play.cmd</c> beside the tool, <c>player/Play.cmd</c>). The player keeps the stock 1.0.0.126 game and AIR
 /// folders they downloaded and receives one connection file from the operator (<c>server.json</c>: host, HTTPS port, certificate pin).
 /// Nothing is downloaded and no player file is changed: AIR is copied into the player's stage as the friend launcher does (the source is
 /// only read), the game starts from its own folder, and the friend's login arrives through AIR. The choices live in the stage
@@ -73,7 +73,7 @@ internal static class PlayerMode
         if (server is null || !File.Exists(Path.Combine(server, "server.json")))
         {
             PlayerInstallWindow.ShowProblem(new(PlayerInstall.DefaultServerName, "This shortcut's server is not set up any more.",
-                "Double-click your server's Play file again: it sets the server up and makes a new shortcut.",
+                "Open your server's invite link again: it sets the server up and makes a new shortcut.",
                 $"No connection at {(server is null ? "(the shortcut names no server)" : Path.Combine(server, "server.json"))}", null));
             return 2;
         }
@@ -99,7 +99,7 @@ internal static class PlayerMode
         if (!locking.Wait(TimeSpan.FromSeconds(1))) status.Show(Locking);
         if (await locking is { } notLocked) Console.WriteLine($"install: not locked: {notLocked}");
         status.Hide();
-        return await StartAsync(install, id!, checkUpdate: finishing is null, ShortcutUi.Windows(status, title));
+        return await StartAsync(install, id!, checkUpdate: finishing is null, ShortcutUi.Windows(status, title), PlayerProfile.Current());
     }
 
     /// <summary>
@@ -158,10 +158,13 @@ internal static class PlayerMode
     /// NOT RETAIL (batch 856, design Part 1 steps 2-3): the server's manifest is read once, first, on every start (the run that finishes an
     /// update too), with the connection it is read over, which the later steps use too. A server that moved to patch 1.0.0.132 gets the
     /// moved dialog before any other check (<see cref="ServerMoved"/>) and the start never plays. Otherwise the checks run in their order, and a manifest that could not be read fails where the update check sits,
-    /// as before; the finishing run only reads <c>movedTo</c> and goes on as before.
+    /// as before; the finishing run only reads <c>movedTo</c> and goes on as before. NOT RETAIL (batch 917): with a <paramref name="profile"/>
+    /// (the shortcut's, <see cref="PlayerProfile.Current"/>), the start first registers the invite link's scheme to this install's windowless
+    /// tool when no scheme that works is registered, so the invite page's Join reaches an install made with Play.cmd.
     /// </summary>
-    internal static async Task<int> StartAsync(string install, string id, bool checkUpdate, ShortcutUi ui)
+    internal static async Task<int> StartAsync(string install, string id, bool checkUpdate, ShortcutUi ui, PlayerProfile? profile = null)
     {
+        if (profile is not null) PlayerInvite.Register(profile, Path.Combine(install, PlayerInstall.ToolFolder, PlayerInstall.WindowlessName), keepWorking: true);
         var server = Path.Combine(install, "servers", id);
         var connection = Path.Combine(server, "server.json");
         var title = Remembered(server, "name", "server.json") ?? PlayerInstall.DefaultServerName;
@@ -208,7 +211,7 @@ internal static class PlayerMode
         finally { ui.Hide(); }
     }
 
-    /// <summary>A start that failed, in the player's words. The server's address is never shown: the Play file keeps it hidden too.</summary>
+    /// <summary>A start that failed, in the player's words. The server's address is never shown.</summary>
     internal static PlayerProblem StartProblem(Exception exception, string title, string? host, string log)
     {
         var details = PlayerProblem.Describe(exception);
@@ -216,7 +219,7 @@ internal static class PlayerMode
         for (var inner = exception; inner is not null; inner = inner.InnerException)
             if (inner is System.Security.Authentication.AuthenticationException)
                 return new(title, $"{title} did not prove it is the server this shortcut was made for.",
-                    "Ask the host for a new Play file and double-click it.", details, log);
+                    "Ask the host for a new invite link and open it.", details, log);
         // Batch 697: a local listener that could not bind (taken after BusyPort looked) is this PC's port, not the server.
         if (exception is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse }) return PortInUse(title, null, details, log);
         if (exception is HttpRequestException { StatusCode: null } or TaskCanceledException or SocketException)
@@ -226,7 +229,7 @@ internal static class PlayerMode
             "Choose Try again. If it keeps happening, choose Copy and send the text to the host.", details, log);
     }
 
-    /// <summary>The install's AIR or game client is gone (moved or deleted since the install): the Play file repairs it.</summary>
+    /// <summary>The install's AIR or game client is gone (moved or deleted since the install): the invite link repairs it.</summary>
     private static PlayerProblem? MissingClient(string server, string title, string log)
     {
         var air = Remembered(server, "airRoot");
@@ -235,7 +238,7 @@ internal static class PlayerMode
         if (air is null || !File.Exists(Path.Combine(air, AirFile))) (label, missing) = ("AIR client", air ?? "(not recorded)");
         else if (game is null || !File.Exists(game)) (label, missing) = ("game client", game is null ? "(not recorded)" : Path.GetDirectoryName(game)!);
         return label is null ? null : new(title, $"The {label} is missing.",
-            $"{title} can't find it in {missing}. Double-click {title}'s Play file again to repair the setup.",
+            $"{title} can't find it in {missing}. Open {title}'s invite link again to repair the setup.",
             $"Missing: {missing}", log);
     }
 

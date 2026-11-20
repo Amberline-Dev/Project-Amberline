@@ -70,7 +70,8 @@ internal static class FolderMove
     internal static string PointerPath(string localAppData) => Path.Combine(localAppData, HostName, "install.json");
 
     /// <summary>
-    /// The player tool's per-user folder (batch 647): Play.cmd's download, the install record, the logs, the play mode's stage. A name
+    /// The player tool's per-user folder (batch 647): the app's own copy and the invite's download (Play.cmd's before batch 917),
+    /// the install record, the logs, the play mode's stage. A name
     /// of its own, so it never lies inside the host's <c>%LOCALAPPDATA%\Amberline 132</c> (pointer, data), also after the public rename.
     /// NOT RETAIL (batch 829): this line's own, the home install's name and " Player" (<c>%LOCALAPPDATA%\Amberline 132 Player</c>), so a
     /// friend who also plays on a 1.0.0.126 server keeps two player installs that never meet (that line's is <c>Amberline Player</c>).

@@ -22,6 +22,8 @@ public static class HostReleaseChecks
     // Batch 829: the line's own zip name, as the update check looks for it (Amberline-1.4.0-win-x64.zip on 126, Amberline-132-1.4.0-... on 132).
     private static readonly string ZipName = HostUpdates.ZipName(new Version(Version));
     private static readonly string NotesName = ZipName.Replace("-win-x64.zip", "-release-notes.md", StringComparison.Ordinal);
+    // Batch 917: the players' app beside the zip (the invite spec's asset name: Amberline-Player-<v>.exe, Amberline-132-Player-<v>.exe).
+    private static readonly string PlayerName = ZipName.Replace($"-{Version}-win-x64.zip", $"-Player-{Version}.exe", StringComparison.Ordinal);
 
     /// <summary>The release check's inputs: the line's facts, the stand-in game, AIR and built parts, and the script's own repository.</summary>
     private sealed record Release(JsonElement PatchJson, string Game, string Air, string Parts, string Repo, string Tools, string StartHere,
@@ -55,6 +57,10 @@ public static class HostReleaseChecks
         using (var archive = ZipFile.Open(Path.Combine(parts, "companion.zip"), ZipArchiveMode.Create))
         using (var entry = new StreamWriter(archive.CreateEntry("Amberline.AirCompanion.exe").Open(), new UTF8Encoding(false)))
             entry.Write("companion");
+        // Batch 917: the players' app as the single-file publish leaves it: the one program, and files beside it that stay out.
+        WriteFile(Path.Combine(parts, "player-app", "Amberline.AirCompanion.exe"), "the players' app");
+        WriteFile(Path.Combine(parts, "player-app", "Play.cmd"), "@echo off");
+        WriteFile(Path.Combine(parts, "player-app", "capabilities.json"), "{}");
 
         // The script's own tools and the native table it reads, in a repository of their own with one commit, where the checkout
         // has them (batch 797): the tools in host/tools, exehost.c and START-HERE.cmd in the patch folder.
@@ -68,7 +74,7 @@ public static class HostReleaseChecks
         var script = Path.Combine(tools, "build-server.ps1");
         var startHere = Path.Combine(repo, patch, "START-HERE.cmd");
         File.Copy(AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "build-server.ps1")), script);
-        File.Copy(AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "play-bootstrap.cmd")), Path.Combine(tools, "play-bootstrap.cmd"));
+        File.Copy(AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "player-file.ps1")), Path.Combine(tools, "player-file.ps1"));
         File.Copy(AirBootstrapChecks.FindWorkspaceFile(Path.Combine("native", "exehost", "exehost.c")), Path.Combine(repo, patch, "native", "exehost", "exehost.c"));
         File.Copy(AirBootstrapChecks.FindWorkspaceFile("START-HERE.cmd"), startHere);
         File.Copy(AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "guide.ps1")), Path.Combine(tools, "guide.ps1"));
@@ -100,15 +106,18 @@ public static class HostReleaseChecks
             var name = Amberline.AirCompanion.FolderMove.HostName;
             TestAssert.Equal($"{release.PatchJson.GetProperty("home").GetProperty("name").GetString()!.Replace(' ', '-')}-{Version}-win-x64.zip", ZipName,
                 "HostUpdates.ZipName is the line's home name (patch.json) with hyphens");
-            TestAssert.Equal(new[] { NotesName, ZipName, ZipName + ".sha256" }.Order(StringComparer.Ordinal).ToArray(),
+            TestAssert.Equal(new[] { NotesName, PlayerName, PlayerName + ".sha256", ZipName, ZipName + ".sha256" }.Order(StringComparer.Ordinal).ToArray(),
                 Directory.GetFiles(output).Select(path => Path.GetFileName(path)).Order(StringComparer.Ordinal).ToArray(), "the release folder");
+            TestAssert.Equal(Amberline.AirCompanion.InviteLink.Line == "126" ? $"Amberline-Player-{Version}.exe" : $"Amberline-132-Player-{Version}.exe", PlayerName,
+                "the players' app's name (b917-918 invite spec)");
             TestAssert.True(File.ReadAllText(Path.Combine(output, ZipName + ".sha256")).TrimEnd().EndsWith("  " + ZipName, StringComparison.Ordinal),
                 "the .sha256 names the zip the update check reads it for");
             // The publish line uploads the zip under the line's tag, which is where the update check takes it from.
             var asset = HostUpdates.Asset(new Version(Version), ZipName);
             TestAssert.Equal($"{HostUpdates.ReleasesPage}/download/{PlatformLine.ReleaseTagPrefix}{Version}/{ZipName}", asset, "the zip's address");
-            TestAssert.True(built.Output.Contains($"gh release create {PlatformLine.ReleaseTagPrefix}{Version} \"{Path.Combine(output, ZipName)}\"", StringComparison.Ordinal),
-                built.Output);
+            TestAssert.True(built.Output.Contains($"gh release create {PlatformLine.ReleaseTagPrefix}{Version} \"{Path.Combine(output, ZipName)}\" " +
+                $"\"{Path.Combine(output, ZipName)}.sha256\" \"{Path.Combine(output, PlayerName)}\" \"{Path.Combine(output, PlayerName)}.sha256\" --notes-file", StringComparison.Ordinal),
+                "the release attaches the zip, the players' app and their .sha256: " + built.Output);
             var notes = File.ReadAllText(Path.Combine(output, NotesName));
             TestAssert.True(notes.StartsWith($"# {name} {Version}\n", StringComparison.Ordinal) || notes.StartsWith($"# {name} {Version}\r\n", StringComparison.Ordinal),
                 "the notes' title names the line: " + notes.Split('\n')[0]);
@@ -130,6 +139,67 @@ public static class HostReleaseChecks
                 WorkspaceFiles.Patch == "132" ? "126" : "132", "patch.json")));
             var theirs = sibling.RootElement.GetProperty("home").GetProperty("name").GetString()!.Replace(' ', '-') + $"-{Version}-win-x64.zip";
             TestAssert.False(theirs == ZipName, $"the {WorkspaceFiles.Patch} zip {ZipName} is the other line's");
+        }
+        finally
+        {
+            DeleteTree(root);
+        }
+    }
+
+    /// <summary>
+    /// Batch 917: a server package (-Layout Server, through the -PartsFrom seam) writes the invite link, not Play.cmd. With -Version the link is
+    /// in INVITE-LINK.txt and the summary, and it is exactly the player app's codec's link (InviteLink) for the line's tag, the address, the
+    /// friends' port, the package certificate's pin and the server name. Without -Version there is no release to name: no link, and the
+    /// summary says why.
+    /// </summary>
+    [Check("server.build-server-invite-link", TimeoutSeconds = 300)]
+    public static void AServerPackageWritesTheInviteLink()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = AirBootstrapChecks.TemporaryDirectory("league-build-server-invite");
+        try
+        {
+            var release = Prepare(root);
+            const string host = "play.example.test";
+            var port = release.PatchJson.GetProperty("ports").GetProperty("remote").GetInt32();
+            var output = Path.Combine(root, "server");
+            var built = AirBootstrapChecks.RunPowerShell("pwsh", [.. release.Fixture, "-PublicHost", host, "-ServerName", "Test Server", "-Version", Version,
+                "-PartsFrom", release.Parts, "-Output", output]);
+            TestAssert.Equal(0, built.ExitCode, built.Output);
+            string pin;
+            using (var certificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
+                       Path.Combine(output, "platform", "platform-data", "remote", "host.pfx"), null))
+                pin = certificate.GetCertHashString(HashAlgorithmName.SHA256);
+            var link = Amberline.AirCompanion.InviteLink.Link(new(PlatformLine.ReleaseTagPrefix + Version, host, port, pin, "Test Server"));
+            TestAssert.Equal(link + "\r\n", File.ReadAllText(Path.Combine(output, "INVITE-LINK.txt")), "INVITE-LINK.txt holds the codec's link");
+            TestAssert.True(built.Output.Contains("Send each player this invite link", StringComparison.Ordinal) && built.Output.Contains("  " + link, StringComparison.Ordinal),
+                "the summary gives the link: " + built.Output);
+            TestAssert.False(Directory.EnumerateFiles(output, "Play.cmd", SearchOption.AllDirectories).Any() || built.Output.Contains("Play.cmd", StringComparison.Ordinal),
+                "no Play.cmd: " + built.Output);
+            var readMe = File.ReadAllText(Path.Combine(output, "README-DEPLOY.txt"));
+            TestAssert.True(readMe.Contains("INVITE-LINK.txt", StringComparison.Ordinal) && !readMe.Contains("Play.cmd", StringComparison.Ordinal), readMe);
+            TestAssert.False(Directory.EnumerateFiles(output, "*.exe", SearchOption.TopDirectoryOnly).Any(), "a server package has no players' app");
+            // Batch 917 follow-up: BUILD.json names the release, so the package's /manage makes the same link (HostInvite.InviteFor).
+            using (var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(output, "BUILD.json"))))
+                TestAssert.Equal(Version, manifest.RootElement.GetProperty("version").GetString(), "the package's BUILD.json names its release");
+            TestAssert.Equal(link, HostInvite.InviteFor(Path.Combine(output, "platform"), host, port, pin, "Test Server").Link, "/manage's link is INVITE-LINK.txt's");
+
+            // Batch 917 follow-up: without -Version (a development build), or with one before the line's first player-app release (a guide
+            // build from a checkout, 0.0.N), the link names that first release.
+            var first = PlatformLine.ReleaseTagPrefix + release.PatchJson.GetProperty("firstPlayerRelease").GetString();
+            TestAssert.Equal(Amberline.AirCompanion.InviteLink.TagPrefix + Amberline.AirCompanion.InviteLink.FirstPlayerRelease, first, "patch.json and InviteLink agree");
+            foreach (var (name, extra) in new (string, string[])[] { ("server-bare", []), ("server-guide", ["-Version", "0.0.461520"]) })
+            {
+                var other = Path.Combine(root, name);
+                var made = AirBootstrapChecks.RunPowerShell("pwsh", [.. release.Fixture, "-PublicHost", host, "-PartsFrom", release.Parts, "-Output", other, .. extra]);
+                TestAssert.Equal(0, made.ExitCode, made.Output);
+                string otherPin;
+                using (var certificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
+                           Path.Combine(other, "platform", "platform-data", "remote", "host.pfx"), null))
+                    otherPin = certificate.GetCertHashString(HashAlgorithmName.SHA256);
+                TestAssert.Equal(Amberline.AirCompanion.InviteLink.Link(new(first, host, port, otherPin, "Amberline")) + "\r\n",
+                    File.ReadAllText(Path.Combine(other, "INVITE-LINK.txt")), $"{name}: the first player-app release's tag");
+            }
         }
         finally
         {

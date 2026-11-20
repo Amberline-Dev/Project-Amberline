@@ -8,11 +8,22 @@ namespace Amberline.Platform;
 /// <summary>
 /// Loopback-only operator page; remote guests never receive these routes.
 /// NOT RETAIL: Riot ran its own account tools, Tribunal and payment backend. This page lets the host grant testing RP,
-/// issue reward codes, set a new password for an account, read player reports, clear leaver penalties, download the friend launcher and see who is
-/// online (the "Online now" table); none of it is visible to the client protocol.
+/// issue reward codes, set a new password for an account, read player reports, clear leaver penalties, copy the server's invite link (batch 917;
+/// the friend launcher's download before) and see who is online (the "Online now" table); none of it is visible to the client protocol.
 /// </summary>
 public static class PlatformManagement
 {
+    /// <summary>
+    /// NOT RETAIL (batch 917 follow-up): the operator page's one script, its invite link's Copy (the page's policy runs no inline script).
+    /// </summary>
+    public const string CopyScriptPath = "/manage/copy.js";
+    private const string CopyScript = "document.addEventListener('click',event=>{const button=event.target.closest('button[data-copy]');" +
+        "const source=button&&document.getElementById(button.dataset.copy);if(!source)return;" +
+        "const failed=()=>getSelection().selectAllChildren(source);" +
+        "if(!navigator.clipboard){failed();return;}navigator.clipboard.writeText(source.textContent).then(()=>{button.textContent='Copied';},failed);});";
+    /// <summary>The operator page's policy: the Platform's default, plus this origin's script (<see cref="CopyScriptPath"/>).</summary>
+    private const string OperatorPolicy = "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; frame-ancestors 'none'";
+
     public static bool IsLocal(HttpContext context, int port) =>
         context.Connection.LocalPort == port && context.Connection.RemoteIpAddress is { } address && IPAddress.IsLoopback(address) &&
         context.Request.Host.Host is "127.0.0.1" or "localhost" or "[::1]";
@@ -188,10 +199,14 @@ public static class PlatformManagement
     /// The home host's Users page (<see cref="HostInvite"/>, batch 748): the page becomes the dashboard's Advanced, and its friends
     /// part (the launcher download and local registration) is left out: Users takes its place. Null (the operator's start) changes nothing.
     /// </param>
+    /// <param name="inviteLink">
+    /// NOT RETAIL (batch 917 follow-up): the operator page's "Play with friends" invite link, or why there is none
+    /// (<see cref="HostInvite.InviteFor"/>, as the host pages make it), read on each request. Null: the part says to ask Amberline's Users page.
+    /// </param>
     public static void Map(WebApplication app, PlatformAccounts accounts, int localPort, int remotePort,
         Action<long, object>? notify = null, string? publicRegistrationUrl = null, Func<OnlineRow[]>? online = null,
         AirRemoteAccess? remoteAccess = null, Func<string?, string, int>? broadcast = null, PlatformSessions? sessions = null,
-        string? invite = null)
+        string? invite = null, Func<(string? Link, string? Missing)>? inviteLink = null)
     {
         var gate = new object();
         (string Text, string Severity, int Reached)? notice = null;
@@ -366,9 +381,13 @@ public static class PlatformManagement
                 "<label>Severity<select name=severity><option>INFO</option><option selected>WARN</option><option>ERROR</option></select></label><button>Send to players</button></form>";
             var live = online is not null && context.Request.Query["refresh"] != "off";
             var heading = "<h1>Game testing</h1><p>Use the desktop shortcut for solo or multiplayer custom games. Your account and match results are saved.</p>";
+            // NOT RETAIL (batch 917 follow-up): the invite link in place of the friend launcher's Play.cmd, with the host pages' box and Copy.
+            var (link, missing) = inviteLink?.Invoke() ?? (null, "The invite link appears on Amberline's Users page.");
+            var copyLink = link is null ? "" : $"<p><button type=button data-copy=invite-link>Copy</button></p><script src={CopyScriptPath} defer></script>";
             var friends = $$"""
-                <h2>Play with friends</h2><p><a href="/bootstrap/Play.cmd">Download Play.cmd</a> and send that single file to your friends. They select their existing {{PlatformLine.PatchName}} AIR client and game on first launch.</p>
-                {{registration}}<p>The launcher opens only the client.</p>
+                <h2>Play with friends</h2><p>Send this invite link to your friends. They bring their own {{PlatformLine.PatchName}} AIR client and game; the player app the link's page offers sets them up for this server.</p>
+                {{HostInvite.InviteBox(link, missing)}}{{copyLink}}
+                {{registration}}
                 <p>Port {{PlatformLine.HttpPort}} is local-only and cannot be used by friends connecting to your public IP.</p>
                 <p>Friends connect through HTTPS TCP {{remotePort}}; games use the configured UDP game ports. The raw AIR login and RTMP ports stay local.</p>
                 <h2>Create an account</h2><p><a href="/register">Open account registration</a></p>
@@ -395,6 +414,7 @@ public static class PlatformManagement
                 {{RenderLeavers(accounts, field)}}
                 {{RenderReports(accounts, field)}}
                 """;
+            context.Response.Headers.ContentSecurityPolicy = OperatorPolicy;
             return Results.Content($$"""
                 <!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width">{{(live ? "<meta http-equiv=refresh content=5>" : "")}}
                 <title>Game testing · Host</title><style>body{font:17px system-ui;background:#10202b;color:#f4eee0;max-width:900px;margin:5vh auto;padding:24px}label{display:block;margin:14px 0}input,button{font:inherit;padding:9px}input{display:block;width:95%}a{color:#ead399}li{margin:12px 0}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 14px 4px 0;vertical-align:top;font-size:15px}</style>
@@ -402,6 +422,8 @@ public static class PlatformManagement
                 </html>
                 """, "text/html");
         });
+        app.MapGet(CopyScriptPath, (HttpContext context) => !IsLocal(context, localPort) ? Results.NotFound()
+            : Results.Text(CopyScript, "text/javascript; charset=utf-8"));
         // NOT RETAIL (batch 646): the home host's Advanced table, read by page.js; the operator's page has no such route.
         if (invite is not null && online is not null)
             app.MapGet(OnlineJsonPath, (HttpContext context) =>

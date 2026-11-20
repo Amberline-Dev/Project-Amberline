@@ -13,7 +13,7 @@ patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its f
 | Patch | Newest release | Hosting guide |
 |---|---|---|
 | 1.0.0.126 (October 2011) | [Amberline, latest release](https://github.com/Amberline-Dev/Project-Amberline/releases/latest) | [HOSTING.md](HOSTING.md) |
-| 1.0.0.132 (January 2012) | [Amberline 132 0.1.10](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.10) | [132/HOSTING.md](132/HOSTING.md) |
+| 1.0.0.132 (January 2012) | [Amberline 132 0.1.11](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.11) | [132/HOSTING.md](132/HOSTING.md) |
 
 The **Releases** box on the right shows only the 1.0.0.126 line's newest release; [all releases](https://github.com/Amberline-Dev/Project-Amberline/releases)
 lists both lines.
@@ -27,7 +27,7 @@ lists both lines.
    `C:\Amberline`). If Windows warns you, choose **More info**, then **Run anyway**.
 3. **Follow the page in your browser.** Name your server, check your game folders, make your login, then choose **Allow
    through Windows Firewall**.
-4. **Add users.** Choose **Add a user** and send them the Play file and the message it shows.
+4. **Add users.** Choose **Add a user** and send them the invite link (**Copy invite link**) and the message it shows.
 
 From then on, start Amberline from its desktop icon, and keep its window open while you play.
 
@@ -35,13 +35,15 @@ From then on, start Amberline from its desktop icon, and keep its window open wh
 
 ## Join a server
 
-1. **Double-click the `Play.cmd`** your host sent you.
-2. **Choose Use the client zip…** and pick the client zip (`patch-1.0.0.126-client-bundle.zip`): setup unpacks it and installs.
+1. **Open the invite link** your host sent you. On its page choose **Download Amberline Player** and open the file (Windows may
+   say **Windows protected your PC**: choose **More info**, then **Run anyway**).
+2. **Choose Join** on the invite page, or paste the link into the app's window, then **Yes** to add the server.
+3. **Choose Use the client zip…** and pick the client zip (`patch-1.0.0.126-client-bundle.zip`): setup unpacks it and installs.
    Or **check the two folders** it found (**Change…** picks others), then choose **Install**.
-3. **Open the new desktop icon** with your host's server name, and log in with the username and password from your host.
+4. **Open the new desktop icon** with your host's server name, and log in with the username and password from your host.
 
 **Optional: the original 2011 launcher.** If you have that launcher's folder, choose it in the optional **2011 launcher folder** row
-during setup, or run `Play.cmd` again on an install that does not have it yet. Then starting the game opens the launcher, as in 2011.
+during setup, or open the invite link again on an install that does not have it yet. Then starting the game opens the launcher, as in 2011.
 Without it, the game starts as it always has. See [The 2011 launcher](TROUBLESHOOTING.md#the-2011-launcher).
 
 ## Help
@@ -94,7 +96,7 @@ line folder, never in both. Inside each of them:
 | `native/exehost` | the x86 helper that runs unit movement from the player's own game executable (in each line folder) |
 | `tests/Amberline.Tests` | the checks |
 | `START-HERE.cmd`, `patch.json` | the line's setup guide start and its facts (in each line folder); the guide itself is `host/tools/guide.ps1` (the release zip has it in `tools/`) |
-| `tools/` | `check.ps1` (build and checks, in each line folder); in `host/tools`: `build-server.ps1` (the deployable server and the release zip, `-Patch 126` or `-Patch 132`), `package-remote.ps1` (its server stage) and `player-file.ps1` with `play-bootstrap.cmd` (the players' `Play.cmd`) |
+| `tools/` | `check.ps1` (build and checks, in each line folder); in `host/tools`: `build-server.ps1` (the deployable server and the release zip, `-Patch 126` or `-Patch 132`), `package-remote.ps1` (its server stage) and `player-file.ps1` (the server's certificate, which the invite link pins) |
 
 **Requirements:** the .NET SDK named in `global.json`, PowerShell 7.5 or later and Zig (it builds the two native parts for Windows
 and Linux; the build scripts find it as `ZIG`, on `PATH` or in `.tools/zig`). Git is optional: a git checkout records its commit

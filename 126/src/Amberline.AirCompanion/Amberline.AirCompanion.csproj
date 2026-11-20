@@ -3,6 +3,10 @@
     <!-- Stays a console program: the friend launcher runs it with `& exe` and reads its exit code. The players' shortcut starts a
          windowless copy of the same apphost (PlayerInstall.WriteWindowless). -->
     <OutputType>Exe</OutputType>
+    <!-- NOT RETAIL (batch 917): the players' one downloaded file (tools/build-server.ps1, -p:AmberlinePlayerApp=true with the single-file
+         publish) is a Windows program from the start, so opening it, or a Join click, shows no console window. A property of its own, not a
+         global OutputType, which would reach the referenced libraries too. -->
+    <OutputType Condition="'$(AmberlinePlayerApp)' == 'true'">WinExe</OutputType>
     <AssemblyName>Amberline.AirCompanion</AssemblyName>
     <RootNamespace>Amberline.AirCompanion</RootNamespace>
     <DefineConstants>$(DefineConstants);AMBERLINE_RADS_COMPANION</DefineConstants>

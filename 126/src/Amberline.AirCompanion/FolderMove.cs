@@ -65,7 +65,8 @@ internal static class FolderMove
     internal static string PointerPath(string localAppData) => Path.Combine(localAppData, HostName, "install.json");
 
     /// <summary>
-    /// The player tool's per-user folder (batch 647): Play.cmd's download, the install record, the logs, the play mode's stage. A name
+    /// The player tool's per-user folder (batch 647): the app's own copy and the invite's download (Play.cmd's before batch 917),
+    /// the install record, the logs, the play mode's stage. A name
     /// of its own, so it never lies inside the host's <c>%LOCALAPPDATA%\Amberline</c> (pointer, data), also after the public rename.
     /// </summary>
     internal static string PlayerFolder(string localAppData) => Path.Combine(localAppData, "Amberline Player");

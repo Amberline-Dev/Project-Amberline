@@ -413,7 +413,7 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
         try
         {
             // NOT RETAIL: retail's platform always sent its own game server address in the game start. This tunnel tells the host the IPv4
-            // address this PC reaches it at (the Play file's host, resolved as for the usual start), so the host can put it in this player's
+            // address this PC reaches it at (the connection's host, resolved as for the usual start), so the host can put it in this player's
             // game start: the 2011 launcher's own Maestro starts the game with that start unchanged. Every remote start sends it (the usual
             // start keeps its own substitution); a failed lookup sends none. Resolved off the accept loop.
             try

@@ -51,7 +51,7 @@ public static partial class PlatformHome
     private static PlatformHomeNotice[] NeutralNews(string? serverName) =>
     [
         new($"Welcome to {ServerLabel(serverName)}", "Create a custom game, join a queue against other summoners or bots, or visit the store."),
-        new("Invite friends", "Add friends from your friends list. Friends on another PC join with the Play file your host sends them."),
+        new("Invite friends", "Add friends from your friends list. Friends on another PC join with the invite link your host sends them."),
         new("Custom games", "Create a custom game to pick the map, the teams and the bots, then invite friends to it."),
         new("Ladder rankings", "Open Ladder Rankings from a summoner's profile to see the recorded wins and losses on this server."),
         new("Store", "Unlock champions in the store. The free champions listed on the right play for everyone."),

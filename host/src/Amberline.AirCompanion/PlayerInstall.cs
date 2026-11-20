@@ -28,14 +28,19 @@ internal sealed record PlayerProblem(string Title, string WhatHappened, string W
 
 /// <summary>
 /// The Windows user's folders the installer reads and writes, and whether it may write the per-user "Apps" entry in the registry.
-/// Checks pass temporary folders and no registry, never the real profile.
+/// Checks pass temporary folders and no registry, never the real profile. NOT RETAIL (batch 917): <paramref name="Links"/> is the invite
+/// link's scheme registration (<see cref="PlayerInvite.SchemeKey"/>): the real one only in <see cref="Current"/>; a check passes none, or its
+/// own fake.
 /// </summary>
-internal sealed record PlayerProfile(string LocalAppData, string Desktop, bool WritesRegistry = false)
+internal sealed record PlayerProfile(string LocalAppData, string Desktop, bool WritesRegistry = false, PlayerInvite.SchemeKey? Links = null)
 {
     public static PlayerProfile Current() => new(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), WritesRegistry: true);
+        Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), WritesRegistry: true, Links: PlayerInvite.SchemeKey.Windows);
 
-    /// <summary>The per-user folder of the player tool: Play.cmd's download, the record and the install log (<see cref="FolderMove.PlayerFolder"/>).</summary>
+    /// <summary>
+    /// The per-user folder of the player tool: the app's own copy and the invite's download (batch 917; Play.cmd's before), the record and the
+    /// install log (<see cref="FolderMove.PlayerFolder"/>).
+    /// </summary>
     public string PlayerFolder => FolderMove.PlayerFolder(LocalAppData);
 
     /// <summary>The per-user folder before batch 647 (<see cref="FolderMove.OldPlayerFolder"/>): read as a fallback, never written.</summary>
@@ -69,7 +74,7 @@ internal sealed record ClientPins(string Game = RetailClients.GameExecutableSha2
 /// stock 1.0.0.126 AIR and game folders; they are moved into one install folder (a rename on the same drive; on another drive a copy,
 /// a check of every file's size and SHA-256, and only then the removal of the originals), the AIR folder is pointed at the companion's
 /// local endpoints, the companion is copied in, and each server gets its connection, a desktop shortcut and a copy of it in the install
-/// folder. A per-user record says where the install is, so a second server's Play file only adds its own connection and shortcut.
+/// folder. A per-user record says where the install is, so a second server's invite only adds its own connection and shortcut.
 /// </summary>
 internal static class PlayerInstall
 {
@@ -151,7 +156,7 @@ internal static class PlayerInstall
         catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException) { return null; }
     }
 
-    /// <summary>The recorded install when both of its clients still pass their checks; a second server's Play file reuses it as it is.</summary>
+    /// <summary>The recorded install when both of its clients still pass their checks; a second server's invite reuses it as it is.</summary>
     internal static Record? ExistingInstall(PlayerProfile profile, ClientPins pins) => ReadRecord(profile) is { } record &&
         RetailClients.AirProblem(record.Air, pins.Air) is null && RetailClients.GameProblem(record.Game, pins.Game) is null ? record : null;
 
@@ -358,7 +363,7 @@ internal static class PlayerInstall
     /// <summary>
     /// The whole install after <see cref="MakePlan"/>: the moves, the record, the AIR folder pointed at the local endpoints, the player
     /// tool, then this server's connection and shortcut. The record is written right after the moves, so a later step that fails (a
-    /// running tool, say) is repaired by running the Play file again. Batch 639: <paramref name="cancel"/> works until the first
+    /// running tool, say) is repaired by opening the invite link again. Batch 639: <paramref name="cancel"/> works until the first
     /// original is touched; an AIR folder that held other things keeps them (and is removed only when it is left empty); the install
     /// folder gets <c>Uninstall.cmd</c> and the real profile (<see cref="PlayerProfile.WritesRegistry"/>) the per-user entry in
     /// Windows' "Apps" list; each step goes to the install log.
@@ -474,7 +479,7 @@ internal static class PlayerInstall
     /// The server's folder (<c>servers\&lt;id&gt;</c>: its connection, its stage for the play mode, its token cache), its desktop shortcut,
     /// named after the server and holding the game executable's own icon, and a copy of that shortcut in the install folder, so the game
     /// still starts when the desktop icon is gone. A server already known by its pin keeps its folder and its single shortcut pair: the
-    /// connection and the shortcuts' names follow the new Play file.
+    /// connection and the shortcuts' names follow the new invite.
     /// </summary>
     internal static (string Folder, string Shortcut) AddServer(PlayerProfile profile, Record record, AirRemoteInvitation connection, string name)
     {
@@ -554,7 +559,7 @@ internal static class PlayerInstall
     }
 
     /// <summary>
-    /// Copies the player tool from <paramref name="source"/> (Play.cmd's download, or a staged update) into the install's companion folder.
+    /// Copies the player tool from <paramref name="source"/> (the invite's download, or a staged update) into the install's companion folder.
     /// The running program cannot replace itself, so the copy is made beside it and switched in by two renames; a tool still running from the
     /// install folder makes the switch fail and leaves the old one in place. The version mark (<c>&lt;folder&gt;.sha256</c>) follows.
     /// </summary>
@@ -631,7 +636,7 @@ internal static class PlayerInstall
     }
 
     /// <summary>
-    /// The server's manifest (/bootstrap/client.json), as tools/play-bootstrap.cmd reads it. NOT RETAIL (batch 856, design Part 1 step 1):
+    /// The server's manifest (/bootstrap/client.json), as the invite's setup reads it (<see cref="PlayerInvite.SetUpAsync"/>). NOT RETAIL (batch 856, design Part 1 step 1):
     /// <paramref name="MovedTo"/> says the server now runs patch 1.0.0.132 (<see cref="ServerMoved"/>); a normal server never sends it.
     /// </summary>
     internal sealed record Manifest(int Protocol, string? Host, int Port, string? CertificateSha256, string? CompanionSha256,

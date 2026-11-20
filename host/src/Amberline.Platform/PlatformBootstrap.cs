@@ -13,31 +13,27 @@ namespace Amberline.Platform;
 public static class PlatformBootstrap
 {
     /// <summary>
-    /// The manifest and the archive need only the public host and the archive (the player's Play.cmd, tools/player-file.ps1, reads
-    /// both); Play.cmd also needs its template, which a build without the friend launcher leaves out.
+    /// The manifest and the archive need only the public host and the archive (the player app's invite setup and the installed tool's
+    /// update check read both). Batch 917: <c>/bootstrap/Play.cmd</c> is gone; friends get the invite link (<see cref="Folders.InviteLink"/>).
     /// </summary>
-    public static void Map(WebApplication app, string directory, string launcherTemplate, string? publicHost, int port,
-        X509Certificate2 certificate) => Map(app, directory, launcherTemplate, () => publicHost, port, certificate);
+    public static void Map(WebApplication app, string directory, string? publicHost, int port, X509Certificate2 certificate) =>
+        Map(app, directory, () => publicHost, port, certificate);
 
     /// <summary>
     /// <paramref name="publicHost"/> and <paramref name="serverName"/> are read on each request, so the address the home host's
     /// page saves applies without a restart (<see cref="HostSteps"/>). The manifest names the server only when it has a name.
     /// </summary>
-    public static void Map(WebApplication app, string directory, string launcherTemplate, Func<string?> publicHost, int port,
+    public static void Map(WebApplication app, string directory, Func<string?> publicHost, int port,
         X509Certificate2 certificate, Func<string?>? serverName = null)
     {
         var archive = Path.Combine(directory, "companion.zip");
         var fingerprint = certificate.GetCertHashString(HashAlgorithmName.SHA256);
         var checksum = File.Exists(archive) ? Hash(archive) : null;
-        var template = File.Exists(launcherTemplate);
         string? Served() => checksum is not null && publicHost() is { } host && IsHost(host) ? host : null;
         app.MapGet("/bootstrap/client.json", () => Served() is { } host
             ? Manifest(host, port, fingerprint, checksum!, serverName?.Invoke()) : Results.NotFound());
         app.MapGet("/bootstrap/companion.zip", () => Served() is not null
             ? Results.File(archive, "application/zip", "companion.zip", enableRangeProcessing: true) : Results.NotFound());
-        app.MapGet("/bootstrap/Play.cmd", () => template && Served() is { } host
-            ? Results.File(System.Text.Encoding.UTF8.GetBytes(RenderLauncher(File.ReadAllText(launcherTemplate), host, port, fingerprint)),
-                "application/octet-stream", "Play.cmd") : Results.NotFound());
     }
 
     /// <summary>
@@ -55,26 +51,9 @@ public static class PlatformBootstrap
 
     /// <summary>
     /// Batch 829: the name of the player tool's per-user folder (<see cref="Folders.FolderMove.PlayerFolder"/>, "Amberline Player" on 1.0.0.126,
-    /// "Amberline 132 Player" on 1.0.0.132), which the Play file downloads into (<c>__PLAYER__</c>), so each line's Play file fills its own.
+    /// "Amberline 132 Player" on 1.0.0.132), which the moved notice names (<see cref="MovedTo"/>), so each line's player app fills its own.
     /// </summary>
     public static readonly string PlayerFolderName = Path.GetFileName(Folders.FolderMove.PlayerFolder(""));
-
-    /// <param name="serverName">The Play file's server name (<c>__NAME__</c>, <see cref="HostAddress.NameProblem"/>'s rule), put in
-    /// last as <c>tools/player-file.ps1</c> does; null leaves the template's <c>__NAME__</c> as it is.</param>
-    public static string RenderLauncher(string template, string host, int port, string certificateSha256, string? serverName = null)
-    {
-        if (!IsHost(host) || port is < 1 or > 65535 || certificateSha256.Length != 64 ||
-            certificateSha256.Any(c => !char.IsAsciiHexDigit(c)) || serverName is not null && HostAddress.NameProblem(serverName) is not null)
-            throw new ArgumentException("Invalid public launcher endpoint.");
-        // ponytail: obfuscation, not secrecy. Base64(host XOR 0x5A) keeps the public host out of the
-        // friend CMD's plain text (ConvertFrom-HostToken decodes it); real hiding needs a relay or DNS name.
-        var hostToken = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(host).Select(b => (byte)(b ^ 0x5A)).ToArray());
-        var text = template.Replace("__HOST__", hostToken, StringComparison.Ordinal)
-            .Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
-            .Replace("__CERT__", certificateSha256, StringComparison.Ordinal)
-            .Replace("__PLAYER__", PlayerFolderName, StringComparison.Ordinal);
-        return serverName is null ? text : text.Replace("__NAME__", serverName, StringComparison.Ordinal);
-    }
 
     internal static bool IsHost(string? host) => !string.IsNullOrEmpty(host) && host.Length <= 253 &&
         host.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-') &&
@@ -89,6 +68,6 @@ public static class PlatformBootstrap
 
 /// <summary>
 /// NOT RETAIL (batch 856, interface 1): the manifest's <c>movedTo</c>, where an old 1.0.0.126 shortcut's server now runs: its remote port,
-/// its pin (the format of the manifest's own <c>certificateSha256</c>), its name and the player folder its Play file fills.
+/// its pin (the format of the manifest's own <c>certificateSha256</c>), its name and the player folder its player app fills.
 /// </summary>
 public sealed record MovedTo(int Port, string CertificateSha256, string Name, string PlayerFolder);

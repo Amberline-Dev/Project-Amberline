@@ -49,7 +49,7 @@ public sealed record HostNetwork(
 
 /// <summary>
 /// NOT RETAIL: the friend light of the Amberline Host design, section 5.4 (retail's servers needed no home reachability test). Only a
-/// friend outside can show that friends reach this PC, so the first friend whose Play file or companion reaches the public port turns
+/// friend outside can show that friends reach this PC, so the first friend whose player app reaches the public port turns
 /// "Waiting for a friend" green. Kept in <c>host\state.json</c>: a time, and whether it came from the internet or from the home
 /// network; never a friend's address. The file's other entries are left as they are.
 /// </summary>
@@ -79,7 +79,7 @@ public sealed class HostFriendLight
     /// <summary>When a friend last reached it from the home network, which does not show that the router lets friends in; or null.</summary>
     public DateTimeOffset? FromHomeNetwork { get { lock (_gate) return _home; } }
 
-    /// <summary>The friends' tools: the Play file's manifest and archive, the companion's sign-in and its two tunnels.</summary>
+    /// <summary>The friends' tools: the player app's manifest and archive, the companion's sign-in and its two tunnels.</summary>
     public static bool FriendPath(string? path) => path is not null && (path.StartsWith("/bootstrap/", StringComparison.Ordinal) ||
         path is AirRemoteTunnel.SignInPath or AirRemoteTunnel.Path or AirRemoteTunnel.ChatPath);
 
@@ -563,7 +563,7 @@ public sealed class HostDashboard : IAsyncDisposable
         else if (fromHome is { } local && homeOnly) Add("friend", "ok", $"A player on your home network reached Amberline {Ago(now - local)}");
         else if (fromHome is { } near)
             Add("friend", "waiting", $"A player on your home network reached Amberline {Ago(now - near)}. Waiting for a player from the internet.");
-        else Add("friend", "waiting", "Waiting for the first player to start the Play file.");
+        else Add("friend", "waiting", "Waiting for the first player to open the invite link.");
         // NOT RETAIL (batch 856): while the host guides old 1.0.0.126 shortcuts here, one line says whether they are (design Part 2, step 6). It is
         // never "bad": the headline, the network line and the firewall check stay as they were.
         if (_old?.Line() is { } guiding) Add("guiding", guiding.Running ? "ok" : "waiting", guiding.Text);
@@ -610,7 +610,7 @@ public sealed class HostDashboard : IAsyncDisposable
         // DIAGNOSTICS: the made-up games count as running while the switch is on, so the tile and the heading agree with the cards.
         var demo = _demoData ? board.Cards.Count(card => HostDemoData.IsDemo(card.Id)) : 0;
         // The address players type, bare: what Copy address copies, and what the sign-up link is made from. Batch 748: the saved address, the
-        // one Users, Settings, Add a user and the Play file give (the router's public address shows only in the Address line above).
+        // one Users, Settings, Add a user and the invite link give (the router's public address shows only in the Address line above).
         var publicHost = string.IsNullOrWhiteSpace(saved) ? null : saved;
         var signUpLink = _signUp?.Url(publicHost);
         var hiddenCount = Hidden.Count;

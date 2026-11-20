@@ -145,7 +145,7 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
             <p class=notice role=status>{Logins(copied.Length)} copied from your Amberline for {from.Patch}.</p>
             {(taken.Length == 0 ? "" : $"<p>Not copied, because a login here already has the username or summoner name: {names}.</p>")}
             {(found.Unreadable == 0 ? "" : $"<p class=warn>{Logins(found.Unreadable)} could not be read and {(found.Unreadable == 1 ? "was" : "were")} not copied.</p>")}
-            <p class=tip>Each copied login keeps its password and starts here as a new login: what they own and their games stay with your Amberline for {from.Patch}. Users need this server's Play file to play here.</p>
+            <p class=tip>Each copied login keeps its password and starts here as a new login: what they own and their games stay with your Amberline for {from.Patch}. Users need this server's invite link to play here.</p>
             {own}{then?.Invoke()}
             """);
     }

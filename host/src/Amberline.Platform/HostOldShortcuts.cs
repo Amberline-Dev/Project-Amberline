@@ -39,7 +39,7 @@ public sealed class HostOldShortcuts : IAsyncDisposable
 {
     public const string MovePath = HostInvite.UsersPath + "/move", StopPath = MovePath + "/stop";
     public const string StateKey = "guideOldShortcuts";
-    // The Play file takes an archive of up to 512 MB (play-bootstrap.cmd); a key is a few kilobytes, a settings file a few more.
+    // The player tool takes an archive of up to 512 MB (PlayerInstall.DownloadToolAsync); a key is a few kilobytes, a settings file a few more.
     private const long MostArchive = 512L << 20, MostKey = 64 << 10, MostSettings = 1 << 20;
 
     private readonly HostLoop _loop;

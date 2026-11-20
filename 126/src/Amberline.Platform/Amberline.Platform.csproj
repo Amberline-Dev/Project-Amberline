@@ -26,6 +26,9 @@
     <Compile Include="$(HostRoot)src\Amberline.AirCompanion\ClientZip.cs" Link="Folders\ClientZip.cs" />
     <!-- Batch 857: the host's install and its start lock the install folder with the player installer's lock (InstallLock.cs). -->
     <Compile Include="$(HostRoot)src\Amberline.AirCompanion\InstallLock.cs" Link="Folders\InstallLock.cs" />
+    <!-- Batch 917: Users, Add a user and the sign-up page give the invite link the player app reads, with the app's own codec and this line's values. -->
+    <Compile Include="$(HostRoot)src\Amberline.AirCompanion\InviteLink.cs" Link="Folders\InviteLink.cs" />
+    <Compile Include="..\Amberline.AirCompanion\InviteLink.Line.cs" Link="Folders\InviteLink.Line.cs" />
     <ProjectReference Include="../Amberline.Host/Amberline.Host.csproj" />
     <ProjectReference Include="../Amberline.Rtmp/Amberline.Rtmp.csproj" />
   </ItemGroup>

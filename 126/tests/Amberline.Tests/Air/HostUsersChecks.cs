@@ -334,14 +334,18 @@ public static class HostUsersChecks
             StringComparison.Ordinal) && page.Contains("<p id=users-none class=empty hidden>No users match your search.</p>", StringComparison.Ordinal),
             "the three columns and the search's empty line: " + page);
         TestAssert.True(page.Contains($"<a class=button href={HostInvite.AddPath}>Add a user</a>", StringComparison.Ordinal) &&
-            !page.Contains("Get the Play file", StringComparison.Ordinal) && !page.Contains("Copy sign-up link", StringComparison.Ordinal),
-            "Add a user; no Play file while Amberline's template is missing (it would download an error page); no sign-up link while sign-ups are off: " + page);
-        // Review fix 3b: with the template beside the Platform (and the address known), Get the Play file is offered.
+            !page.Contains("Copy sign-up link", StringComparison.Ordinal) && !page.Contains("Play file", StringComparison.Ordinal) &&
+            page.Contains("<button type=button data-copy=invite-link data-needs-script hidden>Copy invite link</button>", StringComparison.Ordinal),
+            "Add a user and Copy invite link; no sign-up link while sign-ups are off: " + page);
+        // Batch 917 (restates review fix 3b's Play file), follow-up: a development build (no BUILD.json version) names the line's first
+        // player-app release; a release names its own.
+        string Tag(string users) => Amberline.AirCompanion.InviteLink.Decode(WebUtility.HtmlDecode(
+            Regex.Match(users, "<pre id=invite-link class=message>([^<]+)</pre>").Groups[1].Value)).Invite?.Tag ?? "no link: " + users;
+        TestAssert.Equal(Amberline.AirCompanion.InviteLink.TagPrefix + Amberline.AirCompanion.InviteLink.FirstPlayerRelease, Tag(page), "a development build's link");
         Directory.CreateDirectory(site.Loop.Paths.App);
-        File.WriteAllText(Path.Combine(site.Loop.Paths.App, HostInvite.TemplateFile), "@echo off\r\n");
+        File.WriteAllText(Path.Combine(site.Loop.Paths.App, "..", "BUILD.json"), "{\"version\":\"1.4.0\"}");
         page = await site.PageAsync(Users, HttpStatusCode.OK);
-        TestAssert.True(page.Contains($"<a class=\"button secondary\" href={HostInvite.PlayFilePath} download>Get the Play file</a>", StringComparison.Ordinal),
-            "Get the Play file, once its template is there: " + page);
+        TestAssert.Equal(PlatformLine.ReleaseTagPrefix + "1.4.0", Tag(page), "a release's link");
         TestAssert.Equal("gone1 never1 online1 player1 seen1 self1", string.Join(" ", Regex.Matches(page, "<tr><td><b>([a-z0-9_]+)</b>").Select(match => match.Groups[1].Value)),
             "every user, by username");
         TestAssert.True(page.Contains("aria-current=page>Users</a>", StringComparison.Ordinal), "the sidebar marks Users: " + page);
@@ -736,16 +740,17 @@ public static class HostUsersChecks
 
     private static async Task EmptyAsync()
     {
-        // Review fix 3b: Amberline does not know its address yet, so although its template is there, no Play file is offered.
+        // Review fix 3b, batch 917: Amberline does not know its address yet, so although it is a release, no invite link is offered.
         await using var site = await Site.OpenAsync("league-host-users-empty", address: () => null);
         Directory.CreateDirectory(site.Loop.Paths.App);
-        File.WriteAllText(Path.Combine(site.Loop.Paths.App, HostInvite.TemplateFile), "@echo off\r\n");
+        File.WriteAllText(Path.Combine(site.Loop.Paths.App, "..", "BUILD.json"), "{\"version\":\"1.4.0\"}");
         var page = await site.PageAsync(Users, HttpStatusCode.OK);
         TestAssert.True(page.Contains("<h1>Users (0)</h1>", StringComparison.Ordinal) &&
             page.Contains("<p class=empty>No users yet. Add one or turn on sign-ups.</p>", StringComparison.Ordinal) &&
             !page.Contains("<table", StringComparison.Ordinal) && !page.Contains("user-search", StringComparison.Ordinal) &&
             page.Contains($"href={HostInvite.AddPath}>Add a user</a>", StringComparison.Ordinal), "the empty line and Add a user: " + page);
-        TestAssert.False(page.Contains("Get the Play file", StringComparison.Ordinal), "no Play file before the address is known: " + page);
+        TestAssert.True(!page.Contains("Copy invite link", StringComparison.Ordinal) &&
+            page.Contains("The invite link appears here once Amberline knows your address.", StringComparison.Ordinal), "no invite link before the address is known: " + page);
         HostPagesChecks.Accessible(page, "the empty Users page", HostDashboard.Policy);
     }
 

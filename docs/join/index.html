@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join Amberline</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --text: #1c2130;
+  --muted: #5b6375;
+  --line: #d6dbe4;
+  --accent: #2a5db0;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121419;
+    --card: #1b1f27;
+    --text: #e7eaf0;
+    --muted: #a6aec0;
+    --line: #2c3340;
+    --accent: #6f9fe8;
+    --on-accent: #0b1220;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+main { max-width: 36rem; margin: 0 auto; padding: 2rem 1rem; }
+h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 1rem; overflow-wrap: anywhere; }
+p { margin: .25rem 0 .75rem; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; }
+.muted { color: var(--muted); font-size: .92rem; }
+.btn {
+  display: inline-block;
+  max-width: 100%;
+  margin: .25rem 0 .75rem;
+  padding: .6rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.btn.secondary { background: transparent; color: var(--accent); }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.steps > li { position: relative; counter-increment: step; padding: 0 0 1.5rem 2.5rem; }
+.steps > li:last-child { padding-bottom: 0; }
+.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+  line-height: 1.75rem;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="heading">Join Amberline</h1>
+  <noscript><p class="card">This page needs JavaScript to read the invite.</p></noscript>
+  <section id="steps" class="card" hidden>
+    <ol class="steps">
+      <li>
+        <a id="download" class="btn">Download Amberline Player</a>
+      </li>
+      <li>
+        <p>Open it. If Windows says "Windows protected your PC", choose More info, then Run anyway.</p>
+      </li>
+      <li>
+        <a id="join" class="btn">Join</a>
+        <p class="muted">If nothing happens, open Amberline Player and paste this page's link.</p>
+        <button id="copy" class="btn secondary" type="button">Copy invite link</button>
+        <p id="copied" class="muted" role="status"></p>
+      </li>
+    </ol>
+  </section>
+  <section id="problem" class="card" hidden>
+    <p id="problemText"></p>
+  </section>
+</main>
+<script>
+/* Amberline join page: one file that asks for nothing. It reads the invite after the # of its own address, checks it, and
+   shows the server name as text only. The invite is never sent anywhere. */
+const RELEASES = "https://github.com/Amberline-Dev/Project-Amberline/releases/download/";
+const DAMAGED = "This invite link is damaged. Ask the host to copy it again.";
+const NEWER = "This invite needs a newer Amberline Player. Download it from the invite page.";
+const LINES = {
+  "126": { scheme: "amberline-player", tag: /^v(\d+\.\d+\.\d+)$/, asset: "Amberline-Player-" },
+  "132": { scheme: "amberline-132-player", tag: /^p132-v(\d+\.\d+\.\d+)$/, asset: "Amberline-132-Player-" }
+};
+
+/* The bare base64url invite: what follows #, without a scheme, surrounding spaces and quotes. */
+function bareInvite(text) {
+  let s = String(text == null ? "" : text).trim().replace(/^["']+|["']+$/g, "").trim();
+  const hash = s.indexOf("#");
+  if (hash >= 0) s = s.slice(hash + 1);
+  const colon = s.indexOf(":");
+  if (colon >= 0) s = s.slice(colon + 1).replace(/^\/+/, "").replace(/\/+$/, "");
+  return s;
+}
+
+function decodeBase64Url(s) {
+  if (!/^[A-Za-z0-9_-]+$/.test(s) || s.length % 4 === 1) return null;
+  const padded = s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=");
+  try {
+    const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (e) {
+    return null;
+  }
+}
+
+/* PlatformBootstrap.IsHost: a DNS name or an IPv4 address, ASCII letters, digits, dots and hyphens, at most 253 characters. */
+function isHost(host) {
+  return typeof host === "string" && host.length <= 253 && /^[A-Za-z0-9.-]+$/.test(host) &&
+    host.split(".").every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label));
+}
+
+/* HostAddress.NameProblem: 1 to 40 letters, digits, spaces, dots, hyphens or underscores, starting and ending with a letter or digit. */
+function isName(name) {
+  return typeof name === "string" && /^[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,38}[A-Za-z0-9])?$/.test(name) &&
+    !/^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?$/i.test(name);
+}
+
+/* Returns { invite, encoded } for a valid invite, else { error } with the spec's message. */
+function decodeInvite(text) {
+  const encoded = bareInvite(text);
+  const json = decodeBase64Url(encoded);
+  let invite = null;
+  try {
+    invite = json === null ? null : JSON.parse(json);
+  } catch (e) {
+    invite = null;
+  }
+  if (!invite || typeof invite !== "object") return { error: DAMAGED };
+  if (!["v", "line", "tag", "host", "port", "pin", "name"].every((key) => key in invite)) return { error: DAMAGED };
+  if (invite.v !== 1) return { error: Number.isInteger(invite.v) && invite.v > 1 ? NEWER : DAMAGED };
+  const line = invite.line === "126" || invite.line === "132" ? LINES[invite.line] : null;
+  const valid = line !== null && typeof invite.tag === "string" && line.tag.test(invite.tag) && isHost(invite.host) &&
+    Number.isInteger(invite.port) && invite.port >= 1 && invite.port <= 65535 &&
+    typeof invite.pin === "string" && /^[0-9A-Fa-f]{64}$/.test(invite.pin) && isName(invite.name);
+  return valid ? { invite: invite, encoded: encoded } : { error: DAMAGED };
+}
+
+/* The release's own player: the asset of the invite's tag (126 v<version>, 132 p132-v<version>). */
+function downloadUrl(invite) {
+  const line = LINES[invite.line];
+  return RELEASES + invite.tag + "/" + line.asset + line.tag.exec(invite.tag)[1] + ".exe";
+}
+
+function joinUrl(invite, encoded) {
+  return LINES[invite.line].scheme + ":" + encoded;
+}
+
+function wire() {
+  const $ = (id) => document.getElementById(id);
+  const show = (text) => {
+    $("problemText").textContent = text;
+    $("problem").hidden = false;
+  };
+  const result = decodeInvite(location.hash);
+  if (result.error) return show(result.error);
+  const serverName = result.invite.name;
+  document.title = "Join " + serverName;
+  $("heading").textContent = "Join " + serverName;
+  if (!/Windows/.test(navigator.userAgent)) return show("Open this link on your Windows PC.");
+  $("download").href = downloadUrl(result.invite);
+  $("join").href = joinUrl(result.invite, result.encoded);
+  $("join").textContent = "Join " + serverName;
+  $("steps").hidden = false;
+  $("copy").addEventListener("click", () => {
+    Promise.resolve()
+      .then(() => navigator.clipboard.writeText(location.href))
+      .then(() => { $("copied").textContent = "Copied. Paste it into Amberline Player."; },
+            () => { $("copied").textContent = "Could not copy. Copy the address from the address bar instead."; });
+  });
+}
+
+if (typeof document !== "undefined") wire();
+</script>
+</body>
+</html>

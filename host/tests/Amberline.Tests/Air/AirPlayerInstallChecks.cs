@@ -112,7 +112,7 @@ public static partial class AirPlayerInstallChecks
         TestAssert.True(record is not null && record == first.Record, "the per-user record does not name the install");
         TestAssert.Equal(Path.Combine(fixture.Install, "air"), record!.Air);
 
-        // The second server's Play file: the recorded clients are used as they are; only its connection and shortcut are added.
+        // The second server's invite: the recorded clients are used as they are; only its connection and shortcut are added.
         var plan = PlayerInstall.MakePlan(fixture.Profile, record.Air, record.Game, record.Install, fixture.Pins);
         TestAssert.Equal(0, plan.Moves.Count);
         var second = PlayerInstall.Install(fixture.Profile, plan, Connection("two.example.test", PinB), "Bravo", fixture.Tool);
@@ -139,12 +139,12 @@ public static partial class AirPlayerInstallChecks
         TestAssert.Equal("host=prod.example.test\r\n", File.ReadAllText(Path.Combine(record.Air, "lol.properties.stock")));
         TestAssert.True(RetailClients.AirProblem(record.Air, fixture.Pins.Air) is null, "the configured AIR folder no longer passes its check");
 
-        // Running the first Play file again repairs its shortcut and its copy in the install folder, and keeps everything else.
+        // Opening the first invite again repairs its shortcut and its copy in the install folder, and keeps everything else.
         File.Delete(first.Shortcut);
         File.Delete(Path.Combine(fixture.Install, "Alpha.lnk"));
         PlayerInstall.Install(fixture.Profile, plan, Connection("one.example.test", PinA), "Alpha", fixture.Tool);
-        TestAssert.True(File.Exists(first.Shortcut), "running the Play file again did not repair its shortcut");
-        TestAssert.True(File.Exists(Path.Combine(fixture.Install, "Alpha.lnk")), "running the Play file again did not repair the install folder's copy");
+        TestAssert.True(File.Exists(first.Shortcut), "opening the invite again did not repair its shortcut");
+        TestAssert.True(File.Exists(Path.Combine(fixture.Install, "Alpha.lnk")), "opening the invite again did not repair the install folder's copy");
         TestAssert.Equal(2, Directory.GetFiles(fixture.Profile.Desktop).Length);
         TestAssert.Equal(2, Directory.GetDirectories(Path.Combine(fixture.Install, "servers")).Length);
     });
@@ -268,7 +268,7 @@ public static partial class AirPlayerInstallChecks
         var record = first.Record;
         var plan = PlayerInstall.MakePlan(fixture.Profile, record.Air, record.Game, record.Install, fixture.Pins);
 
-        // The same server (its pin) sends a Play file with a new address and a new name: one connection, one shortcut.
+        // The same server (its pin) sends an invite with a new address and a new name: one connection, one shortcut.
         var again = PlayerInstall.Install(fixture.Profile, plan, Connection("new.example.test", PinA), "Alpha Two", fixture.Tool);
         TestAssert.Equal(first.Server, again.Server);
         TestAssert.Equal(1, Directory.GetDirectories(Path.Combine(fixture.Install, "servers")).Length);
@@ -324,10 +324,11 @@ public static partial class AirPlayerInstallChecks
     public static void AHomeNetworkServersPlayFileInstalls() => LanPlayFileAsync().GetAwaiter().GetResult();
 
     /// <summary>
-    /// Batch 632: the Play file of a server for the home network only (<c>addressSource</c> <c>lan</c>) holds its private address,
-    /// and the friend's side takes it: Play.cmd's pinned download (which keeps the address the pinned manifest advises), the
+    /// Batch 632: the invite of a server for the home network only (<c>addressSource</c> <c>lan</c>) holds its private address,
+    /// and the friend's side takes it: the invite's pinned download (which keeps the address the pinned manifest advises), the
     /// connection file it writes and the installer, which keeps the address in the server's connection. The check cannot listen on a
-    /// home-network address, so the download reaches the Platform on loopback and the manifest advises 192.168.1.20.
+    /// home-network address, so the download reaches the Platform on loopback and the manifest advises 192.168.1.20. Batch 917: the
+    /// invite link on Users replaced Play.cmd (its release tag comes from the release's BUILD.json version).
     /// </summary>
     private static async Task LanPlayFileAsync()
     {
@@ -336,8 +337,7 @@ public static partial class AirPlayerInstallChecks
         var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         var home = HostModeChecks.Home.Create("league-host-lan-play-file");
         Directory.CreateDirectory(home.Loop.Paths.App);
-        File.Copy(AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", Amberline.Platform.HostInvite.TemplateFile)),
-            Path.Combine(home.Loop.Paths.App, Amberline.Platform.HostInvite.TemplateFile));
+        File.WriteAllText(Path.Combine(home.Loop.Paths.App, "..", "BUILD.json"), "{\"version\":\"1.4.0\"}");
         // A real archive for the download to unpack (Home.Create's stand-in is random bytes).
         var served = ServedTool(home.Root, "one");
         File.Copy(Path.Combine(served.Folder, "companion.zip"), Path.Combine(home.Loop.Paths.Bootstrap, "companion.zip"), overwrite: true);
@@ -353,36 +353,22 @@ public static partial class AirPlayerInstallChecks
             using var browser = home.Client();
             await HostModeChecks.WaitForHealthAsync(browser, "ready", run);
             await home.SignInAsync(browser);
-            var invite = await browser.GetStringAsync(Amberline.Platform.HostInvite.AddPath);
-            TestAssert.True(invite.Contains("Players must be on the same home network as this PC.", StringComparison.Ordinal), "Invite says it: " + invite);
-            using var file = await browser.GetAsync(Amberline.Platform.HostInvite.PlayFilePath);
-            var play = await file.Content.ReadAsStringAsync();
-            TestAssert.Equal(System.Net.HttpStatusCode.OK, file.StatusCode, play);
-            var token = System.Text.RegularExpressions.Regex.Match(play, "\\$HostToken = '([^']+)'").Groups[1].Value;
-            TestAssert.Equal(Lan, System.Text.Encoding.ASCII.GetString(Convert.FromBase64String(token).Select(b => (byte)(b ^ 0x5A)).ToArray()),
-                "the Play file holds the home-network address");
-            TestAssert.False(play.Contains(Lan, StringComparison.Ordinal), "never in plain text");
-            var pin = System.Text.RegularExpressions.Regex.Match(play, "\\$Pin = '([0-9A-F]{64})'").Groups[1].Value;
+            var add = await browser.GetStringAsync(Amberline.Platform.HostInvite.AddPath);
+            TestAssert.True(add.Contains("Players must be on the same home network as this PC.", StringComparison.Ordinal), "Add a user says it: " + add);
+            var users = await browser.GetStringAsync(Amberline.Platform.HostInvite.UsersPath);
+            var link = System.Net.WebUtility.HtmlDecode(System.Text.RegularExpressions.Regex.Match(users, "<pre id=invite-link class=message>([^<]+)</pre>").Groups[1].Value);
+            var invite = InviteLink.Decode(link).Invite ?? throw new InvalidOperationException("Users gives no invite link: " + users);
+            TestAssert.Equal(new InviteLink.Invite(InviteLink.Tag(new Version(1, 4, 0)), Lan, home.RemotePort, invite.Pin, "Test Server"), invite,
+                "the invite link holds the home-network address, the friends' port, the release and the name");
+            TestAssert.False(link.Contains(Lan, StringComparison.Ordinal), "never in plain text");
 
-            // Play.cmd's own PowerShell part (Windows PowerShell 5.1): the pinned download and the connection file.
-            var declarations = Path.Combine(home.Root, "declarations.ps1");
-            File.WriteAllText(declarations, AirPlayFileChecks.Declarations(play), new System.Text.UTF8Encoding(false));
-            var driver = Path.Combine(home.Root, "lan.ps1");
-            File.WriteAllText(driver, """
-                param([string]$DeclarationsPath, [int]$Port, [string]$Pin, [string]$Root)
-                $ErrorActionPreference = 'Stop'
-                . $DeclarationsPath
-                $tool = Update-Companion '127.0.0.1' $Port $Pin $Root
-                Write-Connection (Join-Path $Root 'server.json') $tool.Host $Port $Pin
-                Write-Output ('advised|' + $tool.Host + '|' + (Test-Path -LiteralPath (Join-Path $tool.Folder $Executable)))
-                """, new System.Text.UTF8Encoding(false));
+            // The invite's pinned download (PlayerInvite.SetUpAsync) and its connection file.
             var cache = Path.Combine(home.Root, "player-cache");
-            var result = AirBootstrapChecks.RunPowerShell(AirPlayFileChecks.WindowsPowerShell(), ["-File", driver, "-DeclarationsPath", declarations,
-                "-Port", home.RemotePort.ToString(System.Globalization.CultureInfo.InvariantCulture), "-Pin", pin, "-Root", cache]);
-            TestAssert.Equal(0, result.ExitCode, result.Output);
-            TestAssert.True(result.Output.Contains($"advised|{Lan}|True", StringComparison.Ordinal), "the pinned download keeps the advised home-network address: " + result.Output);
+            var (tool, arguments) = await PlayerInvite.SetUpAsync(cache, "127.0.0.1", home.RemotePort, invite.Pin, invite.Name, CancellationToken.None);
+            TestAssert.True(File.Exists(tool) && arguments[0] == "--install", "the setup's tool: " + tool);
             connection = Amberline.AirCompanion.Program.ReadRemoteInvitation(Path.Combine(cache, "server.json"));
-            TestAssert.Equal((Lan, home.RemotePort, pin), (connection.Host, connection.Port, connection.CertificateSha25664hex), "the connection file");
+            TestAssert.Equal((Lan, home.RemotePort, invite.Pin), (connection.Host, connection.Port, connection.CertificateSha25664hex),
+                "the pinned download keeps the advised home-network address");
         }
         finally
         {
@@ -719,15 +705,15 @@ public static partial class AirPlayerInstallChecks
         TestAssert.False(File.Exists(bravo.Shortcut), "removing Bravo left its desktop shortcut");
         TestAssert.Equal("the player's own file", File.ReadAllText(Path.Combine(install, "Bravo.lnk")), "removing Bravo deleted the player's own file");
 
-        // An install from before this batch has no folderShortcut and no copy: the next Play file writes both.
+        // An install from before this batch has no folderShortcut and no copy: the next invite writes both.
         var delta = PlayerInstall.Install(fixture.Profile, plan, Connection("four.example.test", new string('D', 64)), "Delta", fixture.Tool);
         var stored = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(delta.Server, "server.json")))!.AsObject();
         stored.Remove("folderShortcut");
         File.WriteAllText(Path.Combine(delta.Server, "server.json"), stored.ToJsonString());
         File.Delete(Path.Combine(install, "Delta.lnk"));
         PlayerInstall.Install(fixture.Profile, plan, Connection("four.example.test", new string('D', 64)), "Delta", fixture.Tool);
-        TestAssert.True(File.Exists(Path.Combine(install, "Delta.lnk")), "the next Play file did not write the copy");
-        TestAssert.Equal(Path.Combine(install, "Delta.lnk"), FolderShortcutOf(delta.Server), "the next Play file did not name the copy");
+        TestAssert.True(File.Exists(Path.Combine(install, "Delta.lnk")), "the next invite did not write the copy");
+        TestAssert.Equal(Path.Combine(install, "Delta.lnk"), FolderShortcutOf(delta.Server), "the next invite did not name the copy");
 
         // A missing Desktop folder: the desktop write fails as it always has, but the copy in the install folder is written first.
         Directory.Delete(fixture.Profile.Desktop, recursive: true);
@@ -907,7 +893,7 @@ public static partial class AirPlayerInstallChecks
                 ui = new FakeStart(false);
                 TestAssert.Equal(2, await PlayerMode.StartAsync(fixture.Install, id, checkUpdate: true, ui.Seam));
                 TestAssert.Equal("Alpha did not prove it is the server this shortcut was made for.", ui.Problems.Single().WhatHappened);
-                TestAssert.True(ui.Problems.Single().WhatToDo.Contains("new Play file", StringComparison.Ordinal), ui.Problems.Single().WhatToDo);
+                TestAssert.True(ui.Problems.Single().WhatToDo.Contains("new invite link", StringComparison.Ordinal), ui.Problems.Single().WhatToDo);
             }
 
             // The server answers: the update check passes and play starts, with the start window's second line; its window callback
@@ -923,13 +909,13 @@ public static partial class AirPlayerInstallChecks
                     TestAssert.True(ui.Hidden >= 2, "the start window was not closed by the client's window and at the end");
                 }
 
-            // The AIR client is gone from the install: the dialog says so and names the Play file; nothing is downloaded or played.
+            // The AIR client is gone from the install: the dialog says so and names the invite link; nothing is downloaded or played.
             File.Delete(Path.Combine(result.Record.Air, "LolClient.exe"));
             ui = new FakeStart(false);
             TestAssert.Equal(2, await PlayerMode.StartAsync(fixture.Install, id, checkUpdate: true, ui.Seam));
             var missing = ui.Problems.Single();
             TestAssert.Equal("The AIR client is missing.", missing.WhatHappened);
-            TestAssert.True(missing.WhatToDo.Contains(result.Record.Air, StringComparison.Ordinal) && missing.WhatToDo.Contains("Play file again", StringComparison.Ordinal), missing.WhatToDo);
+            TestAssert.True(missing.WhatToDo.Contains(result.Record.Air, StringComparison.Ordinal) && missing.WhatToDo.Contains("invite link again", StringComparison.Ordinal), missing.WhatToDo);
             TestAssert.Equal(0, ui.Played);
         }
         finally { Cleanup(root); }

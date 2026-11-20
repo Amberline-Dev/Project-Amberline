@@ -33,15 +33,15 @@ Every problem Amberline shows says what happened and what to do. Most also have 
 
 #### A-NET-01
 
-**Another program uses a port Amberline needs (8490). Is Amberline already running for another Windows user, or a Play file for
-another server open?** (The number is the port.)
+**Another program uses a port Amberline needs (8490). Is Amberline already running for another Windows user, or the player app
+for another server open?** (The number is the port.)
 
 Amberline cannot start, or cannot update, because another program listens on one of its ports. The usual causes:
 
 - Amberline is running for another Windows user on this PC. Sign in as that user and close its window.
 - A 1.0.0.126 Amberline runs on this PC (port 5222). Both lines use that port for chat, so only one of them runs at a time:
   close the other one's window, then start this one.
-- You opened another host's server with its Play file, and its game client is still open. Close the game client and the game.
+- You opened another host's server with its invite link, and its game client is still open. Close the game client and the game.
 - Another program uses the port. Close it, then start Amberline again.
 
 #### A-NET-02
@@ -108,9 +108,9 @@ host, then press **Test again**.
 
 #### A-NET-09
 
-**Your address changed at 07:12. Users need the new Play file to reach you.** Your internet address changed, often because
-the router restarted. Amberline already uses the new one. Choose **Download the Play file** and send it to every user; it
-holds the new address. Then choose **Hide**. See
+**Your address changed at 07:12. Users need the new invite link to reach you.** Your internet address changed, often because
+the router restarted. Amberline already uses the new one. Choose **Copy the new invite link** (it opens Users) and send the link
+to every user; it holds the new address. Then choose **Hide**. See
 [When your address changes](HOSTING.md#when-your-address-changes).
 
 #### A-NET-10
@@ -182,12 +182,13 @@ for example by emptying the Recycle Bin, or games and updates may fail to save. 
 
 #### A-CERT-01
 
-**Your users' Play files stop working on 1 March 2028. Make new ones.** Or **Your users' Play files stopped working:
-Amberline's certificate ran out.** Each Play file checks your server's certificate. This message shows 60 days before the
+**Your users' invite link and shortcuts stop working on 1 March 2028. Make a new link.** Or **Your users' invite link and
+shortcuts stopped working: Amberline's certificate ran out.** Each invite link and each user's desktop icon checks your server's
+certificate. This message shows 60 days before the
 certificate runs out. New installs get a certificate that lasts 20 years.
 
-Choose **Make new Play files**. Amberline makes a new certificate and restarts (not while a game runs). Then send every user
-the new Play file: their old ones stop working at once.
+Choose **Make a new invite link**. Amberline makes a new certificate and restarts (not while a game runs). Then send every user
+the new invite link: their old ones stop working at once.
 
 ### Running (A-RUN)
 
@@ -332,27 +333,42 @@ The host's link `https://<address>:<port>/register` (see [Sign-ups](HOSTING.md#s
 - **Your connection is not private** (Firefox: **Warning: Potential Security Risk Ahead**): the server has its own certificate,
   which the browser does not know. Choose **Advanced**, then the button that goes on (Chrome: **Proceed to ... (unsafe)**, Edge:
   **Continue to ... (unsafe)**, Firefox: **Accept the Risk and Continue**).
-- The browser warns about `Play.cmd` (for example **not commonly downloaded**): it is a command file from a new site. Choose
-  **Keep** (Edge: **...**, **Keep**, **Keep anyway**). When you double-click it, Windows may ask whether to run it: choose **Run**
-  (or **More info**, **Run anyway**).
+- **Open the invite** opens the server's Join page: see [The invite link](#the-invite-link).
 - The page cannot be found: the host has turned sign-ups off. Ask the host.
 - **Too many sign-ups. Try again in an hour.** Too many logins were made in the last hour. Try again later.
 - **The page expired. Please try again.** Open the link again and fill in the form again.
-- **The Play file is not ready. Ask the host for it.** The server has no address or Play file yet: ask the host to send it.
+- **The invite link appears here once Amberline knows your address. Ask the host for the invite link.** The server has no
+  address yet, so it has no invite link. Ask the host to send it.
 
-### The Play file
+### The invite link
 
-When `Play.cmd` cannot finish, its window says **Play could not finish:** and why:
+Your host sends one link. It opens the server's Join page:
 
-- **Can't reach the server.** Check that you are online and that the host's server is on, then double-click
-  `Play.cmd` again.
-- **The server's identity does not match this Play file.** or **This Play file does not match the server any more.** Ask the
-  host for a new Play file.
-- **The downloaded player tool does not match the SHA-256 the server published, so nothing was changed.** Double-click
-  `Play.cmd` again; if it happens again, tell the host.
+1. **Download Amberline Player** there (one file from the project's release, the same for everyone) and open it. Windows may say
+   **Windows protected your PC**: choose **More info**, then **Run anyway** (once). On Windows 11 with **Smart App Control** on,
+   Windows blocks the app completely; Amberline cannot change that.
+2. The app puts itself in its own folder and says **Now click Join on your invite page, or paste the invite link here.** Choose
+   **Join** on the page (the browser asks once to open Amberline Player: allow it), or paste the link into the app's box and choose
+   **Add**.
+3. The app asks **Add <server name> (<address>)?** Choose **Yes**. Nothing is added or downloaded before that. Then it
+   downloads the server's player tool (about 64 MB, once) and opens the setup window.
+
+If you already have the app, the link's **Join** goes straight to step 3. What the app may say instead:
+
+- **This invite link is damaged. Ask the host to copy it again.** Part of the link is missing or changed (for example cut off by a
+  chat app). Ask for it again and copy all of it.
+- **This invite needs a newer Amberline Player. Download it from the invite page.** Your app is older than the link.
+- **This invite is for the 1.0.0.<line> server. Download that line's player from the invite page.** The two patch lines have
+  separate apps.
+- **Can't reach** the server: check that you are online and that the host's server is on, then choose **Try again**.
+- The server **did not prove it is the server this shortcut was made for**: ask the host for a new invite link and open it.
+- **The downloaded player tool does not match the SHA-256 the server published; nothing was changed.** Choose **Try again**; if it
+  happens again, tell the host.
 - **The server sent no valid address**, **no valid SHA-256 for the player tool**, or **The player tool from the server has no
-  ...**: ask the host to update the server, or for a new Play file.
-- **Windows has no app data folder for your user.** Sign in to Windows with your own account, then try again.
+  ...**: ask the host to update the server, or for a new invite link.
+
+Installed with a Play file before? Your desktop icon keeps working as it is. Its next start lets the invite page's **Join** reach your
+install, so a second server's link only adds that server.
 
 ### The setup window
 
@@ -374,7 +390,7 @@ When `Play.cmd` cannot finish, its window says **Play could not finish:** and wh
 Your folders are always where they were, or complete in the install folder. The client zip is only read. **Copy** copies what
 happened, to send to your host.
 
-A 1.0.0.132 server's Play file sets up this line's own Amberline: its settings in `%LOCALAPPDATA%\Amberline 132 Player`, its
+A 1.0.0.132 server's invite link sets up this line's own Amberline (its app is **Amberline 132 Player**): its settings in `%LOCALAPPDATA%\Amberline 132 Player`, its
 install folder (`Amberline 132` by default) and its entry **Amberline 132** in Windows' list of installed apps. If you also play
 on a 1.0.0.126 server, that setup (**Amberline Player**, **Amberline**) stays apart, with its own game files: setup refuses its
 install folder (**The install folder already has a folder for the AIR client**), and removing one setup leaves the other. A server
@@ -384,7 +400,7 @@ When your host shares their game ([Game files](HOSTING.md#game-files)) and setup
 the game from** the server's name:
 
 - **No download button.** Your host has not turned on **Share the game files with players**, setup found your own copy, or the
-  server was still checking its files when setup opened. Close setup and double-click the Play file again a few minutes later.
+  server was still checking its files when setup opened. Close setup and open the invite link again a few minutes later.
 - **The download stopped.** You chose **Cancel**, or the connection dropped (**The download from the server stopped.**). Choose
   **Download the game from** ... again: it continues where it stopped.
 - **A downloaded file did not pass its check.** A file from the server differs from the server's own list, for example because the
@@ -394,14 +410,14 @@ the game from** the server's name:
 ### The desktop icon
 
 - **The desktop icon is gone.** Its copy is in your install folder (the folder that holds `companion`, `air` and `game`), under the
-  same name: double-click it to play. Double-click your server's Play file again to put the icon back on the desktop.
+  same name: double-click it to play. Open your server's invite link again to put the icon back on the desktop.
 - **Can't reach** the server: check that you are online. If you are, the server may be off: ask the host to start it, then
   choose **Try again**.
 - The server **did not prove it is the server this shortcut was made for**: the host may have set the server up again. Ask the
-  host for a new Play file and double-click it.
-- **The AIR client is missing.** or **The game client is missing.** You moved or deleted it. Double-click the server's Play
-  file again: it finds your game and repairs the setup.
-- **This shortcut's server is not set up any more.** Double-click your server's Play file again: it sets the server up and
+  host for a new invite link and open it.
+- **The AIR client is missing.** or **The game client is missing.** You moved or deleted it. Open the server's invite
+  link again: it finds your game and repairs the setup.
+- **This shortcut's server is not set up any more.** Open your server's invite link again: it sets the server up and
   makes a new icon.
 - The server **could not start**: choose **Try again**. If it keeps happening, choose **Copy** and send the text to the host.
 - **A game client from an earlier start is still running in the background.** Sometimes the game client does not close fully
@@ -421,7 +437,7 @@ If you have the original 2011 launcher's folder, the desktop icon can open that 
 the server's news and status, and **Play** starts the game client and the game, as in 2011. Without the folder, the game starts the
 usual way, as before.
 
-- **Where the folder goes.** Choose it in the optional **2011 launcher folder** row during setup. Or run `Play.cmd` again on an install
+- **Where the folder goes.** Choose it in the optional **2011 launcher folder** row during setup. Or open the invite link again on an install
   that does not have it: setup then asks for the folder, or offers to download it when your host shares it. Setup moves the launcher's
   own files into a `launcher` folder inside your install folder, beside `companion`, `air` and `game`. If the folder lies inside an old
   installation's folders (a path with a `projects` folder in it), setup copies the files and leaves the folder as it was. You can also copy the launcher's files into that

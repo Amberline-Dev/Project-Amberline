@@ -2,6 +2,7 @@
   "label": "1.0.0.132 (January 2012)",
   "clientZip": "patch-1.0.0.132-client-bundle.zip",
   "releaseTagPrefix": "p132-v",
+  "firstPlayerRelease": "0.1.11",
   "home": { "name": "Amberline 132", "marker": "amberline-132-install.json" },
   "homeBefore637": false,
   "gameFolder": "the 1.0.0.132 game folder",

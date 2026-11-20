@@ -136,7 +136,7 @@ public static class HostStartChecks
         TestAssert.True(HostChecks.PortRefused(new SocketException((int)SocketError.AccessDenied)), "a port Windows keeps for itself");
         TestAssert.False(HostChecks.PortRefused(new IOException("The disk is full.")), "another IO error");
         TestAssert.False(HostChecks.PortRefused(new SocketException((int)SocketError.ConnectionRefused)), "another socket error");
-        TestAssert.Equal("Another program uses a port Amberline needs. Is Amberline already running for another Windows user, or a Play file " +
+        TestAssert.Equal("Another program uses a port Amberline needs. Is Amberline already running for another Windows user, or the player app " +
             "for another server open? (A-NET-01)", HostChecks.PortInUse(null), "without a port");
 
         // Each port the full start listens on, held by another program; the page's own port is the single-instance check's.
@@ -273,9 +273,9 @@ public static class HostStartChecks
             status = await StatusUntilAsync(browser, now => Card(now, "A-NET-09") is not null);
             var banner = Card(status, "A-NET-09")!.Value;
             TestAssert.True(Regex.IsMatch(banner.GetProperty("message").GetString()!,
-                @"^Your address changed at \d\d:\d\d\. Users need the new Play file to reach you\.$"), banner.GetRawText());
+                @"^Your address changed at \d\d:\d\d\. Users need the new invite link to reach you\.$"), banner.GetRawText());
             TestAssert.Equal("address", banner.GetProperty("action").GetString(), "the banner has its button");
-            TestAssert.Equal("Send every user the new Play file, then choose Hide.",
+            TestAssert.Equal("Send every user the new invite link, then choose Hide.",
                 banner.GetProperty("whatToDo").GetString());
             TestAssert.Equal(1, status.GetProperty("attention").EnumerateArray().Count(card => card.GetProperty("code").GetString() == "A-NET-09"), "one banner");
             await HostAddressAsync(browser, "198.51.100.20");
@@ -347,9 +347,9 @@ public static class HostStartChecks
     public static void TheAddressBannerOffersTheNewPlayFile() => BannerPlayFileAsync().GetAwaiter().GetResult();
 
     /// <summary>
-    /// Batch 632 (H9 follow-up): the address-change card (A-NET-09) shows Get the new Play file beside Hide this message, rendered as
-    /// the dashboard renders card actions (a form the page shows while a card names its action); the button is H8's download, and the
-    /// file it gives holds the router's new address.
+    /// Batch 632 (H9 follow-up): the address-change card (A-NET-09) shows its button beside Hide this message, rendered as the dashboard
+    /// renders card actions (a form the page shows while a card names its action). Batch 917 (restated): the button is Copy the new invite
+    /// link, which opens Users, and the invite link there holds the router's new address.
     /// </summary>
     private static async Task BannerPlayFileAsync()
     {
@@ -359,7 +359,7 @@ public static class HostStartChecks
         home.Loop.Addresses = new HostAddressSources(_ => Task.FromResult<IPAddress?>(answer), _ => Task.FromResult<string?>(null));
         home.Loop.AddressEvery = TimeSpan.FromMilliseconds(200);
         Directory.CreateDirectory(home.Loop.Paths.App);
-        File.Copy(AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", HostInvite.TemplateFile)), Path.Combine(home.Loop.Paths.App, HostInvite.TemplateFile));
+        File.WriteAllText(Path.Combine(home.Loop.Paths.App, "..", "BUILD.json"), "{\"version\":\"1.4.0\"}");
         File.WriteAllText(home.Loop.Paths.Settings, JsonSerializer.Serialize(new
         {
             httpPort = home.Port, rtmpPort = home.RtmpPort, xmppPort = home.XmppPort, remotePort = home.RemotePort, bindAddress = "127.0.0.1",
@@ -372,9 +372,9 @@ public static class HostStartChecks
             await WaitForHealthAsync(browser, "ready", run);
             await home.SignInAsync(browser);
             var page = await browser.GetStringAsync("/host");
-            var button = Regex.Match(page, "<form method=get action=([^ >]+) data-action=address hidden><button type=submit class=secondary>Download the Play file</button></form>");
-            TestAssert.True(button.Success, "the page carries the banner's Play file button: " + page);
-            TestAssert.Equal(HostInvite.PlayFilePath, button.Groups[1].Value, "the button is H8's Play file download");
+            var button = Regex.Match(page, "<form method=get action=([^ >]+) data-action=address hidden><button type=submit class=secondary>Copy the new invite link</button></form>");
+            TestAssert.True(button.Success, "the page carries the banner's invite link button: " + page);
+            TestAssert.Equal(HostInvite.UsersPath, button.Groups[1].Value, "the button opens Users, which gives the invite link");
             TestAssert.True(page.Contains($"<form method=post action={HostAttention.AddressSeenPath} data-action=address hidden>", StringComparison.Ordinal),
                 "Hide stays beside it");
             var script = await browser.GetStringAsync("/host/page.js");
@@ -382,17 +382,13 @@ public static class HostStartChecks
                 "the page shows a card's buttons while the card names their action");
             TestAssert.Equal(null, Card(await StatusAsync(browser), "A-NET-09"), "no change yet, so the button stays hidden");
 
-            // The router reports a new address: the card names the button's action, and the button's file holds the new address.
+            // The router reports a new address: the card names the button's action, and the page it opens gives a link with the new address.
             answer = IPAddress.Parse("198.51.100.20");
             var banner = Card(await StatusUntilAsync(browser, now => Card(now, "A-NET-09") is not null), "A-NET-09")!.Value;
             TestAssert.Equal("address", banner.GetProperty("action").GetString(), "the banner names the address buttons");
-            using var file = await browser.GetAsync(button.Groups[1].Value + "?");
-            var text = await file.Content.ReadAsStringAsync();
-            TestAssert.Equal(HttpStatusCode.OK, file.StatusCode, text);
-            TestAssert.True(file.Content.Headers.ContentDisposition?.ToString().Contains("filename=Play.cmd", StringComparison.Ordinal) == true, "a download named Play.cmd");
-            var token = Regex.Match(text, "\\$HostToken = '([^']+)'").Groups[1].Value;
-            TestAssert.Equal("198.51.100.20", System.Text.Encoding.ASCII.GetString(Convert.FromBase64String(token).Select(b => (byte)(b ^ 0x5A)).ToArray()),
-                "the new Play file holds the new address");
+            var users = await browser.GetStringAsync(button.Groups[1].Value + "?");
+            var link = WebUtility.HtmlDecode(Regex.Match(users, "<pre id=invite-link class=message>([^<]+)</pre>").Groups[1].Value);
+            TestAssert.Equal("198.51.100.20", Amberline.AirCompanion.InviteLink.Decode(link).Invite?.Host, "the new invite link holds the new address: " + users);
         }
         finally
         {
@@ -411,9 +407,9 @@ public static class HostStartChecks
         TestAssert.Equal(null, HostChecks.CertificateCard(now.AddYears(20), now), "a new install's certificate");
         TestAssert.Equal(null, HostChecks.CertificateCard(now.AddDays(61), now), "more than 60 days left");
         var soon = HostChecks.CertificateCard(now.AddDays(60), now);
-        TestAssert.Equal(("A-CERT-01", $"Your users' Play files stop working on {now.AddDays(60).ToLocalTime().ToString("d MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture)}. Make new ones.", "certificate"),
+        TestAssert.Equal(("A-CERT-01", $"Your users' invite link and shortcuts stop working on {now.AddDays(60).ToLocalTime().ToString("d MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture)}. Make a new link.", "certificate"),
             (soon?.Code, soon?.Message, soon?.Action), "60 days before");
-        TestAssert.Equal("Your users' Play files stopped working: Amberline's certificate ran out.", HostChecks.CertificateCard(now.AddDays(-1), now)?.Message);
+        TestAssert.Equal("Your users' invite link and shortcuts stopped working: Amberline's certificate ran out.", HostChecks.CertificateCard(now.AddDays(-1), now)?.Message);
         IPAddress Ip(string text) => IPAddress.Parse(text);
         TestAssert.Equal(null, HostChecks.VpnCard(Ip("192.168.1.20"), Ip("192.168.1.20")), "the internet goes out through the router's interface");
         TestAssert.Equal(null, HostChecks.VpnCard(null, Ip("10.8.0.2")), "no router side known");
@@ -448,9 +444,10 @@ public static class HostStartChecks
             TestAssert.True(page.Contains($"<form method=get action={HostAttention.CertificatePath} data-action=certificate hidden>", StringComparison.Ordinal),
                 "the page carries the certificate's button");
 
-            // Make new Play files: asks first, needs the token, keeps the old file and restarts with a new 20-year certificate.
+            // Make a new invite link (batch 917; Make new Play files before): asks first, needs the token, keeps the old file and restarts with a
+            // new 20-year certificate.
             var confirm = await browser.GetStringAsync(HostAttention.CertificatePath);
-            TestAssert.True(confirm.Contains("stops working at once", StringComparison.Ordinal), confirm);
+            TestAssert.True(confirm.Contains("stop working at once", StringComparison.Ordinal), confirm);
             using (var forged = await browser.PostAsync(HostAttention.CertificatePath, new FormUrlEncodedContent([])))
                 TestAssert.Equal(HttpStatusCode.BadRequest, forged.StatusCode, "a form without its token");
             TestAssert.True(old.AsSpan().SequenceEqual(File.ReadAllBytes(pfx)), "nothing replaced yet");

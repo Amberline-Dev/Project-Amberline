@@ -31,7 +31,7 @@ public static class HostChecks
     /// <summary>A-NET-01: a port Amberline needs is taken; <paramref name="port"/> is null when the start could not tell which.</summary>
     public static string PortInUse(int? port) =>
         $"Another program uses a port Amberline needs{(port is null ? "" : $" ({port})")}. Is Amberline already running for another " +
-        "Windows user, or a Play file for another server open? (A-NET-01)";
+        "Windows user, or the player app for another server open? (A-NET-01)";
 
     /// <summary>Whether a start failed because Windows refused one of its listening ports (taken, or reserved by Windows).</summary>
     public static bool PortRefused(Exception error) => error switch
@@ -134,9 +134,9 @@ public static class HostChecks
     public static DashboardCard? CertificateCard(DateTimeOffset notAfter, DateTimeOffset now) =>
         notAfter - now > CertificateWarning ? null
         : new("A-CERT-01", notAfter <= now
-                ? "Your users' Play files stopped working: Amberline's certificate ran out."
-                : $"Your users' Play files stop working on {notAfter.ToLocalTime().ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}. Make new ones.",
-            "Choose Make new Play files, then send every user the new one.",
+                ? "Your users' invite link and shortcuts stopped working: Amberline's certificate ran out."
+                : $"Your users' invite link and shortcuts stop working on {notAfter.ToLocalTime().ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}. Make a new link.",
+            "Choose Make a new invite link, then send every user the new link.",
             "certificate");
 
     /// <summary>
@@ -154,8 +154,8 @@ public static class HostChecks
         var local = at.ToLocalTime();
         var when = local.Date == now.ToLocalTime().Date ? local.ToString("'at' HH:mm", CultureInfo.InvariantCulture)
             : local.ToString("'on' d MMMM 'at' HH:mm", CultureInfo.InvariantCulture);
-        return new("A-NET-09", $"Your address changed {when}. Users need the new Play file to reach you.",
-            "Send every user the new Play file, then choose Hide.", "address");
+        return new("A-NET-09", $"Your address changed {when}. Users need the new invite link to reach you.",
+            "Send every user the new invite link, then choose Hide.", "address");
     }
 
     /// <summary>
@@ -337,22 +337,22 @@ public sealed class HostAttention : IAsyncDisposable
         static (string Query, string Back) From(HttpContext context) => context.Request.Query["from"] == "settings"
             ? ("?from=settings", HostSettingsPage.PagePath) : ("", HostDashboard.PagePath);
         app.MapGet(CertificatePath, (HttpContext context, IAntiforgery antiforgery) => HostMode.Page($"""
-            <h1>Make new Play files?</h1>
-            <p>Amberline restarts, and every user's old Play file stops working at once. Send them the new one.</p>
-            <form method=post action="{CertificatePath}{From(context).Query}"{HostPages.Wait("Making new Play files. Amberline restarts in a few seconds.")}>{Program.RegistrationToken(context, antiforgery)}<div class=buttons><button type=submit>Make new Play files</button>
+            <h1>Make a new invite link?</h1>
+            <p>Amberline restarts with a new certificate, and every user's old invite link and desktop shortcut stop working at once. Send them the new link.</p>
+            <form method=post action="{CertificatePath}{From(context).Query}"{HostPages.Wait("Making a new invite link. Amberline restarts in a few seconds.")}>{Program.RegistrationToken(context, antiforgery)}<div class=buttons><button type=submit>Make a new invite link</button>
             <a class="button secondary" href={From(context).Back}>Cancel</a></div></form>
             """));
         app.MapPost(CertificatePath, async (HttpContext context, IAntiforgery antiforgery) =>
         {
             if (!await antiforgery.IsRequestValidAsync(context)) return Expired;
             if (_games().Count > 0)
-                return HostMode.Page($"<h1>A game is running</h1><p>Make new Play files when it has ended.</p><p><a href={From(context).Back}>Back</a></p>",
+                return HostMode.Page($"<h1>A game is running</h1><p>Make a new invite link when it has ended.</p><p><a href={From(context).Back}>Back</a></p>",
                     StatusCodes.Status409Conflict);
             // The old certificate is kept beside the new one, never deleted; the next start makes a new one (HostFiles.Certificate).
             var pfx = Path.Combine(_loop.Paths.Data, "remote", "host.pfx");
             File.Move(pfx, $"{pfx}.replaced-{DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}");
             context.Response.OnCompleted(() => { _loop.Restart(); return Task.CompletedTask; });
-            return HostPages.Restarting($"<h1>{HostPages.Product} is making new Play files</h1><p>This page comes back by itself.</p>", _loop.ReopenPath);
+            return HostPages.Restarting($"<h1>{HostPages.Product} is making a new invite link</h1><p>This page comes back by itself.</p>", _loop.ReopenPath);
         });
     }
 
@@ -377,13 +377,13 @@ public sealed class HostAttention : IAsyncDisposable
     }
 
     /// <summary>
-    /// The cards' buttons, shown by the page while a card names their action. The address change (A-NET-09) has two: the new Play file
-    /// (H8's download, which holds the new address) and Hide. Secondary, so Play stays the dashboard's one primary button (batch 652).
+    /// The cards' buttons, shown by the page while a card names their action. The address change (A-NET-09) has two: the new invite link
+    /// (Users' invite box, which holds the new address; batch 917) and Hide. Secondary, so Play stays the dashboard's one primary button (batch 652).
     /// </summary>
     public static string Forms(string token) =>
-        $"<form method=get action={HostInvite.PlayFilePath} data-action=address hidden><button type=submit class=secondary>Download the Play file</button></form>" +
+        $"<form method=get action={HostInvite.UsersPath} data-action=address hidden><button type=submit class=secondary>Copy the new invite link</button></form>" +
         $"<form method=post action={AddressSeenPath} data-action=address hidden>{token}<button type=submit class=secondary>Hide<span class=vh> the address message</span></button></form>" +
-        $"<form method=get action={CertificatePath} data-action=certificate hidden><button type=submit class=secondary>Make new Play files</button></form>";
+        $"<form method=get action={CertificatePath} data-action=certificate hidden><button type=submit class=secondary>Make a new invite link</button></form>";
 
     /// <summary>Asks the router once: a new public address is followed when the host's choice is still the router's address.</summary>
     public async Task AskRouterAsync(HostSteps steps, CancellationToken stop)
@@ -403,7 +403,7 @@ public sealed class HostAttention : IAsyncDisposable
             }
         }
         if (WanAddress.Classify(answer) != WanAddressClass.Public || !steps.Follow(answer!.ToString())) return;
-        Console.WriteLine("The address the router reports changed; users need the new Play file (A-NET-09).");
+        Console.WriteLine("The address the router reports changed; users need the new invite link (A-NET-09).");
         SetChanged(DateTimeOffset.Now);
         await _retest(stop);
     }

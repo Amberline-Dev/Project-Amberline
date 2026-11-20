@@ -8,9 +8,9 @@ namespace Amberline.Platform;
 /// NOT RETAIL: people register themselves (batch 656; the owner, 3 November 2026: "allow outside people to register too, by going to
 /// the host ip address + /register (toggleable in host settings)"). Retail players signed up on Riot's website; a server hosted at home
 /// has no such site. While Settings' switch is on (<see cref="PlatformSettings.SelfRegistration"/>, off unless the host turns it on),
-/// the friends' port (HTTPS with Amberline's own certificate, so the browser warns once) serves three paths more: <see cref="PagePath"/>
-/// (the form and its POST, through <see cref="Program.MapRegistration"/>), <see cref="PlayFilePath"/> (Invite's Play file for this server)
-/// and <see cref="HostPages.PublicStylePath"/>. Nothing else of the host reaches that port: <see cref="Serves"/> is the one rule the
+/// the friends' port (HTTPS with Amberline's own certificate, so the browser warns once) serves two paths more: <see cref="PagePath"/>
+/// (the form and its POST, through <see cref="Program.MapRegistration"/>; its pages give the invite link, batch 917) and
+/// <see cref="HostPages.PublicStylePath"/>. Nothing else of the host reaches that port: <see cref="Serves"/> is the one rule the
 /// port's allow-list (<see cref="Program.RunAsync"/>) and <see cref="HostGate"/> let through.
 /// <list type="bullet">
 /// <item>The form carries an antiforgery token.</item>
@@ -24,7 +24,7 @@ namespace Amberline.Platform;
 /// </summary>
 public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts accounts, int remotePort, string certificateSha256, bool on) : IDisposable
 {
-    public const string PagePath = "/register", PlayFilePath = "/register/Play.cmd";
+    public const string PagePath = "/register";
     /// <summary>New logins an hour from the sign-up page, from every address together.</summary>
     public const int PerHour = 30;
     /// <summary>What Settings and Invite say beside the link (the owner's words).</summary>
@@ -43,9 +43,9 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
     public int Port => remotePort;
     public bool On => _on;
 
-    /// <summary>A request the friends' port serves as the sign-up: on that port, over HTTPS, one of the three paths, while the switch is on.</summary>
+    /// <summary>A request the friends' port serves as the sign-up: on that port, over HTTPS, one of the two paths, while the switch is on.</summary>
     public bool Serves(HttpContext context) => _on && context.Connection.LocalPort == remotePort && context.Request.IsHttps &&
-        (context.Request.Path == PagePath || context.Request.Path == PlayFilePath || context.Request.Path == HostPages.PublicStylePath);
+        (context.Request.Path == PagePath || context.Request.Path == HostPages.PublicStylePath);
 
     /// <summary>Settings' switch: saved in platform.json and served at once, without a restart.</summary>
     internal void Set(bool value)
@@ -68,12 +68,9 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
           "<p class=buttons><button type=button data-copy=register-link>Copy</button> <span id=copy-status role=status></span></p>" +
           $"<p class=tip>{Warning}</p>";
 
-    /// <summary>The Play file and the stylesheet; the form is <c>/register</c>'s (<see cref="Program.MapRegistration"/>).</summary>
+    /// <summary>The stylesheet; the form is <c>/register</c>'s (<see cref="Program.MapRegistration"/>).</summary>
     public void Map(WebApplication app)
     {
-        app.MapGet(PlayFilePath, (HttpContext context) => !Serves(context) ? Results.NotFound()
-            : Saved() is { PublicHost: { } host } saved && HostInvite.PlayFile(loop, host, remotePort, certificateSha256, Name(saved)) is { } file ? file
-            : HostPages.PublicPage("<h1>The Play file is not ready</h1><p>Ask the host for it.</p>", StatusCodes.Status404NotFound));
         app.MapGet(HostPages.PublicStylePath, (HttpContext context) => Serves(context) ? HostPages.PublicStylesheet(context) : Results.NotFound());
     }
 
@@ -142,7 +139,7 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
                 "type=password required minlength=10 maxlength=128 autocomplete=new-password")}}
             {{HostSteps.StartChoice("Start at", mode, At("mode"))}}
             <div class=actions><button type=submit>Create your login</button></div></form>
-            <p class=already>Already have a login?</p><p><a class=button href={{PlayFilePath}} download>Download the Play file</a></p>
+            <p class=already>Already have a login?</p>{{Invite()}}
             <p><a href={{HostAccountPage.PagePath}}>Change your password or delete your account</a></p>
             """;
     }
@@ -150,7 +147,20 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
     private string Ready(string username) => $"""
         <h1>Your login is ready</h1>
         <p class=notice role=status>Log in as <b>{WebUtility.HtmlEncode(username)}</b> with the password you chose.</p>
-        <p><a class=button href={PlayFilePath} download>Download the Play file</a></p>
-        <p>Double-click the Play file: it puts "{WebUtility.HtmlEncode(Name(Saved()))}" on your desktop. Start it there and log in.</p>
+        {Invite()}
+        <p>The invite page puts "{WebUtility.HtmlEncode(Name(Saved()))}" on your desktop. Start it there and log in.</p>
         """;
+
+    /// <summary>
+    /// NOT RETAIL (batch 917): the server's invite link (<see cref="HostInvite.InviteFor"/>) as a button that opens it and as text to copy (this
+    /// page runs no script, so it has no Copy button); or why there is none yet.
+    /// </summary>
+    private string Invite()
+    {
+        var saved = Saved();
+        var (link, missing) = HostInvite.InviteFor(loop.Paths.App, saved.PublicHost, remotePort, certificateSha256, Name(saved));
+        return link is null ? $"<p>{WebUtility.HtmlEncode(missing)} Ask the host for the invite link.</p>"
+            : $"<p><a class=button href=\"{WebUtility.HtmlEncode(link)}\">Open the invite</a></p>" +
+              $"<p>To join from another PC, open this link there:</p><pre class=message>{WebUtility.HtmlEncode(link)}</pre>";
+    }
 }

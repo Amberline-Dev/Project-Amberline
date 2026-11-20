@@ -74,7 +74,7 @@ public static class HostDashboardChecks
             TestAssert.Equal("waiting", Check(status, "friend").State);
             TestAssert.Equal(new (string, string?)[] { ("A-NET-02", "firewall") }, Cards(status), "one card, with the firewall button");
             TestAssert.Equal("Address: 198.51.100.20 (from your router)", status.GetProperty("address").GetString());
-            // Final fix 5: Copy address (and the sign-up link) give the saved address, the one Users, Settings, Add a user and the Play file
+            // Final fix 5: Copy address (and the sign-up link) give the saved address, the one Users, Settings, Add a user and the invite link
             // give, not the router's public one.
             TestAssert.Equal("127.0.0.1", status.GetProperty("publicHost").GetString(), "Copy address copies the saved address");
             TestAssert.Equal("Network: 1 thing needs your attention", status.GetProperty("network").GetString());
@@ -353,7 +353,7 @@ public static class HostDashboardChecks
             using (var show = await client.PostAsync(HostDashboard.PagePath + "/show-hidden", Form(token)))
                 TestAssert.Equal(HttpStatusCode.Redirect, show.StatusCode, "Show them again");
 
-            // Batch 751 final review: hiding "Play files stop working on <date>" never hides "stopped working", a different problem (the
+            // Batch 751 final review: hiding "invite link and shortcuts stop working on <date>" never hides "stopped working", a different problem (the
             // subject names the certificate and its state); the warning's entry is forgotten once the certificate has run out.
             using (var key = ECDsa.Create())
             using (var certificate = new CertificateRequest("CN=hide-check", key, HashAlgorithmName.SHA256).CreateSelfSigned(DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now.AddDays(30)))
@@ -367,7 +367,7 @@ public static class HostDashboardChecks
                     var soon = later.Status(ends - TimeSpan.FromDays(10)).Attention.Single(card => card.Code == "A-CERT-01");
                     later.Hidden.Add(soon.Code, soon.Subject);
                     TestAssert.False(later.Status(ends - TimeSpan.FromDays(9)).Attention.Any(card => card.Code == "A-CERT-01"), "the warning is hidden");
-                    TestAssert.Equal("Your users' Play files stopped working: Amberline's certificate ran out.",
+                    TestAssert.Equal("Your users' invite link and shortcuts stopped working: Amberline's certificate ran out.",
                         later.Status(ends + TimeSpan.FromDays(1)).Attention.SingleOrDefault(card => card.Code == "A-CERT-01")?.Message,
                         "the certificate that ran out shows although the warning was hidden");
                     TestAssert.Equal(Array.Empty<string>(), HiddenEntries(stateFile), "the warning's entry is forgotten");
@@ -470,7 +470,7 @@ public static class HostDashboardChecks
             TestAssert.Equal("Address: 192.168.1.20 (home network only). Players must be on the same home network as this PC.",
                 status.GetProperty("address").GetString());
             TestAssert.Equal(JsonValueKind.Null, status.GetProperty("guide").ValueKind, "no router guide");
-            TestAssert.Equal(("waiting", "Waiting for the first player to start the Play file."), Check(status, "friend"));
+            TestAssert.Equal(("waiting", "Waiting for the first player to open the invite link."), Check(status, "friend"));
 
             // Several 5-minute periods (200 ms here): the router is never asked for its address, so no A-NET-09 either.
             await Task.Delay(1200);
@@ -596,12 +596,12 @@ public static class HostDashboardChecks
             await WaitForHealthAsync(browser, "ready", run);
             await home.SignInAsync(browser);
             var status = await StatusAsync(browser);
-            TestAssert.Equal(("waiting", "Waiting for the first player to start the Play file."), Check(status, "friend"));
+            TestAssert.Equal(("waiting", "Waiting for the first player to open the invite link."), Check(status, "friend"));
             using (var own = await browser.GetAsync($"https://127.0.0.1:{home.RemotePort}/bootstrap/client.json"))
-                TestAssert.Equal(HttpStatusCode.OK, own.StatusCode, "the public port answers the Play file's manifest");
+                TestAssert.Equal(HttpStatusCode.OK, own.StatusCode, "the public port answers the player app's manifest");
             TestAssert.Equal<DateTimeOffset?>(null, home.Loop.Friend.FromInternet, "a request from this PC is not a friend");
             TestAssert.False(File.Exists(HostFriendLight.StateFile(home.Loop.Paths.Data)), "nothing is saved for it");
-            // The check cannot listen on a public interface, so the request a friend's Play file makes is handed to the light directly.
+            // The check cannot listen on a public interface, so the request a friend's player app makes is handed to the light directly.
             home.Loop.Friend.Observe(IPAddress.Parse("203.0.113.9"), "/bootstrap/client.json", DateTimeOffset.UtcNow);
             status = await StatusAsync(browser);
             TestAssert.Equal(("ok", "A player reached Amberline from the internet just now"), Check(status, "friend"));

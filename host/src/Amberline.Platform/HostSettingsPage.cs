@@ -7,8 +7,8 @@ namespace Amberline.Platform;
 /// NOT RETAIL: the home host's Settings (batch 641; Amberline Host design, sections 2.3 and 2.6; retail had no host page). It changes,
 /// after the first run, what the first run asked, with the first run's own pages and checks: the server name and the address
 /// (<see cref="HostSteps.MapSettings"/>), the game and AIR client folders (<see cref="HostFolders.MapSettings"/>, which restarts), the
-/// update check (the Updates page) and the Play file (H8's download, and the certificate's Make new Play files). A change friends
-/// must hear about says so and links the Play file. Batch 656: Sign-ups holds the switch of <see cref="HostSelfRegistration"/> and, while
+/// update check (the Updates page) and the invite link (batch 917: Users' invite box, and the certificate's Make a new invite link). A
+/// change friends must hear about says so and links the invite link. Batch 656: Sign-ups holds the switch of <see cref="HostSelfRegistration"/> and, while
 /// it is on, the link to send. Batch 681: Game files holds the switch of <see cref="HostFileShare"/> and what it shares. Batch 680: Cheat
 /// commands holds the list of <see cref="CheatRule"/>. Batch 684: Games holds <see cref="HostGamesSetting"/>, how many games run at
 /// once. Uninstall Amberline
@@ -36,7 +36,7 @@ public static class HostSettingsPage
     public static Func<long, bool> CheatRule(string settingsFile) => account =>
         HostMode.ReadOrDefault(settingsFile).CheatLogins().Contains(account);
 
-    private const string PlayFileLink = $"<a href={HostInvite.PlayFilePath} download>Download the Play file</a>";
+    private const string InviteLinkLink = $"<a href={HostInvite.InviteLinkPath}>Copy the invite link</a>";
 
     /// <summary>
     /// Settings and its pages in the full home Platform; <paramref name="games"/> counts the matches a restart or an uninstall would end.
@@ -240,8 +240,8 @@ public static class HostSettingsPage
             """;
         var notice = problem is not null ? HostPages.Errors((problem, typed is null ? null : "games")) : saved switch
         {
-            "name" => $"<p class=notice role=status>Saved. Send your users the new Play file to show the new name. {PlayFileLink}</p>",
-            "address" => $"<p class=notice role=status>Saved. Send your users the new Play file: their old one looks at the old address. {PlayFileLink}</p>",
+            "name" => $"<p class=notice role=status>Saved. Send your users the new invite link to show the new name. {InviteLinkLink}</p>",
+            "address" => $"<p class=notice role=status>Saved. Send your users the new invite link: their old one looks at the old address. {InviteLinkLink}</p>",
             "folders" => "<p class=notice role=status>Saved. Amberline restarted to use the new folders.</p>",
             "register" or "share" or "paid" or "champions" => "<p class=notice role=status>Saved.</p>",
             "news" => "<p class=notice role=status>Saved. The 2011 launcher shows them the next time it opens.</p>",
@@ -294,9 +294,9 @@ public static class HostSettingsPage
             {{HostGamesSetting.Section(settings, token, typed is null ? null : problem, typed)}}
             <section class=folder aria-labelledby=updates-title><h2 id=updates-title>Updates</h2><p>{{updates}}</p>
             <p><a href=/host/updates>Change the update check</a></p></section>
-            <section class=folder aria-labelledby=play-title><h2 id=play-title>Play file</h2>
-            <p>{{PlayFileLink}}</p>
-            <p><a href="{{HostAttention.CertificatePath}}?from=settings">Make new Play files</a>: every user's old Play file stops working.</p></section>
+            <section class=folder aria-labelledby=play-title><h2 id=play-title>Invite link</h2>
+            <p>{{InviteLinkLink}}</p>
+            <p><a href="{{HostAttention.CertificatePath}}?from=settings">Make a new invite link</a>: every user's old invite link and shortcut stop working.</p></section>
             <section class=folder aria-labelledby=register-title><h2 id=register-title>Sign-ups</h2>
             <form method=post action={{RegisterPath}}>{{token}}
             <label class=choice><input type=checkbox name=on value=on{{(signUp.On ? " checked" : "")}}>Let people register themselves</label>
@@ -334,7 +334,7 @@ public static class HostSettingsPage
                 ? Tick("clients", clients, $"Also delete the game and AIR client copies ({HostUninstall.Size(plan.Size(UninstallKind.Clients))})") : "") +
             (plan.Has(UninstallKind.Data)
                 ? Tick("data", data, $"Also delete your logins and settings ({HostUninstall.Size(plan.Size(UninstallKind.Data))}). " +
-                    "Users' logins and Play files stop working for good.") : "");
+                    "Users' logins and invite links stop working for good.") : "");
         var firewall = await HostUninstall.FirewallRulesAsync(loop.Network, cancel)
             ? "<li>its Windows Firewall rules (Windows asks once, for Windows Command Processor: choose Yes)</li>" : "";
         return HostMode.Page($$"""

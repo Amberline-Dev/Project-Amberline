@@ -32,8 +32,8 @@ public static class HostStepsChecks
             var (host, problem) = HostAddress.Check(text);
             TestAssert.Equal(saved, host, text);
             TestAssert.Equal(null, problem, text);
-            // Whatever the step saves is a host the Platform's bootstrap serves and renders (RenderLauncher throws otherwise).
-            PlatformBootstrap.RenderLauncher("__HOST__", host!, 8391, new string('A', 64));
+            // Whatever the step saves is a host the Platform's bootstrap serves and the invite link holds (batch 917; RenderLauncher before).
+            TestAssert.True(Amberline.AirCompanion.InviteLink.Valid(new(Amberline.AirCompanion.InviteLink.TagPrefix + "0.0.0", host!, 8391, new string('A', 64), "Amberline")), text);
         }
         foreach (var (text, says) in new (string?, string)[]
                  {
@@ -77,7 +77,7 @@ public static class HostStepsChecks
             var (host, problem) = HostAddress.CheckLan(text);
             TestAssert.Equal(saved, host, text);
             TestAssert.Equal(null, problem, text);
-            PlatformBootstrap.RenderLauncher("__HOST__", host!, 8391, new string('A', 64));
+            TestAssert.True(Amberline.AirCompanion.InviteLink.Valid(new(Amberline.AirCompanion.InviteLink.TagPrefix + "0.0.0", host!, 8391, new string('A', 64), "Amberline")), text);
         }
         foreach (var (text, says) in new (string?, string)[]
                  {
@@ -512,8 +512,8 @@ public static class HostStepsChecks
 
     private static void PlayerFile(string root, string? certificate)
     {
-        string[] arguments = ["-File", AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "player-file.ps1")), "-Root", root,
-            "-PublicHost", TestHost, "-Port", "8391"];
+        // Batch 917: the certificate alone; the host and port went with Play.cmd.
+        string[] arguments = ["-File", AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "player-file.ps1")), "-Root", root];
         var result = AirBootstrapChecks.RunPowerShell("pwsh", certificate is null ? arguments : [.. arguments, "-Certificate", certificate]);
         TestAssert.Equal(0, result.ExitCode, result.Output);
     }

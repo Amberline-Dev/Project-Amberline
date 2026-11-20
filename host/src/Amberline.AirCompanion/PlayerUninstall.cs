@@ -9,7 +9,8 @@ namespace Amberline.AirCompanion;
 /// NOT RETAIL: removing the player's install again (batch 639; retail players removed the client through its own Windows entry). Two
 /// choices: one server (its two shortcuts, the desktop one and the copy in the install folder, and its <c>servers\&lt;id&gt;</c> folder:
 /// connection, stage, token cache and logs), or all of
-/// Amberline: every server, the player tool, <c>Uninstall.cmd</c>, the per-user record, Play.cmd's download and the "Apps" entry. The AIR
+/// Amberline: every server, the player tool, <c>Uninstall.cmd</c>, the per-user record, the invite's download, the app's own copy, the link
+/// scheme (batch 917) and the "Apps" entry. The AIR
 /// and game folders in the install folder stay unless the player asks for them too, and a game folder used in place (a server on this
 /// PC reads it) is never deleted. The 2011 launcher's folder goes with the game folders (its files are game files, batch 761), and the classic
 /// layout under the RADS root goes in every case. Only the names Amberline wrote are deleted, so a file of the player's own keeps the install folder.
@@ -130,11 +131,12 @@ internal static class PlayerUninstall
             kept.AddRange(GameFolders(record));
         }
         if (!FolderMove.Inside(record.Game, install)) kept.Add(record.Game);
-        // The per-user files, in the player's folder and in the one from before batch 647: Play.cmd's download and connection, the
-        // record, the logs; and the play mode's font cache. Only these names: nothing of the host's (its pointer, its data) is touched.
+        // The per-user files, in the player's folder and in the one from before batch 647: the invite's (and Play.cmd's) download and
+        // connection, the record, the logs, the app's own copy (batch 917); and the play mode's font cache. Only these names: nothing of the
+        // host's (its pointer, its data) is touched.
         foreach (var player in new[] { profile.PlayerFolder, profile.OldPlayerFolder })
             paths.AddRange([Path.Combine(player, PlayerInstall.ToolFolder), Path.Combine(player, PlayerInstall.ToolFolder + ".sha256"),
-                Path.Combine(player, "server.json"), Path.Combine(player, "install.json"), Path.Combine(player, "logs")]);
+                Path.Combine(player, "server.json"), Path.Combine(player, "install.json"), Path.Combine(player, "logs"), Path.Combine(player, PlayerInvite.CopyName)]);
         paths.Add(Path.Combine(profile.LocalAppData, "AmberlineAir", "fonts"));
 
         var left = new List<string>();
@@ -166,6 +168,8 @@ internal static class PlayerUninstall
         foreach (var folder in new[] { install, profile.PlayerFolder, profile.OldPlayerFolder, profile.OldPlayerParent, Path.Combine(profile.LocalAppData, "AmberlineAir") })
             RemoveIfEmpty(folder);
         if (profile.WritesRegistry) DeleteAppsEntry(install);
+        // NOT RETAIL (batch 917): nothing is left to open the invite link's scheme.
+        PlayerInvite.Unregister(profile);
         return new(kept, left, afterExit);
     }
 

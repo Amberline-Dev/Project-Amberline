@@ -45,6 +45,9 @@ public static class HostInviteChecks
         long hostId;
         using (var store = new PlatformAccounts(home.Loop.Paths.Data)) hostId = store.RegisterPublic("host_one", HostPassword, "Host One").Id;
         WriteSettings(home, new { serverName = "Test Server", publicHost = TestHost, addressSource = HostAddress.Typed, hostAccount = hostId });
+        // Batch 917: a release (its BUILD.json version), so Add a user gives the invite link.
+        Directory.CreateDirectory(home.Loop.Paths.App);
+        File.WriteAllText(Path.Combine(home.Loop.Paths.App, "..", "BUILD.json"), "{\"version\":\"1.4.0\"}");
         const string typed = "Typed-pass-2048";
         string generated;
         var run = Task.Run(() => HostMode.RunAsync(home.Loop));
@@ -80,13 +83,14 @@ public static class HostInviteChecks
             // friend1: the summoner name left empty, the password made by Amberline.
             var ready = await InviteFormAsync(browser, ("username", "Friend1"), ("summoner", ""), ("mode", "maxed"), ("password", ""));
             TestAssert.True(ready.Contains("<h1>friend1 is ready</h1>", StringComparison.Ordinal) &&
-                ready.Contains("<a href=/host/play-file download>Download the Play file for Test Server</a>", StringComparison.Ordinal) &&
+                ready.Contains("<pre id=invite-link class=message>https://amberline-dev.github.io/Project-Amberline/join/#", StringComparison.Ordinal) &&
+                ready.Contains("<button type=button data-copy=invite-link>Copy invite link</button>", StringComparison.Ordinal) && !ready.Contains("Play file", StringComparison.Ordinal) &&
                 ready.Contains("<button type=button data-copy=message>Copy</button>", StringComparison.Ordinal) &&
                 ready.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal) &&
                 ready.Contains("The password is shown only now.", StringComparison.Ordinal) && !ready.Contains("onclick", StringComparison.Ordinal), ready);
             var message = Message(ready);
             TestAssert.True(message.StartsWith("Join my game server \"Test Server\"!\n", StringComparison.Ordinal) &&
-                message.Contains("puts \"Test Server\" on your desktop. Then log in with:\n  username: friend1\n  password: ", StringComparison.Ordinal), message);
+                message.Contains("Open the invite link I sent and follow its page; it puts \"Test Server\" on your desktop. Then log in with:\n  username: friend1\n  password: ", StringComparison.Ordinal), message);
             generated = Regex.Match(message, @"password: (\S+)\z").Groups[1].Value;
             TestAssert.True(Generated.IsMatch(generated), "the message holds a generated password: " + message);
             using (var login = JsonDocument.Parse(await LoginAsync(browser, "friend1", generated, HttpStatusCode.OK)))
@@ -192,18 +196,20 @@ public static class HostInviteChecks
         Delete(home.Root);
     }
 
-    [Check("server.host-play-file-renders-connection", TimeoutSeconds = 180)]
-    public static void ThePlayFileCarriesTheServersNameAddressPortAndPin() => PlayFileAsync().GetAwaiter().GetResult();
+    [Check("server.host-invite-link-renders-connection", TimeoutSeconds = 180)]
+    public static void TheInviteLinkCarriesTheServersNameAddressPortAndPin() => InviteLinkAsync().GetAwaiter().GetResult();
 
-    private static async Task PlayFileAsync()
+    /// <summary>
+    /// Batch 917 (restates batch 619's Play file check; the invite link replaced Play.cmd): Users gives the invite link (InviteLink) with the
+    /// host's release tag, the address, the friends' port, the certificate's pin and the server name. It follows the address step and a new
+    /// name without a restart and agrees with the server's manifest. Before the address, or in a development build (no release version), the
+    /// page says why there is no link; the Play file's address is gone.
+    /// </summary>
+    private static async Task InviteLinkAsync()
     {
         var saved = new[] { "GAME_DATA_ROOT", "AIR_CLIENT_ROOT" }.ToDictionary(name => name, Environment.GetEnvironmentVariable);
-        var home = Home.Create("league-host-play-file");
-        // The template beside the Platform, as tools/build-server.ps1 -Layout Home puts it, here with a checkout's LF line ends.
-        var source = AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", HostInvite.TemplateFile));
-        var template = Path.Combine(home.Loop.Paths.App, HostInvite.TemplateFile);
+        var home = Home.Create("league-host-invite-link");
         Directory.CreateDirectory(home.Loop.Paths.App);
-        File.WriteAllText(template, File.ReadAllText(source).ReplaceLineEndings("\n"));
         WriteSettings(home, new { serverName = "Test Server" });
         var run = Task.Run(() => HostMode.RunAsync(home.Loop));
         try
@@ -212,47 +218,43 @@ public static class HostInviteChecks
             await WaitForHealthAsync(browser, "ready", run);
             await home.SignInAsync(browser);
             using (var stranger = home.Client())
-            using (var refused = await stranger.GetAsync(HostInvite.PlayFilePath))
-                TestAssert.Equal(HttpStatusCode.Forbidden, refused.StatusCode, "the Play file needs the host's session");
-            foreach (var path in new[] { HostInvite.PlayFilePath, HostInvite.AddPath })
+            using (var refused = await stranger.GetAsync(HostInvite.UsersPath))
+                TestAssert.Equal(HttpStatusCode.Forbidden, refused.StatusCode, "the invite link needs the host's session");
+            using (var early = await browser.GetAsync(HostInvite.AddPath))
             {
-                using var early = await browser.GetAsync(path);
                 var page = await early.Content.ReadAsStringAsync();
-                TestAssert.Equal(HttpStatusCode.Conflict, early.StatusCode, path + " before the address: " + page);
-                TestAssert.True(page.Contains("Your address first", StringComparison.Ordinal) && page.Contains("href=/host/setup>", StringComparison.Ordinal), page);
+                TestAssert.Equal(HttpStatusCode.Conflict, early.StatusCode, "Add a user before the address: " + page);
+                TestAssert.True(page.Contains("Your address first", StringComparison.Ordinal) && page.Contains("The invite link needs your address", StringComparison.Ordinal) &&
+                    page.Contains("href=/host/setup>", StringComparison.Ordinal), page);
             }
+            var users = await browser.GetStringAsync(HostInvite.UsersPath);
+            TestAssert.True(users.Contains("The invite link appears here once Amberline knows your address.", StringComparison.Ordinal) &&
+                !users.Contains("data-copy=invite-link", StringComparison.Ordinal), "no link before the address: " + users);
 
-            // The address step saves the address; the Play file follows at once, without a restart.
+            // The address step saves the address. Batch 917 follow-up: a development build (no release version in BUILD.json) and a guide
+            // build from a checkout (0.0.N) name the line's first player-app release, without a restart.
             var step = await browser.GetStringAsync("/host/setup/address");
             await PostAsync(browser, "/host/setup/address", Token(step), HttpStatusCode.Redirect, ("choice", "typed"), ("address", TestHost));
             var pin = Pin(home);
-            var (text, disposition) = await PlayFileAsync(browser);
-            TestAssert.True(disposition.Contains("filename=Play.cmd", StringComparison.Ordinal), disposition);
-            TestAssert.Equal(PlatformBootstrap.RenderLauncher(File.ReadAllText(source).ReplaceLineEndings("\r\n"), TestHost, home.RemotePort, pin, "Test Server"),
-                text, "the template rendered with the server's name, address, public port and pin");
-            TestAssert.False(Regex.IsMatch(text, "(?<!\r)\n"), "CRLF line ends throughout: cmd.exe reads the file");
-            foreach (var placeholder in new[] { "__HOST__", "__PORT__", "__CERT__", "__NAME__", "__PLAYER__" })
-                TestAssert.False(text.Contains(placeholder, StringComparison.Ordinal), placeholder + " is filled in");
-            // Batch 829: the friend's download goes into this line's own player folder, never the 1.0.0.126 line's Amberline Player.
-            TestAssert.True(text.Contains("$root = Join-Path $local 'Amberline 132 Player'", StringComparison.Ordinal), "the line's player folder");
-            TestAssert.False(text.Contains(TestHost, StringComparison.OrdinalIgnoreCase), "the address is never in plain text");
-            var token = Regex.Match(text, "\\$HostToken = '([^']+)'").Groups[1].Value;
-            TestAssert.Equal(TestHost, Encoding.ASCII.GetString(Convert.FromBase64String(token).Select(b => (byte)(b ^ 0x5A)).ToArray()), "the host token decodes");
-            TestAssert.True(text.Contains($"$PortText = '{home.RemotePort}'", StringComparison.Ordinal) && text.Contains($"$Pin = '{pin}'", StringComparison.Ordinal) &&
-                text.Contains("$Name = 'Test Server'", StringComparison.Ordinal), "port, pin and name");
-            if (OperatingSystem.IsWindows())
-            {
-                // tools/player-file.ps1 (batch 615 and 619) writes the same file for the same server and certificate.
-                var built = Path.Combine(home.Root, "player-file");
-                var result = AirBootstrapChecks.RunPowerShell("pwsh", ["-File", AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "player-file.ps1")),
-                    "-Root", built, "-PublicHost", TestHost, "-Port", home.RemotePort.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    "-Certificate", Path.Combine(home.Loop.Paths.Data, "remote", "host.pfx"), "-ServerName", "Test Server",
-                    "-PlayerFolder", PlatformBootstrap.PlayerFolderName]);
-                TestAssert.Equal(0, result.ExitCode, result.Output);
-                TestAssert.Equal(File.ReadAllText(Path.Combine(built, "Play.cmd")), text, "the page's Play file equals tools/player-file.ps1's");
-            }
+            var first = Amberline.AirCompanion.InviteLink.TagPrefix + Amberline.AirCompanion.InviteLink.FirstPlayerRelease;
+            TestAssert.Equal(PlatformLine.ReleaseTagPrefix + (WorkspaceFiles.Patch == "126" ? "0.1.31" : "0.1.11"), first, "the line's first player-app release");
+            TestAssert.Equal(Amberline.AirCompanion.InviteLink.Link(new(first, TestHost, home.RemotePort, pin, "Test Server")), await InviteLinkOf(browser),
+                "a development build's link names the first player-app release");
+            File.WriteAllText(Path.Combine(home.Loop.Paths.App, "..", "BUILD.json"), "{\"version\":\"0.0.461520\"}");
+            TestAssert.Equal(first, Amberline.AirCompanion.InviteLink.Decode(await InviteLinkOf(browser)).Invite?.Tag, "a guide build's link (0.0.N)");
 
-            // A friend's file and the server's manifest agree: the manifest names the same server, address and pin.
+            // A release: the link follows at once, without a restart, with Copy invite link beside the other Copy buttons.
+            File.WriteAllText(Path.Combine(home.Loop.Paths.App, "..", "BUILD.json"), "{\"version\":\"1.4.0\"}");
+            var link = await InviteLinkOf(browser);
+            TestAssert.Equal(Amberline.AirCompanion.InviteLink.Link(new(PlatformLine.ReleaseTagPrefix + "1.4.0", TestHost, home.RemotePort, pin, "Test Server")), link,
+                "the link holds the release, the address, the friends' port, the pin and the name");
+            TestAssert.False(link.Contains(TestHost, StringComparison.OrdinalIgnoreCase), "the address is never in plain text");
+            TestAssert.True((await browser.GetStringAsync(HostInvite.UsersPath)).Contains(
+                "<button type=button data-copy=invite-link data-needs-script hidden>Copy invite link</button>", StringComparison.Ordinal), "Copy invite link");
+            using (var gone = await browser.GetAsync("/host/play-file"))
+                TestAssert.Equal(HttpStatusCode.NotFound, gone.StatusCode, "batch 917: the Play file is gone");
+
+            // A friend's link and the server's manifest agree: the manifest names the same server, address and pin.
             using (var friend = new HttpClient(new HttpClientHandler
                    {
                        UseProxy = false,
@@ -265,16 +267,10 @@ public static class HostInviteChecks
                 TestAssert.Equal(pin, manifest.RootElement.GetProperty("certificateSha256").GetString());
             }
 
-            // A new server name reaches the next download, also without a restart.
+            // A new server name reaches the link, also without a restart.
             var name = await browser.GetStringAsync(HostSteps.NamePath);
             await PostAsync(browser, HostSteps.NamePath, Token(name), HttpStatusCode.Redirect, ("name", "Other Server"));
-            TestAssert.True((await PlayFileAsync(browser)).Text.Contains("$Name = 'Other Server'", StringComparison.Ordinal), "the renamed server");
-
-            // Amberline's own template removed (for example by an antivirus): said in plain words.
-            File.Delete(template);
-            using var missing = await browser.GetAsync(HostInvite.PlayFilePath);
-            TestAssert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
-            TestAssert.True((await missing.Content.ReadAsStringAsync()).Contains("The Play file is missing", StringComparison.Ordinal), "the missing template");
+            TestAssert.Equal("Other Server", Amberline.AirCompanion.InviteLink.Decode(await InviteLinkOf(browser)).Invite?.Name, "the renamed server");
         }
         finally
         {
@@ -445,14 +441,13 @@ public static class HostInviteChecks
         return certificate.GetCertHashString(HashAlgorithmName.SHA256);
     }
 
-    private static async Task<(string Text, string Disposition)> PlayFileAsync(HttpClient browser)
+    /// <summary>Batch 917: the invite link in Users' box (<c>invite-link</c>, the text Copy invite link copies).</summary>
+    private static async Task<string> InviteLinkOf(HttpClient browser)
     {
-        using var file = await browser.GetAsync(HostInvite.PlayFilePath);
-        TestAssert.Equal(HttpStatusCode.OK, file.StatusCode, await file.Content.ReadAsStringAsync());
-        TestAssert.Equal("application/octet-stream", file.Content.Headers.ContentType?.MediaType);
-        var bytes = await file.Content.ReadAsByteArrayAsync();
-        TestAssert.True(bytes.All(b => b < 0x80), "an ASCII file");
-        return (Encoding.ASCII.GetString(bytes), file.Content.Headers.ContentDisposition?.ToString() ?? "");
+        var page = await browser.GetStringAsync(HostInvite.UsersPath);
+        var match = Regex.Match(page, "<pre id=invite-link class=message>([^<]+)</pre>");
+        TestAssert.True(match.Success, "Users gives the invite link: " + page);
+        return WebUtility.HtmlDecode(match.Groups[1].Value);
     }
 
     /// <summary>The copyable message's text, as <c>page.js</c> copies it.</summary>
