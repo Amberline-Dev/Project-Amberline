@@ -19,6 +19,7 @@ namespace Amberline.Tests.Air;
 public static class HostStepsChecks
 {
     private const string TestHost = "amberline.example.test";
+    private const string LanIncomplete = "not a complete address. Type four numbers from 0 to 255 with dots, for example 192.168.1.20";
 
     [Check("server.host-address-validation")]
     public static void TheAddressStepTakesOnlyAddressesFriendsCanReach()
@@ -45,8 +46,10 @@ public static class HostStepsChecks
                      ("ämber.example.test", "cannot use this name"), ("under_score.example.test", "cannot use this name"),
                      ("example.123", "cannot use this name"), (new string('a', 64) + ".example.test", "cannot use this name"),
                      (string.Join('.', Enumerable.Repeat("abcdefghi", 26)), "too long"),
-                     ("203.0.113", "not a whole address"), ("203.0.113.256", "not a whole address"), ("203.000.113.7", "not a whole address"),
-                     ("203.0.113.7.1", "not a whole address"),
+                     ("203.0.113", "not a complete address. Type four numbers from 0 to 255 with dots, for example 203.0.113.7"),
+                     ("203.0.113.256", "not a complete address. Type four numbers from 0 to 255 with dots, for example 203.0.113.7"),
+                     ("203.000.113.7", "not a complete address. Type four numbers from 0 to 255 with dots, for example 203.0.113.7"),
+                     ("203.0.113.7.1", "not a complete address. Type four numbers from 0 to 255 with dots, for example 203.0.113.7"),
                      ("192.168.1.10", "home network"), ("10.0.0.2", "home network"), ("172.16.5.4", "home network"),
                      ("100.64.1.2", "shares one address"),
                      ("127.0.0.1", "cannot reach"), ("0.0.0.0", "cannot reach"), ("169.254.1.1", "cannot reach"), ("224.0.0.1", "cannot reach"),
@@ -83,11 +86,11 @@ public static class HostStepsChecks
                  {
                      (null, "Type this PC's address"), ("  ", "Type this PC's address"),
                      ("127.0.0.1", "\"this PC itself\""), ("127.10.0.1", "\"this PC itself\""),
-                     ("169.254.10.20", "169.254 by itself"), ("100.64.1.2", "belongs to your internet provider"), ("100.127.255.1", "belongs to your internet provider"),
+                     ("169.254.10.20", "169.254 means the router gave this PC no address"), ("100.64.1.2", "belongs to your internet provider"), ("100.127.255.1", "belongs to your internet provider"),
                      ("203.0.113.7", "internet address"), ("172.32.0.1", "internet address"), ("11.0.0.1", "internet address"),
                      ("0.0.0.0", "cannot reach"), ("224.0.0.1", "cannot reach"),
-                     ("192.168.1", "not a home-network address"), ("192.168.001.020", "not a home-network address"), ("192.168.1.256", "not a home-network address"),
-                     ("fe80::1", "not a home-network address"), (TestHost, "not a home-network address"), ("192.168.1.20:8391", "not a home-network address"),
+                     ("192.168.1", LanIncomplete), ("192.168.001.020", LanIncomplete), ("192.168.1.256", LanIncomplete),
+                     ("fe80::1", LanIncomplete), (TestHost, LanIncomplete), ("192.168.1.20:8391", LanIncomplete),
                  })
         {
             var (host, problem) = HostAddress.CheckLan(text);
@@ -346,7 +349,7 @@ public static class HostStepsChecks
             var before = File.ReadAllText(settings);
             using (var forged = await browser.PostAsync("/host/setup/name", new FormUrlEncodedContent(new Dictionary<string, string> { ["name"] = "Friday League" })))
                 TestAssert.Equal(HttpStatusCode.BadRequest, forged.StatusCode, "the form needs its antiforgery token");
-            await RefusedAsync(browser, "/host/setup/name", "A server name has 1 to 40", ("name", "Friday/League"));
+            await RefusedAsync(browser, "/host/setup/name", "Use 1 to 40 letters", ("name", "Friday/League"));
             TestAssert.Equal(before, File.ReadAllText(settings), "a refused name saves nothing");
             await SavedAsync(browser, "/host/setup/name", ("name", " Friday League "));
             TestAssert.Equal("Friday League", Setting(settings, "serverName"));
@@ -384,7 +387,7 @@ public static class HostStepsChecks
             page = await browser.GetStringAsync("/host/setup/login");
             // Batch 646: no Back (the folder step before it belonged to setup mode, which has ended); the page says where to change them.
             TestAssert.True(page.Contains("Your own login", StringComparison.Ordinal) && page.Contains("<button type=submit>Continue</button>", StringComparison.Ordinal) &&
-                !page.Contains(">Back</a>", StringComparison.Ordinal) && page.Contains("Settings changes them later.", StringComparison.Ordinal), page);
+                !page.Contains(">Back</a>", StringComparison.Ordinal) && page.Contains("You can change them later in Settings.", StringComparison.Ordinal), page);
 
             using (var weak = await PostAsync(browser, "/host/setup/login", ("username", "host_test"), ("summoner", "Host Test"), ("password", "Zq9#short"), ("mode", "fresh")))
             {

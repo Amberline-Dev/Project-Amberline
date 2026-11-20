@@ -66,7 +66,7 @@ internal static class ClassicStart
     }
 
     /// <summary>The one line the player is told when the classic start falls back.</summary>
-    internal static string FallbackMessage(string reason) => $"The classic launcher didn't open: {reason.TrimEnd().TrimEnd('.')}. Starting the usual way.";
+    internal static string FallbackMessage(string reason) => $"The classic launcher did not open: {reason.TrimEnd().TrimEnd('.')}. Starting the usual way.";
 
     internal static bool MutexFree(string name)
     {
@@ -117,7 +117,7 @@ internal static class ClassicStart
             {
                 // The pipe is made before ServeAsync's first wait, so a pipe that could not be made has ended it already.
                 if (serving.IsCompleted)
-                    return stop.IsCancellationRequested ? null : $"The update service stand-in did not start ({serving.Exception?.GetBaseException().Message}).";
+                    return stop.IsCancellationRequested ? null : $"The launcher's update service did not start ({serving.Exception?.GetBaseException().Message}).";
                 var (layout, refusal) = ClassicLauncherLayout.Ensure(request, log);
                 if (layout is null) return refusal;
                 Process launcher;
@@ -132,7 +132,7 @@ internal static class ClassicStart
                     {
                         if (stop.IsCancellationRequested) return null;
                         if (launcher.HasExited) return "It closed before it was ready.";
-                        if (serving.IsCompleted) return $"The update service stand-in stopped ({serving.Exception?.GetBaseException().Message}).";
+                        if (serving.IsCompleted) return $"The launcher's update service stopped ({serving.Exception?.GetBaseException().Message}).";
                         Stop(launcher);
                         return $"It was not ready within {ConnectLimit.TotalSeconds:0} seconds.";
                     }
@@ -259,7 +259,7 @@ internal static class ClassicStart
                     try
                     {
                         if (process.MainModule?.FileName is { } image && folders.Any(folder => FolderMove.Inside(image, folder)))
-                            return $"{Path.GetFileName(image)} is running from {Path.GetDirectoryName(image)}; close it first.";
+                            return $"{Path.GetFileName(image)} is running from {Path.GetDirectoryName(image)}. Close it first.";
                     }
                     catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or NotSupportedException) { }
         return null;

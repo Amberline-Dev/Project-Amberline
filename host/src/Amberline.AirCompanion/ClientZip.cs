@@ -97,8 +97,8 @@ internal static class ClientZip
             catch (Exception exception) when (exception is IOException or ArgumentException or UnauthorizedAccessException)
             { throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} is not available. Choose a folder on another drive."); }
             if (meter.Total > free)
-                throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} has {FolderMove.Gigabytes(free)} GB free; unpacking the client zip needs " +
-                    $"{FolderMove.Gigabytes(meter.Total)} GB. Free some space, or choose a folder on another drive.");
+                throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} has {FolderMove.Gigabytes(free)} GB free, and unpacking the client zip needs " +
+                    $"{FolderMove.Gigabytes(meter.Total)} GB. Free some space or choose a folder on another drive.");
             var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var buffer = new byte[1 << 20];
             void Extract(List<(ZipArchiveEntry Entry, string Target)> part)
@@ -178,7 +178,7 @@ internal static class ClientZip
         var link = ((entry.ExternalAttributes >> 16) & 0xF000) == 0xA000 || (entry.ExternalAttributes & (int)FileAttributes.ReparsePoint) != 0;
         if (link || name.Length == 0 || name.StartsWith('/') || name.Contains('\0') || name.Contains(':') ||
             name.TrimEnd('/').Split('/').Any(part => part is "" or "." or ".."))
-            throw new InstallRefusedException($"The zip holds an unsafe entry ({entry.FullName}), so nothing is unpacked from it. Choose the client zip ({BundleName}).");
+            throw new InstallRefusedException($"The zip contains an unsafe entry ({entry.FullName}), so nothing was unpacked. Choose the client zip ({BundleName}).");
     }
 
     /// <summary>The prefixes of the folders that hold <paramref name="path"/> (a file's path below the folder), each once in any case.</summary>
@@ -191,7 +191,7 @@ internal static class ClientZip
         1 => found[0],
         0 when !required => null,
         0 => throw new InstallRefusedException($"This zip has no {what} in it, so it is not the client zip ({BundleName})."),
-        _ => throw new InstallRefusedException($"This zip has more than one {what} in it, so it is not known which to use. Choose the client zip ({BundleName})."),
+        _ => throw new InstallRefusedException($"This zip has more than one {what} in it, so setup cannot tell which one to use. Choose the client zip ({BundleName})."),
     };
 
     private static long Bytes(List<(ZipArchiveEntry Entry, string Target)> part) => part.Sum(item => item.Entry.Length);
@@ -201,7 +201,7 @@ internal static class ClientZip
     {
         var full = Path.GetFullPath(Path.Combine(staging, target.TrimEnd('/').Replace('/', Path.DirectorySeparatorChar)));
         return FolderMove.Inside(full, staging) && !FolderMove.Same(full, staging) ? full
-            : throw new InstallRefusedException($"The zip holds an unsafe entry ({target}), so nothing is unpacked from it. Choose the client zip ({BundleName}).");
+            : throw new InstallRefusedException($"The zip contains an unsafe entry ({target}), so nothing was unpacked. Choose the client zip ({BundleName}).");
     }
 
     /// <summary>A fresh staging folder with its marker. A leftover of ours is removed first; another folder of that name, or a link, stops the unpack.</summary>
@@ -211,11 +211,11 @@ internal static class ClientZip
         {
             // Batch 857 review (D): a link or a folder of another Windows account is never deleted (InstallLock.Refusal): the unpack refuses and names it.
             if (InstallLock.Refusal(staging) is { } refused)
-                throw new InstallRefusedException($"{refused}, and Amberline unpacks the client zip there. Move or rename that folder, then try again.");
+                throw new InstallRefusedException($"{refused}. Amberline needs that folder to unpack the client zip. Move or rename it, then try again.");
             if ((File.GetAttributes(staging) & FileAttributes.ReparsePoint) != 0 || !Ours(staging))
-                throw new InstallRefusedException($"A folder named {staging} is in the way: Amberline unpacks the client zip there. Move or rename that folder, then try again.");
+                throw new InstallRefusedException($"A folder named {staging} is in the way. Amberline needs that folder to unpack the client zip. Move or rename it, then try again.");
             if (!FolderMove.TryDeleteTree(staging))
-                throw new InstallRefusedException($"The folder {staging}, left from an earlier unpack, could not be removed: a program may have a file in it open. Close it, then try again.");
+                throw new InstallRefusedException($"The folder {staging} is left from an earlier unpack and could not be removed. A program may have a file in it open. Close that program, then try again.");
         }
         // NOT RETAIL (batch 857; review HIGH 1, MEDIUM 4): made with the lock already set, checked on the folder itself (another account may have made
         // it meanwhile) and locked as the install is before anything is unpacked into it (InstallLock.Prepare). A link, another account's folder or one
@@ -240,7 +240,7 @@ internal static class ClientZip
             return;
         }
         if (!written.Add(target))
-            throw new InstallRefusedException($"The zip holds {entry.FullName} twice, so it is not known which to use. Choose the client zip ({BundleName}).");
+            throw new InstallRefusedException($"The zip contains {entry.FullName} twice, so setup cannot tell which one to use. Choose the client zip ({BundleName}).");
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         var crc = uint.MaxValue;
         long length = 0;

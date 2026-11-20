@@ -20,7 +20,7 @@ public static class HostGamesSetting
     private const string Field = "games";
 
     /// <summary>The saved notice: Save never asks Windows, so it says where the firewall's question comes from.</summary>
-    internal const string SavedNotice = "Saved. It counts for games that start from now on; a running game goes on. " +
+    internal const string SavedNotice = "Saved. It applies to games that start from now on. Running games are not affected. " +
         "If the dashboard asks, choose Allow through Windows Firewall.";
 
     /// <summary>The typed number of games, or the problem with it (<see cref="HostSettings.GamePortsFit"/>, with the saved first game port).</summary>
@@ -40,7 +40,7 @@ public static class HostGamesSetting
             <section class=folder aria-labelledby=games-title><h2 id=games-title>Games</h2>
             <form method=post action={Path} novalidate>{token}
             {HostPages.Field(Field, "Games at the same time",
-                $"1 to {HostSettings.MostGames}. Each game uses about one CPU core, some memory and its own game port: now " +
+                $"1 to {HostSettings.MostGames}. Each game uses about one CPU core, some memory and its own game port. The game ports now are " +
                 $"{HostDashboard.GamePortsText(settings.FirstGamePort, settings.MaxGames)}.",
                 problem, $"type=number min=1 max={HostSettings.MostGames} inputmode=numeric value=\"{value}\"")}
             <div class=buttons><button type=submit>Save</button></div></form></section>

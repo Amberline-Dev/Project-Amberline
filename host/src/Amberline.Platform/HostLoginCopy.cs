@@ -99,8 +99,8 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
     private string Running => $"Your Amberline for {from.Patch} is running. Stop it, then open this page again to copy its logins.";
 
     private string Unsafe(string folder) =>
-        $"Amberline found an Amberline for {from.Patch} in {WebUtility.HtmlEncode(folder)}, but other people who use this PC can change its files, " +
-        $"so Amberline does not copy its logins. Update your Amberline for {from.Patch} to {from.LocksFrom} or later and start it once.";
+        $"Other people who use this PC can change the files of your Amberline for {from.Patch} in {WebUtility.HtmlEncode(folder)}, " +
+        $"so its logins are not copied. Update it to {from.LocksFrom} or later and start it once.";
 
     private static string Logins(int count) => count == 1 ? "1 login" : $"{count} logins";
 
@@ -145,7 +145,7 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
             <p class=notice role=status>{Logins(copied.Length)} copied from your Amberline for {from.Patch}.</p>
             {(taken.Length == 0 ? "" : $"<p>Not copied, because a login here already has the username or summoner name: {names}.</p>")}
             {(found.Unreadable == 0 ? "" : $"<p class=warn>{Logins(found.Unreadable)} could not be read and {(found.Unreadable == 1 ? "was" : "were")} not copied.</p>")}
-            <p class=tip>Each copied login keeps its password and starts here as a new login: what they own and their games stay with your Amberline for {from.Patch}. Users need this server's invite link to play here.</p>
+            <p class=tip>Each copied login keeps its password and starts here as a new login. What they own and their games stay with your Amberline for {from.Patch}. Users need this server's invite link to play here.</p>
             {own}{then?.Invoke()}
             """);
     }
@@ -218,8 +218,8 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
     }
 
     private string Link(string folder) =>
-        $"Amberline found an Amberline for {from.Patch} in {WebUtility.HtmlEncode(folder)}, but a part of it is a link to another place, " +
-        "so Amberline does not copy its logins.";
+        $"Your Amberline for {from.Patch} in {WebUtility.HtmlEncode(folder)} contains a link to another place, " +
+        "so its logins are not copied.";
 
     /// <summary>
     /// The other line's data folders, in the order its own start would take them: the pointer's install, the default folder at the drive's root,

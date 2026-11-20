@@ -153,10 +153,10 @@ public static class AirPasswordResetChecks
                 TestAssert.Equal(HttpStatusCode.Redirect, revoke.StatusCode, "Revoke remote access with a file that cannot be written is no failure");
                 TestAssert.Equal("/manage?revoke=unsaved", revoke.Headers.Location?.OriginalString);
             }
-            TestAssert.True((await host.Client.GetStringAsync("/manage?revoke=unsaved")).Contains("The token ended, but that could not be saved just now",
+            TestAssert.True((await host.Client.GetStringAsync("/manage?revoke=unsaved")).Contains("The token ended, but this could not be saved. It lasts only until",
                 StringComparison.Ordinal), "the page says the revoke could not be saved");
             TestAssert.True((await host.Client.GetStringAsync("/manage?refresh=off&password=unsaved")).Contains(
-                "The password was changed and the player was logged out, but the end of their remote-access token could not be saved just now.",
+                "The password was changed and the player was logged out, but their remote sign-in could not be ended for good.",
                 StringComparison.Ordinal), "the page says what could not be saved");
             TestAssert.Equal(HttpStatusCode.OK, await host.LogIn("reset_target", newestPassword), "the new password logs in");
 

@@ -35,7 +35,8 @@ internal static class GameFolderReport
     /// through their short names (<c>ANNIEB~1.INI</c>); a volume without them gives an empty index, the loading screen finds no summoner-spell icon and the
     /// client stops at hero creation with "Avatar spell not found!". Windows 8 and later create short names on the system volume only by default
     /// (<c>fsutil behavior query disable8dot3</c> = 2, "per volume"). The managed RADS layout reads the index from its archive instead and does not need them.
-    /// Evidence: docs/maintenance/2026-10-18-w15-rads-delivery.md.
+    /// Evidence: docs/maintenance/2026-10-18-w15-rads-delivery.md; 1.0.0.132's index builder is the client, which reads <c>Data\Spells\ini.filelist</c> only
+    /// from an archive and otherwise enumerates <c>Data\Spells\*.ini</c> with <c>FindFirstFileA</c> (batch 923 record).
     /// </summary>
     internal static string ShortNames(string gameDirectory)
     {
@@ -45,13 +46,39 @@ internal static class GameFolderReport
             // A file whose long name has no 8.3 form of its own (name over eight characters, extension over three), so a short alias always differs from it.
             var sample = Directory.EnumerateFiles(Path.Combine(gameDirectory, "DATA", "Spells"), "*.inibin")
                 .FirstOrDefault(file => Path.GetFileNameWithoutExtension(file).Length > 8);
-            if (sample is null) return "unknown";
-            var alias = new StringBuilder(1024);
-            var length = GetShortPathName(sample, alias, (uint)alias.Capacity);
-            if (length == 0 || length >= alias.Capacity) return "unknown";
-            return string.Equals(Path.GetFileName(alias.ToString()), Path.GetFileName(sample), StringComparison.OrdinalIgnoreCase) ? "off" : "on";
+            return sample is null ? "unknown" : Alias(sample);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return "unknown"; }
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 923): whether files made in <paramref name="folder"/> now get a short 8.3 alias (<c>on</c>, <c>off</c> or <c>unknown</c>). Windows gives an
+    /// alias when a file is made, so this asks a new one: a long-named folder is made in <paramref name="folder"/>, or in its nearest parent that exists
+    /// (the same volume), asked for its short name and removed. A folder that cannot be written answers <c>unknown</c>.
+    /// </summary>
+    internal static string NewShortNames(string folder)
+    {
+        if (!OperatingSystem.IsWindows()) return "unknown";
+        try
+        {
+            var existing = Path.GetFullPath(folder);
+            while (!Directory.Exists(existing))
+                existing = Path.GetDirectoryName(existing) ?? throw new DirectoryNotFoundException(folder);
+            var probe = Path.Combine(existing, "amberline-short-name-probe-" + Guid.NewGuid().ToString("N") + ".probe");
+            Directory.CreateDirectory(probe);
+            try { return Alias(probe); }
+            finally { Directory.Delete(probe); }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return "unknown"; }
+    }
+
+    /// <summary>Whether <paramref name="path"/> (a long name: over eight characters or an extension over three) has a short alias that differs from it.</summary>
+    private static string Alias(string path)
+    {
+        var alias = new StringBuilder(1024);
+        var length = GetShortPathName(path, alias, (uint)alias.Capacity);
+        if (length == 0 || length >= alias.Capacity) return "unknown";
+        return string.Equals(Path.GetFileName(alias.ToString()), Path.GetFileName(path), StringComparison.OrdinalIgnoreCase) ? "off" : "on";
     }
 
     /// <summary>Problems visible from the folder string alone. Empty means none.</summary>

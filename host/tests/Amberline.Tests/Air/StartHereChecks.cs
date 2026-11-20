@@ -90,7 +90,7 @@ public static class StartHereChecks
                 $"--install-to \"{installFolder}\" --game \"{game}\" --air \"{air}\" --delete-originals",
                 $"Summary Install folder: {installFolder} Now: a new window named Amberline copies the program, the game and the AIR client into that folder.",
                 "Once the copies are checked, it deletes the originals. Then its page opens in your web browser.",
-                "On that page: set up your server, then choose Users and Add a user.", "From now on: start Amberline from its desktop icon.",
+                "On that page: set up your server, then choose Users and Add a user.", "From now on, start Amberline from its desktop icon.",
                 "double-click START-HERE.cmd again. Log:", "DRY RUN finished");
             AssertPlain(home.Output, root);
             foreach (var gone in new[] { "Git:", "needs Git,", "LLVM", "Build Tools" })
@@ -174,7 +174,7 @@ public static class StartHereChecks
             TestAssert.Equal(0, update.ExitCode, update.Output);
             // Batch 645: the installed version (none here) and this download's, the update that also repairs, no second install.
             AssertHas(update.Output, "the update", $"Your Amberline without a version number is in: {existing}",
-                "This download builds 0.0.", "Updating also repairs it; your settings, logins and users stay.", "uninstall this one first",
+                "This download builds 0.0.", "Updating also repairs it. Your settings, logins and users stay.", "uninstall this one first",
                 "Update this Amberline now? Type Y to update, N to keep it, or R to build a rented server package. Y", "Steps 1 and 2 of 6: not needed. This PC has Amberline already.",
                 $"-GameRoot '{game}'", $"-AirRoot '{air}'", $"--install-to \"{existing}\" in a new window",
                 $"Summary Install folder: {existing} Now: a new window named Amberline asks you to press Enter, then updates to 0.0.");
@@ -268,13 +268,13 @@ public static class StartHereChecks
                 ["-SearchRoots", tree]);
             TestAssert.Equal(0, found.ExitCode, found.Output);
             var foundLog = File.ReadAllText(Directory.GetFiles(Path.Combine(root, "state"), "guide-*.log").Single(), Encoding.UTF8);
-            AssertHas(found.Output, "the search", $"Searching {tree}", "Looked at ", $"1. {release} (patch {PatchVersion()}, correct)", $"Can't be used, another patch: {old}",
+            AssertHas(found.Output, "the search", $"Searching {tree}", "Looked at ", $"1. {release} (patch {PatchVersion()}, correct)", $"Cannot be used, another patch: {old}",
                 "2. Choose another folder in a window", "3. Paste a path", "Type a number: 3", "Looking inside that folder (at most 60 seconds).",
                 $"Found it inside that folder: {release}",
-                $"Your game folder: {release}", $"1. {lol} (patch {PatchVersion()}, correct)", $"Can't be used, another version: {oldAir}", $"-GameRoot '{release}'",
+                $"Your game folder: {release}", $"1. {lol} (patch {PatchVersion()}, correct)", $"Cannot be used, another version: {oldAir}", $"-GameRoot '{release}'",
                 $"-AirRoot '{lol}'", "Amberline's own folder is inside your AIR client folder. That is fine");
             // Batch 645: what can't be used comes first, so the numbered choices stand right above their question.
-            TestAssert.True(found.Output.IndexOf("Can't be used, another patch", StringComparison.Ordinal) < found.Output.IndexOf("The search found these. Choose one:", StringComparison.Ordinal),
+            TestAssert.True(found.Output.IndexOf("Cannot be used, another patch", StringComparison.Ordinal) < found.Output.IndexOf("The search found these. Choose one:", StringComparison.Ordinal),
                 "the copies that can't be used are named before the choices:\n" + found.Output);
             foreach (var skipped in new[] { ".hidden-copy", "linked-folder", "too-deep", "outside" })
                 TestAssert.False(found.Output.Contains(skipped, StringComparison.Ordinal), $"the search went into {skipped}:\n{found.Output}");
@@ -427,7 +427,7 @@ public static class StartHereChecks
                 $"--install-to \"{existing}\" --game \"{ownGame}\" --air \"{ownAir}\" in a new window",
                 $"Summary Install folder: {existing} Now: a new window named Amberline asks you to press Enter, then updates to 0.0.",
                 "This ends any game in progress.", "Then: its page opens in your web browser.",
-                "From now on: start Amberline from its desktop icon.", "START-HERE.cmd again. Log:");
+                "From now on, start Amberline from its desktop icon.", "START-HERE.cmd again. Log:");
             // Batch 682: an install on this PC skips steps 1 and 2; the build reads the install's own copies.
             AssertHas(own.Output, "the update without steps 1 and 2", "Steps 1 and 2 of 6: not needed. This PC has Amberline already.",
                 $"-GameRoot '{ownGame}'", $"-AirRoot '{ownAir}'");
@@ -533,7 +533,7 @@ public static class StartHereChecks
                 $"DRY RUN: would start {starter} --install-to \"{installFolder}\" --game \"{release}\" --air \"{air}\" --delete-originals in a new window.",
                 $"Summary Install folder: {installFolder} Now: a new window named Amberline copies the program, the game and the AIR client into that folder.",
                 "On that page: set up your server, then choose Users and Add a user.",
-                "To update: choose Update now on its page, or unzip the newest release and double-click its START-HERE.cmd.", "DRY RUN finished");
+                "To update, choose Update now on its page, or unzip the newest release and double-click its START-HERE.cmd.", "DRY RUN finished");
             foreach (var gone in new[] { "Step 4 of 6", "Step 5 of 6", "Build tools", "would build", "would install it with", "unpack", "-Layout",
                          "These stay in the AIR client folder" })
                 TestAssert.False(home.Output.Contains(gone, StringComparison.Ordinal), $"the zip's run shows <{gone}>:\n{home.Output}");
@@ -548,10 +548,10 @@ public static class StartHereChecks
                 new { where = "1", gameRoot = bundle, installFolder }, ["-SearchRoots", Path.Combine(root, "stand-ins")]);
             TestAssert.Equal(0, zipped.ExitCode, zipped.Output);
             AssertHas(zipped.Output, "the client zip's plan", $"Or the client zip ({PatchFacts().GetProperty("clientZip").GetString()}) for both: paste its path, or drag the zip into this window.",
-                $"Your client zip: {bundle}", "Amberline unpacks the game and the AIR client from it, so the AIR client folder is not asked.",
-                "Amberline unpacks the game and the AIR client from the client zip into it. The zip stays as it is.",
+                $"Your client zip: {bundle}", "The game and the AIR client are installed from it, so the AIR client folder is not needed.",
+                "Amberline installs the game and the AIR client from the client zip into it. The zip is not changed.",
                 $"DRY RUN: would start {starter} --install-to \"{installFolder}\" --client-zip \"{bundle}\" in a new window.",
-                $"Summary Install folder: {installFolder} Now: a new window named Amberline copies the program into that folder and unpacks the game and the AIR client from the client zip into it.");
+                $"Summary Install folder: {installFolder} Now: a new window named Amberline copies the program into that folder and installs the game and the AIR client from the client zip.");
             foreach (var gone in new[] { "AIR client folder (with its assets folder)", "Delete the originals?", "--game", "--air" })
                 TestAssert.False(zipped.Output.Contains(gone, StringComparison.Ordinal), $"the client zip's run shows <{gone}>:\n{zipped.Output}");
 
@@ -588,7 +588,7 @@ public static class StartHereChecks
                 ["-SearchRoots", Path.Combine(root, "stand-ins")], localAppData: profile);
             TestAssert.Equal(0, zipRented.ExitCode, zipRented.Output);
             AssertHas(zipRented.Output, "the zip's R", "Update this Amberline now? Type Y to update, N to keep it, or R to build a rented server package. R",
-                "Summary Nothing was changed. A rented server's package is built from the Amberline source code: download it from GitHub on this PC and double-click its START-HERE.cmd.",
+                "Summary Nothing was changed. A rented server's package is built from the Amberline source code. Download it from GitHub on this PC and double-click its START-HERE.cmd.",
                 "DRY RUN finished");
             foreach (var gone in new[] { "Step 1 of 6", "Step 3 of 6", "would start", "Type the address" })
                 TestAssert.False(zipRented.Output.Contains(gone, StringComparison.Ordinal), $"the zip's R shows <{gone}>:\n{zipRented.Output}");
@@ -632,7 +632,7 @@ public static class StartHereChecks
                 new { where = "1", gameRoot = release, airRoot = air, installFolder = otherInstall }, ["-SearchRoots", Path.Combine(root, "stand-ins")],
                 localAppData: otherProfile);
             TestAssert.Equal(1, into.ExitCode, into.Output);
-            AssertHas(into.Output, "the other line's install folder", "Problem: That folder holds other files. Choose a new or empty folder.");
+            AssertHas(into.Output, "the other line's install folder", "Problem: That folder already contains other files. Choose an empty or new folder.");
             TestAssert.False(into.Output.Contains("would start", StringComparison.Ordinal), "the other line's folder starts nothing:\n" + into.Output);
             TestAssert.False(File.Exists(Path.Combine(standIns, "called.txt")), "a dry run called a tool");
 

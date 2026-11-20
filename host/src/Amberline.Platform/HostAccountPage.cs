@@ -86,7 +86,7 @@ public sealed class HostAccountPage(HostLoop loop, PlatformAccounts accounts, Pl
         // host's New password does) and a second change runs the revoke again. Public sheet: .problem (the host sheet's .warn is not in it).
         var signedOut = _removal.LogOut(user.Id);
         return Shown("<h1>Password changed</h1><p class=notice role=status>Your password is changed. Sign in again in the client.</p>" + (signedOut ? ""
-            : "<p class=problem role=alert>Amberline could not finish signing you out everywhere just now. Change your password again in a minute.</p>"));
+            : "<p class=problem role=alert>Amberline could not sign you out everywhere. Change your password again in a minute.</p>"));
     }
 
     private IResult Delete(string token, string username, string password, bool confirmed)
@@ -104,7 +104,7 @@ public sealed class HostAccountPage(HostLoop loop, PlatformAccounts accounts, Pl
         }
         catch (SettingsUnreadableException)
         {
-            return Shown(FormPage(token, "delete", username, ("Amberline cannot delete it just now. Try again in a minute.", null)), StatusCodes.Status503ServiceUnavailable);
+            return Shown(FormPage(token, "delete", username, ("Amberline cannot delete it right now. Try again in a minute.", null)), StatusCodes.Status503ServiceUnavailable);
         }
         return _removal.Delete(user, $"{user.Username} deleted their own account").Outcome switch
         {
@@ -139,7 +139,7 @@ public sealed class HostAccountPage(HostLoop loop, PlatformAccounts accounts, Pl
                 "type=password required minlength=10 maxlength=128 autocomplete=new-password", name: "again")}}
             <div class=actions><button type=submit>Change password</button></div></form>
             <h2>Delete my account</h2>
-            <p>Your login goes for good. Your past games stay, under your name.</p>
+            <p>Your login is deleted for good. Your past games stay, under your name.</p>
             <form method=post action={{PagePath}} novalidate>{{token}}<input type=hidden name=action value=delete>
             {{HostPages.Field("del-username", "Username", null, At("del-username"),
                 $"required maxlength=24 autocomplete=username value=\"{Name("delete")}\"", name: "username")}}

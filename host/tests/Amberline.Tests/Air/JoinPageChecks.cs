@@ -9,7 +9,8 @@ namespace Amberline.Tests.Air;
 /// <summary>
 /// Batch 918: the public Join page reads the invite after the #
 /// of its own address (format v1). The static check reads the page and the export that publishes it; the decode check runs the
-/// page's own script in Node.js when Node.js is installed. No browser is started.
+/// page's own script in Node.js when Node.js is installed. Batch 921: the page wears the sign-up sheet's look (its tokens are read
+/// from HostPages.cs). No browser is started.
 /// </summary>
 public static class JoinPageChecks
 {
@@ -20,7 +21,8 @@ public static class JoinPageChecks
     private const string Damaged = "This invite link is damaged. Ask the host to copy it again.";
     private const string Newer = "This invite needs a newer Amberline Player. Download it from the invite page.";
 
-    // The page's script runs without a document (so the page does not wire itself up) and prints each case's result.
+    // The page's script runs without a document (so the page does not wire itself up) and prints each case's result, then the
+    // wordmark with no invite (batch 921: the label and the mark of each line are pure functions of the invite).
     private const string DecodeDriver = """
         const vm = require("vm");
         const context = { atob, TextDecoder };
@@ -29,14 +31,25 @@ public static class JoinPageChecks
         const results = inputs.map(function (input) {
           const result = context.decodeInvite(input);
           if (result.error) return { error: result.error };
-          return { invite: result.invite, url: context.downloadUrl(result.invite), join: context.joinUrl(result.invite, result.encoded) };
+          return { invite: result.invite, url: context.downloadUrl(result.invite), join: context.joinUrl(result.invite, result.encoded),
+            label: context.downloadLabel(result.invite), mark: context.brandMark(result.invite) };
         });
-        process.stdout.write(JSON.stringify(results));
+        process.stdout.write(JSON.stringify({ results: results, unset: context.brandMark(null) }));
         """;
 
 
     private static string Encode(string json) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(json)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    /// <summary>The custom properties of the first <c>:root</c> block in the text, by name without its dashes.</summary>
+    private static Dictionary<string, string> RootTokens(string text)
+    {
+        var root = Regex.Match(text, @":root\{([^}]*)\}").Groups[1].Value;
+        var tokens = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (Match token in Regex.Matches(root, @"--([a-z-]+):([^;]+)"))
+            tokens[token.Groups[1].Value] = token.Groups[2].Value.Trim();
+        return tokens;
+    }
 
     /// <summary>Node.js's standard output for a script read from its standard input; null when Node.js is not installed.</summary>
     private static string? RunNode(string script)

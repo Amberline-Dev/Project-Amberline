@@ -274,9 +274,10 @@ public static class HostPages
     private const string SignUpPanel = """
         main{max-width:30rem;margin:0 auto;padding:28px 24px 30px;border:1px solid var(--gold-dim);border-radius:4px;overflow-wrap:anywhere;
         text-align:center;background:linear-gradient(180deg,var(--panel),var(--inner));box-shadow:inset 0 0 0 1px rgba(201,171,111,.14),0 16px 40px rgba(0,0,0,.55)}
+        .message{text-align:left}
         """;
 
-    /// <summary>The register's components, both sheets: the wordmark with its sheen, the skip link, the focus ring, fields, buttons and the notice boxes.</summary>
+    /// <summary>The register's components, both sheets: the wordmark with its sheen, the skip link, the focus ring, fields, buttons, the notice boxes and the message boxes that show a link.</summary>
     private const string Parts = """
         main:focus{outline:none}
         form{text-align:left}
@@ -336,6 +337,8 @@ public static class HostPages
         .error-summary h2{margin:0 0 2px;color:var(--bad);font-size:.875rem}
         .error-summary ul{margin:0;padding:0;list-style:none}
         .error-summary a{color:var(--text);text-decoration-color:var(--bad)}
+        .message{padding:12px 16px;border:1px solid var(--line);border-radius:2px;background:var(--field);white-space:pre-wrap;overflow-wrap:anywhere;
+        font:.9375rem/1.5 ui-monospace,Consolas,monospace}
         """;
 
     /// <summary>The sign-up pages' field problem, visually hidden there (the error summary speaks); the host sheet shows it beside its field.</summary>
@@ -356,7 +359,7 @@ public static class HostPages
 
     /// <summary>
     /// The sign-up pages' stylesheet: its parts in batch 706's order, joined with CRLF as the parts' own lines are (the source file's line endings,
-    /// which a raw literal keeps), so its bytes, and its versioned address, are batch 706's.
+    /// which a raw literal keeps). Batch 921 moved the message boxes' wrap rule into the parts, so its bytes and versioned address changed.
     /// </summary>
     private const string PublicCss = Look + "\r\n" + SignUpPanel + "\r\n" + Parts + "\r\n" + SignUpFieldError + "\r\n" + SignUpNarrow + "\r\n" + Forced;
 
@@ -445,8 +448,6 @@ public static class HostPages
         input:not([type=radio]):not([type=checkbox]),select{max-width:32rem}
         textarea{display:block;width:100%;min-height:12rem;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:2px;background:var(--field);
         color:var(--text);font:.875rem/1.5 ui-monospace,Consolas,monospace;resize:vertical}
-        .message{padding:12px 16px;border:1px solid var(--line);border-radius:2px;background:var(--field);white-space:pre-wrap;overflow-wrap:anywhere;
-        font:.9375rem/1.5 ui-monospace,Consolas,monospace}
         .notes{margin:0 0 16px;overflow-wrap:anywhere}
         .headline{font-size:1.125rem}
         progress{display:block;width:100%;max-width:32rem;height:1.5rem;margin:0 0 8px;accent-color:var(--gold)}
@@ -608,7 +609,7 @@ public static class HostPages
             show('guide', Boolean(status.guide));
             fill('guide-steps', status.guide ?? [], step => made('li', step));
           }
-          const gone = 'Amberline does not answer. If it stopped, double-click Amberline on your desktop.';
+          const gone = 'Amberline does not answer. If it stopped, double-click its icon on your desktop.';
           async function refresh() {
             try {
               const answer = await fetch('/host/status.json', { cache: 'no-store' });
@@ -642,7 +643,7 @@ public static class HostPages
             const said = value => { const status = byId('copy-status'); if (status) status.textContent = value; };
             const failed = () => {
               if (source.select) source.select(); else getSelection().selectAllChildren(source);
-              said('Amberline could not copy it. It is selected now: press Ctrl+C.');
+              said('Amberline could not copy it. The text is selected. Press Ctrl+C.');
             };
             if (!navigator.clipboard) { failed(); return; }
             navigator.clipboard.writeText(source.textContent).then(() => { button.textContent = 'Copied'; said('Copied'); }, failed);

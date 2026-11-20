@@ -22,7 +22,7 @@ namespace Amberline.Tests.Air;
 /// through the folder setup's seam, temporary folders, a temporary profile and desktop, free loopback ports and the reserved name
 /// amberline.example.test; never the real game or AIR client.
 /// </summary>
-public static class HostFileShareChecks
+public static partial class HostFileShareChecks
 {
     private const string Switch = "/host/settings/share";
     private const string Release = "game/projects/lol_game_client/releases/0.0.0.51";
@@ -73,7 +73,7 @@ public static class HostFileShareChecks
                 TestAssert.Equal((new FileInfo(source).Length, RetailClients.Sha256(source)), manifest[path], path);
             settings = await SettingsAsync(browser, "Settings, sharing on");
             TestAssert.True(settings.Contains("value=on checked>Share the game files with players</label>", StringComparison.Ordinal) &&
-                settings.Contains("<p>Shared: the game folder (", StringComparison.Ordinal) && settings.Contains("through your internet upload", StringComparison.Ordinal), settings);
+                settings.Contains("<p>Shared: the game folder (", StringComparison.Ordinal) && settings.Contains("using your internet upload", StringComparison.Ordinal), settings);
 
             // Batch 761, task 8: the host's 2011 launcher is listed under launcher/ while Settings names an accepted folder: each file of its release and
             // its file list (the folder's own, or the one beside it), never another file of the folder. A folder that fails its check is not listed.

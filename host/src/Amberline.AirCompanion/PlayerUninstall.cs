@@ -92,8 +92,10 @@ internal static class PlayerUninstall
     /// unless the game files are asked for.
     /// </summary>
     internal static IReadOnlyList<string> GameFolders(PlayerInstall.Record record) =>
-        new[] { Path.Combine(record.Install, "air"), Path.Combine(record.Install, "game"), Path.Combine(record.Install, PlayerInstall.LauncherFolder) }
-            .Where(Directory.Exists).ToList();
+        new[] { Path.Combine(record.Install, "air"), Path.Combine(record.Install, "game"), Path.Combine(record.Install, PlayerInstall.LauncherFolder),
+                // NOT RETAIL (batch 923): the game the shortcut's start moved to the system drive is the install's own too.
+                PlayerInstall.MovedGame(record) }
+            .OfType<string>().Where(Directory.Exists).ToList();
 
     /// <summary>
     /// "Remove Amberline from this PC". Refused while a program runs from the install folder (the League client, the game or another
@@ -130,7 +132,7 @@ internal static class PlayerUninstall
             }
             kept.AddRange(GameFolders(record));
         }
-        if (!FolderMove.Inside(record.Game, install)) kept.Add(record.Game);
+        if (!FolderMove.Inside(record.Game, install) && PlayerInstall.MovedGame(record) is null) kept.Add(record.Game);
         // The per-user files, in the player's folder and in the one from before batch 647: the invite's (and Play.cmd's) download and
         // connection, the record, the logs, the app's own copy (batch 917); and the play mode's font cache. Only these names: nothing of the
         // host's (its pointer, its data) is touched.
@@ -210,7 +212,7 @@ internal static class PlayerUninstall
 
     /// <summary>The refusal for a link in the 2011 launcher's folder: the folder is removed without following links, so the player deletes it.</summary>
     private static string LinkRefusal(string link) =>
-        $"{link} is a link. The 2011 launcher's files are removed without following links: delete the link yourself, then try again.";
+        $"{link} is a link. Amberline does not follow links when it removes the 2011 launcher's files. Delete the link yourself, then try again.";
 
     /// <summary>The first link (a junction or a symbolic link) at or inside <paramref name="folder"/>, or null. A folder is searched only when it is not a link.</summary>
     private static string? FirstLink(string folder)

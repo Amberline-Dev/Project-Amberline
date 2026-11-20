@@ -376,7 +376,7 @@ public static class HostUsersChecks
         TestAssert.True(Row(page, "seen1").Contains("<td class=words>Last seen 3 hours ago</td>", StringComparison.Ordinal), "the last login, as relative time: " + page);
         TestAssert.True(Row(page, "never1").Contains("<b>never1</b></td><td class=words>Never seen here</td>", StringComparison.Ordinal),
             "a summoner name like the username is not repeated: " + page);
-        TestAssert.True(page.Contains("<p class=tip>New password and Disable log the user out at once and keep their games. Delete cannot be undone.</p>",
+        TestAssert.True(page.Contains("<p class=tip>New password and Disable log the user out immediately and keep their games. Delete cannot be undone.</p>",
             StringComparison.Ordinal), "the tip: " + page);
         HostPagesChecks.Accessible(page, "GET " + Users, HostDashboard.Policy);
 
@@ -416,9 +416,9 @@ public static class HostUsersChecks
         string disabled;
         using (new FileStream(Path.Combine(site.Root, "data", "remote", "remote-access.json"), FileMode.Open, FileAccess.Read, FileShare.None))
             disabled = await PostAsync(site.Browser, Users + "/disable", token, HttpStatusCode.OK, id);
-        TestAssert.True(disabled.Contains("<p class=notice role=status>user1 can no longer log in, and was logged out. Their games stay.</p>", StringComparison.Ordinal) &&
+        TestAssert.True(disabled.Contains("<p class=notice role=status>user1 can no longer log in and was logged out. Their games stay.</p>", StringComparison.Ordinal) &&
             Row(disabled, "user1").Contains("<span class=mark>Disabled</span>", StringComparison.Ordinal), "the notice and the row: " + disabled);
-        TestAssert.True(disabled.Contains("<p class=warn>Amberline could not save every change just now: their remote sign-in.</p>", StringComparison.Ordinal),
+        TestAssert.True(disabled.Contains("<p class=warn>Amberline could not save every change: their remote sign-in.</p>", StringComparison.Ordinal),
             "the page says the remote sign-in could not be saved: " + disabled);
         TestAssert.True(accounts.Authenticate("user1", Password) is null, "the password no longer works");
         TestAssert.True(site.Access.AccountFor(tunnel) is null && site.Sessions.AccountForConnection("rtmp-" + user.Id) is null, "the token and the session ended");
@@ -476,7 +476,7 @@ public static class HostUsersChecks
             done = await PostAsync(site.Browser, Users + "/delete", Token(confirm), HttpStatusCode.OK, ("accountId", user.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         TestAssert.True(done.Contains("<p class=notice role=status>user1 is deleted.</p>", StringComparison.Ordinal) && done.Contains("<h1>Users (0)</h1>", StringComparison.Ordinal) &&
             Row(done, "user1").Length == 0, "the notice, and the row is gone: " + done);
-        TestAssert.True(done.Contains("<p class=warn>Amberline could not save every change just now: their remote sign-in.</p>", StringComparison.Ordinal),
+        TestAssert.True(done.Contains("<p class=warn>Amberline could not save every change: their remote sign-in.</p>", StringComparison.Ordinal),
             "the page says which step could not be saved: " + done);
         TestAssert.True(accounts.Find(user.Id) is null && site.Sessions.AccountForConnection("rtmp-" + user.Id) is null, "the login and its session are gone");
         TestAssert.True(site.Access.AccountFor(tunnel) is null, "the remote sign-in ends in this run all the same");

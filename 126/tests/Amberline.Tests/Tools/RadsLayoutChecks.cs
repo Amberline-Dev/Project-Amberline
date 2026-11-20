@@ -248,7 +248,7 @@ public static class RadsLayoutChecks
             var task = Amberline.AirCompanion.GameManagedLayout.Start(game, _ => { }, open, gameRunning: false, notice: notices.Add);
             // Re-review 3: the player is told before the start goes on, with the classic start's own sentence.
             TestAssert.True(notices.Count == 1 && notices[0].StartsWith("The game's file layout was not updated: ", StringComparison.Ordinal) &&
-                notices[0].EndsWith($"Delete the folder {open}; Amberline then lays it out again, locked to your Windows account, at the next start.", StringComparison.Ordinal),
+                notices[0].EndsWith($"Delete the folder {open}. Amberline sets it up again at the next start, locked to your Windows account.", StringComparison.Ordinal),
                 $"the notice: {string.Join(" | ", notices)}");
             var skipped = task.GetAwaiter().GetResult();
             TestAssert.True(skipped.StartsWith("managed-layout: skipped (the RADS root is not locked to your Windows account", StringComparison.Ordinal) &&

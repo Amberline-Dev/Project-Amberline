@@ -89,9 +89,10 @@ internal static class InstallLock
     /// refuses the install (<see cref="InstallRefusedException"/>); anything else that is not locked (a volume without permissions) is returned to be
     /// reported, and the install goes on. Review LOW 10 (with the orchestrator's correction): only a folder Amberline made is used: a new or empty one,
     /// one that holds one of its <paramref name="markers"/>, or one already locked; any other folder that holds files refuses the install, and its
-    /// permissions stay as they are.
+    /// permissions stay as they are. Batch 919: <paramref name="made"/> is the caller's own test of a folder Amberline made that holds no marker (a
+    /// player install's download of an older tool); it is asked only of a folder that is not a link and is this user's own.
     /// </summary>
-    internal static string? Prepare(string folder, string? profile, IReadOnlyList<string> markers, string? account = null)
+    internal static string? Prepare(string folder, string? profile, IReadOnlyList<string> markers, string? account = null, Func<string, bool>? made = null)
     {
         if (!OperatingSystem.IsWindows()) return null;
         folder = FolderMove.Full(folder);
@@ -105,14 +106,14 @@ internal static class InstallLock
             }
             else if (Refusal(folder, account) is { } refused) throw Refused(refused);
             // Orchestrator's ruling on review LOW 10 (17 November 2026): a folder that holds other files is refused, never filled unlocked.
-            else if (!Ours(folder, markers)) throw new InstallRefusedException($"{folder} holds other files. Choose a new or empty folder.");
+            else if (!Ours(folder, markers) && made?.Invoke(folder) != true) throw new InstallRefusedException($"{folder} already contains other files. Choose an empty or new folder.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SystemException) { throw Refused(Unreached(folder)); }
         var (problem, refuses) = Locking(folder, null, profile, account, null, null, null);
         return refuses ? throw Refused(problem!) : problem;
     }
 
-    private static InstallRefusedException Refused(string problem) => new($"{problem}. Nothing was installed there; choose another folder.");
+    private static InstallRefusedException Refused(string problem) => new($"{problem}. Nothing was installed there. Choose another folder.");
 
     /// <summary>Review LOW 10: a folder Amberline made: empty, holding one of its <paramref name="markers"/>, or locked already (protected and private).</summary>
     [SupportedOSPlatform("windows")]
@@ -412,7 +413,7 @@ internal static class InstallLock
         return Look(new DirectoryInfo(FolderMove.Full(folder)));
     }
 
-    private static string OpenAbove(string folder) => $"other Windows accounts can delete, rename or change {folder}, which holds this install";
+    private static string OpenAbove(string folder) => $"other Windows accounts can delete, rename or change {folder}, which contains this install";
 
     /// <summary>DIAGNOSTICS: <see cref="Ancestors"/> alone, read only, so a check can ask it about this PC's real folders without changing anything.</summary>
     internal static string? Above(string folder, string? top = null) => OperatingSystem.IsWindows() ? Ancestors(folder, null, top).Problem : null;

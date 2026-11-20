@@ -117,7 +117,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
                 {
                     InstallRefusedException => ex.Message,
                     OperationCanceledException => "Amberline stopped before the client zip was unpacked.",
-                    _ => "Amberline could not unpack the client zip: the disk may be full, or a program uses its files.",
+                    _ => "Amberline could not unpack the client zip. The disk may be full, or a program may be using its files.",
                 } + ZipUnchanged;
                 return;
             }
@@ -158,7 +158,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
         }
         var question = plan is null ? "" : $"""
             <fieldset id=delete aria-describedby="delete-hint{(asked ? " delete-error" : "")}"><legend>Delete the original folders you picked?</legend>
-            <p class=hint id=delete-hint>Only their game files go, once the copy is complete.</p>
+            <p class=hint id=delete-hint>Only their game files are deleted, after the copy is complete.</p>
             {HostPages.FieldError("delete", asked ? problem : null)}
             <label class=choice><input type=radio name=delete value=no{(delete ? "" : " checked")}>No, keep them</label>
             <label class=choice><input type=radio name=delete value=yes{(delete ? " checked" : "")}>Yes, delete the originals</label></fieldset>
@@ -169,7 +169,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
         return HostMode.Page($"""
             <h1>{HostFolders.Heading(place, "Copy your game files into " + here + "?")}</h1>{lead}
             {HostPages.Errors((problem, asked ? "delete" : null))}
-            <p>Then everything of Amberline is in one folder.</p>
+            <p>Then everything Amberline uses is in one folder.</p>
             {details}
             <form method=post action={PagePath}>{Hidden(token, game.Folder, air.Folder, launcher)}{question}
             <div class=actions><a href={place.Path}>Back</a><button{(plan is null ? "" : " class=secondary")} formaction={place.Path} name=keep value=1>Use them where they are</button>{copy}</div></form>
@@ -249,7 +249,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
             {
                 InstallRefusedException => ex.Message,
                 OperationCanceledException => "Amberline stopped before the copy was done.",
-                _ => "Amberline could not copy the game and the AIR client: the disk may be full, or a program uses their files.",
+                _ => "Amberline could not copy the game and the AIR client. The disk may be full, or a program may be using their files.",
             } + ClientPlan.Unchanged;
             return;
         }
@@ -304,7 +304,7 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
         if (copy.Lines is { } lines)
             return HostMode.Page($"""
                 <h1>{HostFolders.Heading(place, "Your game files are in " + here)}</h1>
-                <p class=notice>{(place.Games is null ? "Done." : $"Done: the game files are in {here} now.")}</p>
+                <p class=notice>{(place.Games is null ? "Done." : $"Done. The game files are now in {here}.")}</p>
                 {(copy.Delete ? "" : "<p>The folders you picked are as they were.</p>")}{string.Concat(lines.Select(line => $"<p>{Encode(line)}</p>"))}
                 <form method=post action={place.Path}{Checking}>{Hidden(token, copy.Inside, copy.InsideAir, copy.Launcher)}<div class=actions><button>Continue</button></div></form>
                 """, step: place.Step);

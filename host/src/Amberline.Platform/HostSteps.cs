@@ -53,7 +53,7 @@ public static class HostAddress
 
     /// <summary>Null for a name friends' desktop icons can carry, else why not, in plain words.</summary>
     public static string? NameProblem(string name) => NamePattern.IsMatch(name) && !ReservedName.IsMatch(name) ? null
-        : "A server name has 1 to 40 letters, digits, spaces, dots, - or _, and starts and ends with a letter or digit.";
+        : "Use 1 to 40 letters, digits, spaces, dots, - or _. Start and end with a letter or digit.";
 
     /// <summary>
     /// The address as saved (a name in lower case), or why friends could not use it. A name needs a dot and the DNS label rules;
@@ -65,14 +65,14 @@ public static class HostAddress
         var value = (text ?? "").Trim();
         if (value.Length == 0) return (null, "Type your address.");
         if (IPAddress.TryParse(value, out var parsed) && parsed.AddressFamily == AddressFamily.InterNetworkV6)
-            return (null, "Amberline needs your IPv4 address (four numbers with dots) or a name for your address.");
+            return (null, "Type your IPv4 address (four numbers with dots) or a name for it.");
         if (value.IndexOfAny([':', '/', '\\', ' ', '@', '?', '#']) >= 0)
             return (null, "Type only the address, for example 203.0.113.7 or yourname.duckdns.org, without http:// or anything after it.");
         if (value.Length > 253) return (null, "This address is too long.");
         if (value.All(c => char.IsAsciiDigit(c) || c == '.'))
         {
             if (!IPAddress.TryParse(value, out var address) || address.AddressFamily != AddressFamily.InterNetwork || address.ToString() != value)
-                return (null, "This is not a whole address: four numbers from 0 to 255 with dots, for example 203.0.113.7.");
+                return (null, "This is not a complete address. Type four numbers from 0 to 255 with dots, for example 203.0.113.7.");
             return WanAddress.Classify(address) switch
             {
                 WanAddressClass.Public => (value, null),
@@ -102,11 +102,11 @@ public static class HostAddress
         var value = (text ?? "").Trim();
         if (value.Length == 0) return (null, Example);
         if (!IPAddress.TryParse(value, out var address) || address.AddressFamily != AddressFamily.InterNetwork || address.ToString() != value)
-            return (null, "This is not a home-network address: four numbers from 0 to 255 with dots, for example 192.168.1.20.");
+            return (null, "This is not a complete address. Type four numbers from 0 to 255 with dots, for example 192.168.1.20.");
         var bytes = address.GetAddressBytes();
         if (bytes[0] == 127) return (null, "An address that starts with 127 means \"this PC itself\", so players cannot use it. " + Example);
         if (bytes[0] == 169 && bytes[1] == 254)
-            return (null, "Windows picks an address that starts with 169.254 by itself when the router gave none. Check that this PC is connected to your router.");
+            return (null, "An address that starts with 169.254 means the router gave this PC no address. Check that this PC is connected to your router.");
         return WanAddress.Classify(address) switch
         {
             WanAddressClass.Private => (value, null),
@@ -378,7 +378,7 @@ public sealed class HostSteps
                                        InvalidOperationException or XmlException)
         {
             // The router's own address stays out of the log, so only what failed is written.
-            Console.WriteLine($"The router did not tell its address ({ex.GetType().Name}).");
+            Console.WriteLine($"The router did not report its address ({ex.GetType().Name}).");
             return null;
         }
     }
@@ -393,7 +393,7 @@ public sealed class HostSteps
         }
     }
 
-    internal const string Expired = "The page expired. Please try again.";
+    internal const string Expired = "The page expired. Try again.";
 
     /// <summary>The posted form, or null when its antiforgery token is missing or stale (the page expired).</summary>
     internal static async Task<IFormCollection?> FormAsync(HttpContext context, IAntiforgery antiforgery)
@@ -470,7 +470,7 @@ public sealed class HostSteps
         return $$"""
             <h1>Your own login</h1>{{(offer.Length == 0 ? "" : "\n" + offer + "<h2>Or make a new login</h2>")}}
             <p>Choose your own login for the game client.</p>
-            <p class=tip>Your name and folders are saved; Settings changes them later.</p>
+            <p class=tip>Your server name and folders are saved. You can change them later in Settings.</p>
             {{HostPages.Errors(shown)}}
             <form method=post action={{LoginPath}} novalidate>{{token}}
             {{HostPages.Field("username", "Username", "3 to 24 letters (a to z), digits or _.", At(shown, "username"),

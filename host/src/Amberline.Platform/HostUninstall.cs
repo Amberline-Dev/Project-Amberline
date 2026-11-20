@@ -112,7 +112,7 @@ public static class HostUninstall
 
     /// <summary>The page's and the window's answer when <see cref="Plan"/> finds no install.</summary>
     public static string NotInstalled(HostPaths paths) =>
-        $"This Amberline is not installed: it runs from {FolderMove.Full(Path.Combine(paths.App, ".."))}. There is nothing to uninstall. " +
+        $"This Amberline is not installed. It runs from {FolderMove.Full(Path.Combine(paths.App, ".."))}, so there is nothing to uninstall. " +
         "When you no longer need it, close its window and delete that folder.";
 
     public static bool Confirmed(string? text) => string.Equals(text?.Trim(), ConfirmWord, StringComparison.OrdinalIgnoreCase);
@@ -230,7 +230,7 @@ public static class HostUninstall
             return (1, null);
         }
         screen.WriteLine($"Amberline's folder: {plan.Folder} ({Size(plan.Bytes)}).");
-        screen.WriteLine("Uninstalling removes the program, the desktop icon, the install pointer and Amberline's firewall rules (if Windows asks, choose Yes).");
+        screen.WriteLine("Uninstalling removes the program, its desktop icon, the note of where its folder is and its Windows Firewall rules. If Windows asks, choose Yes.");
         foreach (var line in plan.Outside) screen.WriteLine(line + ".");
         var clients = plan.Has(UninstallKind.Clients) &&
             Ask(screen, read, $"Also delete the game and AIR client copies in it ({Size(plan.Size(UninstallKind.Clients))})?");
@@ -298,7 +298,7 @@ public static class HostUninstall
         if (!File.Exists(icon)) return;
         if (ShortcutTarget(icon) is not { Length: > 0 } target)
         {
-            byHand.Add($"Delete the Amberline icon on your desktop yourself: Amberline could not read where it points ({icon}).");
+            byHand.Add($"Delete the Amberline icon on your desktop yourself. Amberline could not read where it points ({icon}).");
             return;
         }
         if (!Path.IsPathFullyQualified(target) || !FolderMove.Inside(target, folder))
@@ -324,7 +324,7 @@ public static class HostUninstall
             File.Delete(pointer);
             var parent = Path.GetDirectoryName(pointer)!;
             if (!Directory.EnumerateFileSystemEntries(parent).Any()) Directory.Delete(parent);
-            done.Add($"The small file that told a later Amberline where its folder is ({pointer}) is removed.");
+            done.Add($"The note of where Amberline's folder is ({pointer}) is removed.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { byHand.Add($"Delete the small file {pointer} yourself ({ex.Message})."); }
     }

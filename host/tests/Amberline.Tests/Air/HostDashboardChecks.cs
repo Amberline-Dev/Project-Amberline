@@ -69,7 +69,7 @@ public static class HostDashboardChecks
                 status.GetProperty("checks").EnumerateArray().Select(check => check.GetProperty("id").GetString()).ToArray(), "the network panel's lines");
             TestAssert.Equal(("ok", "Amberline is listening on this PC"), Check(status, "listening"));
             TestAssert.Equal(("bad", "Windows Firewall blocks Amberline."), Check(status, "firewall"));
-            TestAssert.Equal(("ok", "Found your router (\"FR-1000\"); it opened the ports for this PC"), Check(status, "router"));
+            TestAssert.Equal(("ok", "Your router (\"FR-1000\") opened the ports for this PC"), Check(status, "router"));
             TestAssert.Equal(("ok", "Your router has a public internet address"), Check(status, "address"));
             TestAssert.Equal("waiting", Check(status, "friend").State);
             TestAssert.Equal(new (string, string?)[] { ("A-NET-02", "firewall") }, Cards(status), "one card, with the firewall button");
@@ -78,7 +78,7 @@ public static class HostDashboardChecks
             // give, not the router's public one.
             TestAssert.Equal("127.0.0.1", status.GetProperty("publicHost").GetString(), "Copy address copies the saved address");
             TestAssert.Equal("Network: 1 thing needs your attention", status.GetProperty("network").GetString());
-            TestAssert.True(Regex.IsMatch(status.GetProperty("headline").GetString()!, @"^Running since \d\d:\d\d\. Players may not be able to join: see Needs your attention\.$"),
+            TestAssert.True(Regex.IsMatch(status.GetProperty("headline").GetString()!, @"^Running since \d\d:\d\d\. Players may not be able to join\. See Needs your attention\.$"),
                 status.GetProperty("headline").GetString());
             TestAssert.Equal("No player has connected yet", status.GetProperty("friend").GetString());
             TestAssert.Equal(0, status.GetProperty("online").GetArrayLength(), "nobody signed in");
@@ -258,7 +258,7 @@ public static class HostDashboardChecks
             TestAssert.False(HasCard(status, "A-NET-03"), "the hidden card is gone");
             TestAssert.True(HasCard(status, "A-NET-02"), "the firewall card stays");
             TestAssert.Equal("Network: 1 hidden", status.GetProperty("network").GetString(), "the network line counts the hidden card");
-            TestAssert.True(status.GetProperty("headline").GetString()!.EndsWith(" Players may not be able to join: see Needs your attention.", StringComparison.Ordinal),
+            TestAssert.True(status.GetProperty("headline").GetString()!.EndsWith(" Players may not be able to join. See Needs your attention.", StringComparison.Ordinal),
                 "the firewall card still warns: " + status.GetProperty("headline").GetString());
             TestAssert.Equal("1 message hidden.", status.GetProperty("hidden").GetString(), "the count below the list");
             TestAssert.Equal(new[] { "A-NET-03:address" }, HiddenEntries(stateFile), "the hidden identity is saved by code and subject");
@@ -367,7 +367,7 @@ public static class HostDashboardChecks
                     var soon = later.Status(ends - TimeSpan.FromDays(10)).Attention.Single(card => card.Code == "A-CERT-01");
                     later.Hidden.Add(soon.Code, soon.Subject);
                     TestAssert.False(later.Status(ends - TimeSpan.FromDays(9)).Attention.Any(card => card.Code == "A-CERT-01"), "the warning is hidden");
-                    TestAssert.Equal("Your users' invite link and shortcuts stopped working: Amberline's certificate ran out.",
+                    TestAssert.Equal("Your users' invite link and shortcuts no longer work because Amberline's certificate has expired.",
                         later.Status(ends + TimeSpan.FromDays(1)).Attention.SingleOrDefault(card => card.Code == "A-CERT-01")?.Message,
                         "the certificate that ran out shows although the warning was hidden");
                     TestAssert.Equal(Array.Empty<string>(), HiddenEntries(stateFile), "the warning's entry is forgotten");
@@ -464,7 +464,7 @@ public static class HostDashboardChecks
             TestAssert.Equal(new[] { "listening", "firewall", "router", "friend" },
                 status.GetProperty("checks").EnumerateArray().Select(check => check.GetProperty("id").GetString()).ToArray(),
                 "no line for the router's internet address");
-            TestAssert.Equal(("ok", "Home network only: the router is not needed"), Check(status, "router"));
+            TestAssert.Equal(("ok", "Home network only, so the router is not needed"), Check(status, "router"));
             TestAssert.Equal(("bad", "Windows Firewall blocks Amberline."), Check(status, "firewall"), "the firewall step still runs");
             TestAssert.Equal(new (string, string?)[] { ("A-NET-02", "firewall") }, Cards(status), "the firewall card only: no router, CGNAT or second-router card");
             TestAssert.Equal("Address: 192.168.1.20 (home network only). Players must be on the same home network as this PC.",
@@ -496,7 +496,8 @@ public static class HostDashboardChecks
             using (var typed = await browser.PostAsync("/host/setup/address", Form(Token(page), ("choice", "typed"), ("address", "198.51.100.20"))))
                 TestAssert.Equal(HttpStatusCode.Redirect, typed.StatusCode, await typed.Content.ReadAsStringAsync());
             status = await WaitForStatusAsync(browser, now => Check(now, "router").State != "checking" && Check(now, "address").State != "checking");
-            TestAssert.True(Check(status, "router").Text.StartsWith("Found your router", StringComparison.Ordinal), Check(status, "router").Text);
+            TestAssert.True(Check(status, "router").Text.StartsWith("Your router", StringComparison.Ordinal) &&
+                Check(status, "router").Text.EndsWith("opened the ports for this PC", StringComparison.Ordinal), Check(status, "router").Text);
             TestAssert.True(Cards(status).Contains(("A-NET-07", null)), "the shared-address card is back on the internet choices");
             TestAssert.Equal(5, router.Table().Count, "the sign-in port and the four game ports");
             TestAssert.Equal(("waiting", "A player on your home network reached Amberline just now. Waiting for a player from the internet."), Check(status, "friend"));
@@ -507,7 +508,7 @@ public static class HostDashboardChecks
             await HostUpnpChecks.Until(() => router.Table().Count == 0, "the router's ports removed");
             TestAssert.Equal(5, router.Count("DeletePortMapping"));
             status = await StatusAsync(browser);
-            TestAssert.Equal(("ok", "Home network only: the router is not needed"), Check(status, "router"));
+            TestAssert.Equal(("ok", "Home network only, so the router is not needed"), Check(status, "router"));
             TestAssert.False(Cards(status).Any(card => card.Code is "A-NET-06" or "A-NET-07" or "A-NET-03" or "A-NET-04"), "no router card");
             var calls = router.Snapshot(router.Calls).Length;
             using (var again = await browser.PostAsync("/host/network", Form(Token(page))))
@@ -734,7 +735,7 @@ public static class HostDashboardChecks
 
             var page = await PageAsync(browser, "/host/settings");
             foreach (var part in new[] { "<h2 id=games-title>Games</h2>", "<form method=post action=/host/settings/games novalidate>",
-                         "<label for=games>Games at the same time", $"1 to 32. Each game uses about one CPU core, some memory and its own game port: now UDP {FirstGame} to {FirstGame + 3}.",
+                         "<label for=games>Games at the same time", $"1 to 32. Each game uses about one CPU core, some memory and its own game port. The game ports now are UDP {FirstGame} to {FirstGame + 3}.",
                          "type=number min=1 max=32 inputmode=numeric value=\"4\"" })
                 TestAssert.True(page.Contains(part, StringComparison.Ordinal), part + " in " + page);
 
@@ -746,9 +747,9 @@ public static class HostDashboardChecks
             }
             TestAssert.Equal(6, MaxGames(home), "platform.json keeps the number");
             page = await PageAsync(browser, "/host/settings?saved=games");
-            TestAssert.True(page.Contains("<p class=notice role=status>Saved. It counts for games that start from now on; a running game goes on. " +
+            TestAssert.True(page.Contains("<p class=notice role=status>Saved. It applies to games that start from now on. Running games are not affected. " +
                 "If the dashboard asks, choose Allow through Windows Firewall.</p>", StringComparison.Ordinal) &&
-                page.Contains($"now UDP {FirstGame} to {FirstGame + 5}.", StringComparison.Ordinal) && page.Contains("value=\"6\"", StringComparison.Ordinal), page);
+                page.Contains($"now are UDP {FirstGame} to {FirstGame + 5}.", StringComparison.Ordinal) && page.Contains("value=\"6\"", StringComparison.Ordinal), page);
             await HostUpnpChecks.Until(() => router.Table().Count == 7, "the router forwards six game ports");
             TestAssert.Equal(new[] { $"TCP {home.RemotePort}", $"UDP {FirstGame}", $"UDP {FirstGame + 1}", $"UDP {FirstGame + 2}", $"UDP {FirstGame + 3}", $"UDP {FirstGame + 4}", $"UDP {FirstGame + 5}" },
                 router.Table().Keys.Select(key => $"{key.Protocol} {key.Port}").Order(StringComparer.Ordinal).ToArray(), "the new range");
@@ -1020,7 +1021,7 @@ public static class HostDashboardChecks
             {
                 var answer = await unknown.Content.ReadAsStringAsync();
                 TestAssert.Equal(HttpStatusCode.NotFound, unknown.StatusCode, answer);
-                TestAssert.True(answer.Contains("This game has already ended.", StringComparison.Ordinal), answer);
+                TestAssert.True(answer.Contains("<h1>This game has already ended</h1>", StringComparison.Ordinal), answer);
             }
             string confirm;
             using (var question = await client.GetAsync($"{end}?id={running:D}"))
@@ -1053,7 +1054,7 @@ public static class HostDashboardChecks
             {
                 var answer = await again.Content.ReadAsStringAsync();
                 TestAssert.Equal(HttpStatusCode.NotFound, again.StatusCode, answer);
-                TestAssert.True(answer.Contains("This game has already ended.", StringComparison.Ordinal), answer);
+                TestAssert.True(answer.Contains("<h1>This game has already ended</h1>", StringComparison.Ordinal), answer);
             }
             TestAssert.Equal(1, ended.Count, "an answer for a game that ended stops nothing");
 
@@ -1061,7 +1062,7 @@ public static class HostDashboardChecks
             {
                 var answer = await gone.Content.ReadAsStringAsync();
                 TestAssert.Equal(HttpStatusCode.NotFound, gone.StatusCode, answer);
-                TestAssert.True(answer.Contains("This game has already ended.", StringComparison.Ordinal), "the match server's 404 is the same page: " + answer);
+                TestAssert.True(answer.Contains("<h1>This game has already ended</h1>", StringComparison.Ordinal), "the match server's 404 is the same page: " + answer);
             }
             TestAssert.Equal(2, ended.Count, "the stop reached the game that was already gone");
         }

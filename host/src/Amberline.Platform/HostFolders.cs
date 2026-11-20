@@ -168,7 +168,7 @@ public static class HostFolders
         if (found.Count == 0)
             return new(null, kind == FolderKind.Game
                 ? $"This folder does not contain the game. Choose the folder you downloaded the {RetailClients.Year} game into. (A-FILES-01)"
-                : "This folder does not contain the AIR client (it holds an assets folder). Choose the folder you downloaded it into. (A-FILES-04)", []);
+                : "This folder does not contain the AIR client, which has an assets folder. Choose the folder you downloaded it into. (A-FILES-04)", []);
         FolderCheck? first = null;
         foreach (var candidate in found)
         {
@@ -206,8 +206,8 @@ public static class HostFolders
 
     /// <summary>The A-FILES-05 sentence when a saved folder is gone since the last start, else null.</summary>
     public static string? Gone(string game, string air) =>
-        !Directory.Exists(game) ? $"The game folder you chose is gone (it was at {game}). Choose it again. (A-FILES-05)"
-        : !Directory.Exists(air) ? $"The AIR client folder you chose is gone (it was at {air}). Choose it again. (A-FILES-05)"
+        !Directory.Exists(game) ? $"The game folder you chose is no longer at {game}. Choose it again. (A-FILES-05)"
+        : !Directory.Exists(air) ? $"The AIR client folder you chose is no longer at {air}. Choose it again. (A-FILES-05)"
         : null;
 
     /// <summary>
@@ -308,9 +308,9 @@ public static class HostFolders
         // NOT RETAIL (batch 761, task 8): a gone 2011 launcher folder names no A-FILES code; the row says so and a save clears it (nothing is blocked by it).
         if (kind == FolderKind.Launcher)
             return Directory.Exists(folder) ? CheckLauncher(folder, setup)
-                : new(null, $"The 2011 launcher folder you chose is gone (it was at {folder}). Choose it again.", []);
+                : new(null, $"The 2011 launcher folder you chose is no longer at {folder}. Choose it again.", []);
         if (!Directory.Exists(folder))
-            return new(null, $"The {Label(kind)} you chose is gone (it was at {folder}). Choose it again. (A-FILES-05)", []);
+            return new(null, $"The {Label(kind)} you chose is no longer at {folder}. Choose it again. (A-FILES-05)", []);
         return Inspect(kind, folder, setup);
     }
 
@@ -333,7 +333,7 @@ public static class HostFolders
         if (!File.Exists(executable))
             return new(folder, $"This folder does not contain the game. Choose the folder you downloaded the {RetailClients.Year} game into. (A-FILES-01)", []);
         if (RetailClients.Sha256(executable) != sha256)
-            return new(folder, $"This folder has the game, but not the {RetailClients.Year} version Amberline needs (version {RetailClients.Version}). Choose the " +
+            return new(folder, $"This folder has another version of the game. Amberline needs version {RetailClients.Version} from {RetailClients.Year}. Choose the " +
                 $@"folder from the download for version {RetailClients.Version} ({RetailClients.GameFolderHint}). (A-FILES-02)", []);
         if (GameFolders.FirstOrDefault(name => !Directory.Exists(Path.Combine(folder, name))) is { } missing)
             return new(folder, $"The game folder is incomplete: {missing} is missing. Download it again. (A-FILES-03)", []);
@@ -345,11 +345,11 @@ public static class HostFolders
         var problems = AirSourceLayout.Problems(folder).ToList();
         if (!problems.Contains(@"assets\swfs\") && !File.Exists(Path.Combine(folder, ChampionList))) problems.Add(ChampionList);
         if (problems.Count > 0)
-            return new(folder, $"This AIR client is incomplete: {problems.Count} {(problems.Count == 1 ? "file is" : "files are")} missing or " +
-                $"damaged (for example {problems[0].Replace("LolClient.swf", "the AIR client's .swf file").Replace("LolClient.exe", "the AIR client's executable")}). Download it again. (A-FILES-04)", []);
+            return new(folder, $"This AIR client is incomplete. {problems.Count} {(problems.Count == 1 ? "file is" : "files are")} missing or " +
+                $"damaged, for example {problems[0].Replace("LolClient.swf", "the AIR client's .swf file").Replace("LolClient.exe", "the AIR client's executable")}. Download it again. (A-FILES-04)", []);
         if (RetailClients.Sha256(Path.Combine(folder, "LolClient.exe")) != sha256)
-            return new(folder, $"This is not the {RetailClients.Year} AIR client Amberline needs (version {RetailClients.Version}). Choose the AIR client from the same " +
-                "download as the game. (A-FILES-04)", []);
+            return new(folder, $"This is another version of the AIR client. Amberline needs the one for version {RetailClients.Version} from {RetailClients.Year}. " +
+                "Choose the AIR client from the same download as the game. (A-FILES-04)", []);
         return new(folder, null, []);
     }
 
@@ -359,21 +359,35 @@ public static class HostFolders
         var warnings = new List<string>();
         var locale = GameLanguagePack.ResolveLocale(folder);
         if (GameLanguagePack.FindNewestRelease(folder, locale) is null)
-            warnings.Add($"Voices and fonts may be missing: lol_game_client_{locale.ToLowerInvariant()} is not next to lol_game_client.");
+            warnings.Add($"Voices and fonts may be missing because lol_game_client_{locale.ToLowerInvariant()} is not next to lol_game_client.");
         foreach (var hazard in GameFolderReport.Hazards(folder, GameFolderReport.SystemAnsi()))
             warnings.Add(hazard switch
             {
-                "path-too-long" => @"This folder's path is long; the game may not start from it. Move it closer to C:\.",
-                "network-share-path" => "This folder is on another computer (a network share); the game may not start from it. Copy it to this PC.",
-                _ => $"This folder's path has letters the {RetailClients.Year} game cannot read; the game may not start from it. Move it to a folder whose " +
+                "path-too-long" => @"The game may not start from this folder because its path is long. Move it closer to C:\.",
+                "network-share-path" => "The game may not start from this folder because it is on another computer, a network share. Copy it to this PC.",
+                _ => $"The game may not start from this folder because its path has letters the {RetailClients.Year} game cannot read. Move it to a folder whose " +
                     "name has only plain letters and digits.",
             });
-        // The client builds its spell list through short file names unless it runs from the managed layout, which needs this folder shape.
-        if (ManagedLayout.ParseGameDirectory(folder) is null && GameFolderReport.ShortNames(folder) == "off")
-            warnings.Add(@"This drive keeps no short file names, so the game stops while loading from this folder. Keep the game in a " +
-                @"folder like projects\lol_game_client\releases\0.0.0.51, or move it to drive C:.");
+        // The client builds its spell list through short file names unless it runs from the managed layout (the 1.0.0.126 line's, for this folder shape).
+        if (ShortNamesMissing(folder)) warnings.Add(NoShortNames + " " + PlatformLine.ShortNamesAdvice);
         return warnings;
     }
+
+    /// <summary>NOT RETAIL (batch 923): the host's own game cannot start from <paramref name="folder"/>: its line needs short names there and its files have none.</summary>
+    public static bool ShortNamesMissing(string folder, Func<string, string>? shortNames = null) =>
+        PlatformLine.NeedsShortNames(folder) && (shortNames ?? GameFolderReport.ShortNames)(folder) == "off";
+
+    public const string NoShortNames = "Windows gave this game folder's files no short names, so your own game stops while loading from it.";
+
+    /// <summary>
+    /// NOT RETAIL (batch 923): the dashboard's card (A-FILES-07) for a game folder whose files have no short names: Play on this PC stops at the loading
+    /// screen; hosting and the players' own games are not affected, and nothing is moved for the host. Null when the game can start. Its Hide subject is a
+    /// digest of the folder, never the folder (hosts share screenshots), as A-FILES-06's is. DIAGNOSTICS: <paramref name="shortNames"/> answers per folder in a check.
+    /// </summary>
+    public static DashboardCard? ShortNamesCard(string folder, Func<string, string>? shortNames = null) =>
+        string.IsNullOrWhiteSpace(folder) || !ShortNamesMissing(folder, shortNames) ? null
+            : new("A-FILES-07", NoShortNames, PlatformLine.ShortNamesAdvice + " Your players are not affected.", null,
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(folder))))[..16]);
 
     /// <summary>The folders a record names: its install folder (<c>install</c>, or the pointer's <c>folder</c>), its game and its AIR client.</summary>
     internal static (string? Install, string? Game, string? Air) ReadRecord(string path)
@@ -454,7 +468,7 @@ public static class HostFolders
             catch (AntiforgeryValidationException)
             {
                 var (g, a, l) = await Looked();
-                return Form(token, loop, place, g, a, l, "The page expired. Please try again.", false, StatusCodes.Status400BadRequest);
+                return Form(token, loop, place, g, a, l, "The page expired. Try again.", false, StatusCodes.Status400BadRequest);
             }
             // The rows come back in hidden fields; an empty one is a row not chosen yet (the 2011 launcher's row is optional, batch 761 task 8).
             FolderCheck Row(FolderKind kind, string value) => Picked(kind, value, setup);
@@ -578,15 +592,15 @@ public static class HostFolders
                   "<button class=secondary name=clear value=launcher>Stop using this folder</button></form>"
                 : "";
             return "<section class=folder aria-labelledby=launcher-title><h2 id=launcher-title>2011 launcher (optional)</h2>" +
-                $"<p class=hint>Amberline reads it where it is; nothing is moved or copied.</p><p>{state}</p>" +
+                $"<p class=hint>Amberline uses it where it is. Nothing is moved or copied.</p><p>{state}</p>" +
                 HostPages.FieldError("launcher", launcher.Problem) + pick + stop + "</section>";
         }
         // NOT RETAIL (batch 765): the client zip, first: unpacked into the one-folder install, so it needs one, and the file window.
         var zipInto = loop.Folders.ChooseZip is null ? null : HostPaths.InstallFolder(loop.Paths.App);
         var zipSection = zipInto is null ? "" :
             "<section class=folder aria-labelledby=zip-title><h2 id=zip-title>The client zip</h2>" +
-            $"<p class=hint id=zip-hint>Have the client zip ({ClientZip.BundleName})? Amberline unpacks the game and the AIR client from it into " +
-            $"{Encode(zipInto)}; the zip stays as it is. Or choose the folders below.</p>" +
+            $"<p class=hint id=zip-hint>If you have the client zip ({ClientZip.BundleName}), choose Use the client zip to install the game and the AIR client from it into " +
+            $"{Encode(zipInto)}. The zip is not changed. Otherwise choose the folders below.</p>" +
             $"<form method=post action={place.Path}{HostPages.Wait("Opening the file window. It may open behind this browser window.")}>{hidden}" +
             "<button id=zip-choose name=choose value=zip aria-describedby=zip-hint>Use the client zip…</button></form></section>";
         // The start's problem stands, but one about the saved folders (none yet, or gone) goes once both rows are usable (batch 643).

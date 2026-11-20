@@ -59,9 +59,11 @@ internal static class FolderMove
     /// <summary>
     /// A folder to move: the whole <paramref name="Source"/>, or only its <paramref name="Entries"/> (names directly inside it). A
     /// <paramref name="KeepSource"/> move is copied and checked, and its original is never removed: NOT RETAIL (the classic launcher, design
-    /// 2026-11-12 §1), for a folder under a RADS root (<see cref="InProjects"/>), so an old install is never changed.
+    /// 2026-11-12 §1), for a folder under a RADS root (<see cref="InProjects"/>), so an old install is never changed. NOT RETAIL (batch 923): a
+    /// <paramref name="Copy"/> move is copied and checked on one drive too, and its original removed as across drives: a rename would keep files that
+    /// Windows gave no 8.3 short name (the 1.0.0.132 game's; both lines' new installs since batch 926: <c>CompanionLine.SystemDriveInstall</c>).
     /// </summary>
-    internal sealed record Move(string Label, string Source, string Target, IReadOnlyList<string>? Entries = null, bool KeepSource = false);
+    internal sealed record Move(string Label, string Source, string Target, IReadOnlyList<string>? Entries = null, bool KeepSource = false, bool Copy = false);
 
     /// <summary>DIAGNOSTICS: test seams of the move. SameDrive replaces the drive test; AfterCopy runs on each copied file.</summary>
     internal sealed record MoveOptions(Func<string, string, bool>? SameDrive = null, Action<string>? AfterCopy = null);
@@ -126,7 +128,7 @@ internal static class FolderMove
         var copies = new Dictionary<Move, string>();
         var undo = new Stack<Action>();
         var asides = new List<string>();
-        var copied = moves.Where(move => !deleteOriginals || move.KeepSource || !sameDrive(move.Source, move.Target)).ToList();
+        var copied = moves.Where(move => !deleteOriginals || move.KeepSource || move.Copy || !sameDrive(move.Source, move.Target)).ToList();
         var meter = new Meter(progress, 2 * copied.Sum(CopyBytes));
         try
         {
@@ -319,7 +321,7 @@ internal static class FolderMove
         try { MoveItem(source, target); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            throw new InstallRefusedException($"The {label} folder could not be moved: a program may have a file in it open. Close it, then try again. ({exception.Message})");
+            throw new InstallRefusedException($"The {label} folder could not be moved. A program may have a file in it open. Close that program, then try again. ({exception.Message})");
         }
     }
 
@@ -337,7 +339,7 @@ internal static class FolderMove
         foreach (var entry in entries)
         {
             if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
-                throw new InstallRefusedException($"The {label} folder holds a link ({entry.FullName}), which cannot be copied safely.");
+                throw new InstallRefusedException($"The {label} folder contains a link ({entry.FullName}), which cannot be copied safely.");
             if (entry is FileInfo file) yield return file;
         }
     }

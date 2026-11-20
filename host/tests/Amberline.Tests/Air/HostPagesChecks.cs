@@ -105,8 +105,8 @@ public static class HostPagesChecks
             TestAssert.True(css.Contains("--gold:#c9ab6f", StringComparison.Ordinal) && css.Contains(".side", StringComparison.Ordinal) &&
                 css.Contains("color-scheme:dark", StringComparison.Ordinal) && !css.Contains("prefers-color-scheme", StringComparison.Ordinal),
                 "the host sheet is the register look, dark only");
-            // Batch 748: the sign-up sheet keeps its bytes (the hash of batch 706's text), so its versioned address has not changed.
-            TestAssert.Equal("/register/style.css?v=927f2fbdd95e", HostPages.PublicStyleHref, "the sign-up sheet's bytes changed");
+            // Batch 921: the sign-up sheet's message boxes wrap from its shared parts, so its bytes and versioned address changed; this pins the new one.
+            TestAssert.Equal("/register/style.css?v=e5d14fde296d", HostPages.PublicStyleHref, "the sign-up sheet's bytes changed");
             // Final fix 4: the version line spans the footer, so it stands centred under the frame (the sheet's paragraphs stop at 65ch).
             TestAssert.True(css.Contains("footer p{max-width:none;margin:0}", StringComparison.Ordinal), "the footer's line is not held to 65ch");
         }
@@ -418,7 +418,7 @@ public static class HostPagesChecks
         TestAssert.True(notice.Contains($"value=\"{typed}\"", StringComparison.Ordinal) && notice.Contains("<option value=INFO selected>Information</option>", StringComparison.Ordinal),
             "what was typed comes back: " + notice);
         TestAssert.True(Advanced(await PageAsync(browser, HttpMethod.Post, "/manage/grant", HttpStatusCode.BadRequest, Policy))
-            .Contains("<li>The page expired. Please try again.</li>", StringComparison.Ordinal), "an expired form says so in the summary");
+            .Contains("<li>The page expired. Try again.</li>", StringComparison.Ordinal), "an expired form says so in the summary");
         using (var given = await PostAsync(browser, "/manage/grant", Manage, ("accountId", login), ("rp", "100"), ("requestId", Guid.NewGuid().ToString())))
             TestAssert.Equal("/manage?done=grant", given.Headers.Location?.OriginalString, "Give RP comes back with its notice");
         TestAssert.True(Advanced(await PageAsync(browser, HttpMethod.Get, "/manage?done=grant", HttpStatusCode.OK, Policy))

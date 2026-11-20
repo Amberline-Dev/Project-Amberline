@@ -483,12 +483,14 @@ public static partial class AirPlayerInstallChecks
             TestAssert.Equal(System.Windows.Forms.AutoScaleMode.Dpi, window.AutoScaleMode);
             TestAssert.Equal("Segoe UI", window.Font.FontFamily.Name);
             TestAssert.True(window.Font.SizeInPoints >= 10F, "the font is smaller than 10 pt: " + window.Font.SizeInPoints);
-            AssertAccessible(window);
+            AssertAccessible(window, themed: true);
             var setup = Find(window, "Setup");
-            // Batch 681: the server's download (hidden until the server offers one) sits under the client folders. Batch 761: the optional
-            // 2011 launcher row comes after the game folder, as the third folder. Batch 765: the client zip comes first, the folders are the other way.
-            TestAssert.Equal(new[] { "Use the client zip", "Change the AIR client folder", "Change the game client folder", "Change the 2011 launcher folder", "Download the game from Alpha", "Change the install folder", "Install", "Cancel" },
-                TabOrder(setup).ToArray());
+            // Batch 920: the one first button (a copy was found: Install), then the Advanced toggle and today's rows inside it, then Cancel. Inside:
+            // batch 765's client zip first; batch 761's optional 2011 launcher after the game folder; batch 681's download (shown only while the
+            // server offers one and it is not the first button) under the client folders.
+            var order = TabOrder(setup).ToArray();
+            TestAssert.Equal(new[] { "Install", "Advanced", "Use the client zip", "Change the AIR client folder", "Change the game client folder", "Change the 2011 launcher folder", "Download the game from Alpha", "Change the install folder", "Cancel" },
+                order, string.Join(" | ", order));
             TestAssert.True(Find(window, "Client zip").Text.Contains(ClientZip.BundleName, StringComparison.Ordinal), "the client zip's row names it: " + Find(window, "Client zip").Text);
             TestAssert.Equal("Install", ((System.Windows.Forms.Control)window.AcceptButton!).AccessibleName);
             TestAssert.Equal("Cancel", ((System.Windows.Forms.Control)window.CancelButton!).AccessibleName);
@@ -498,9 +500,9 @@ public static partial class AirPlayerInstallChecks
                 "the default install folder: " + Find(window, "Install folder").Text);
             // An offer: its size beside the button; with clients found, Enter still installs them.
             window.ShowOffer(new([new("air/LolClient.exe", 1, new string('0', 64))], 2_600_000_000));
-            TestAssert.Equal("No copy of your own? Alpha can send you the game and the AIR client (2.6 GB).", Find(window, "Download from the server").Text);
+            TestAssert.Equal("Alpha can also send you the game and the AIR client (2.6 GB).", Find(window, "Download from the server").Text);
             TestAssert.Equal("Install", ((System.Windows.Forms.Control)window.AcceptButton!).AccessibleName);
-            AssertAccessible(window);
+            AssertAccessible(window, themed: true);
 
             // The bar: a share with its percentage and Cancel while copying; moving, no Cancel and the reason during a rename.
             var bar = (System.Windows.Forms.ProgressBar)Find(window, "Setup progress");
@@ -516,7 +518,7 @@ public static partial class AirPlayerInstallChecks
 
             // The finish page: Open (Enter) and Close (Escape), and what stayed where.
             var result = new PlayerInstall.Result(new(fixture.Install, fixture.Air, fixture.Game), root, Path.Combine(fixture.Profile.Desktop, "Alpha.lnk"), [],
-                ["These stayed in D:\\Downloads, because they are not part of the AIR client: notes.txt."]);
+                ["These files stayed in D:\\Downloads because they are not part of the AIR client: notes.txt."]);
             window.ShowFinished(result);
             TestAssert.True(window.Finished, "the finished install is not marked");
             TestAssert.Equal("Open Alpha now", ((System.Windows.Forms.Control)window.AcceptButton!).AccessibleName);
@@ -524,7 +526,7 @@ public static partial class AirPlayerInstallChecks
             TestAssert.Equal(new[] { "Open Alpha now", "Close" }, TabOrder(Find(window, "Setup finished")).ToArray());
             var next = Find(window, "What to do next").Text;
             TestAssert.True(next.Contains("\"Alpha\" is on your desktop", StringComparison.Ordinal) && next.Contains("notes.txt", StringComparison.Ordinal), next);
-            AssertAccessible(window);
+            AssertAccessible(window, themed: true);
         });
 
         // An install that stopped: what happened, what to do (the refusal's own sentence), the details and the log.
@@ -882,7 +884,7 @@ public static partial class AirPlayerInstallChecks
             var ui = new FakeStart(true, false);
             TestAssert.Equal(2, await PlayerMode.StartAsync(fixture.Install, id, checkUpdate: true, ui.Seam));
             TestAssert.Equal(new[] { PlayerMode.Checking, PlayerMode.Checking }, ui.Lines.ToArray());
-            TestAssert.Equal(new[] { "Can't reach Alpha.", "Can't reach Alpha." }, ui.Problems.Select(problem => problem.WhatHappened).ToArray());
+            TestAssert.Equal(new[] { "Cannot reach Alpha.", "Cannot reach Alpha." }, ui.Problems.Select(problem => problem.WhatHappened).ToArray());
             TestAssert.True(ui.Problems.All(problem => problem.Log == log && problem.WhatToDo.Contains("Try again", StringComparison.Ordinal) &&
                 !problem.Details.Contains("127.0.0.1", StringComparison.Ordinal)), string.Join(" | ", ui.Problems.Select(problem => problem.Report())));
             TestAssert.Equal(0, ui.Played);
@@ -892,7 +894,7 @@ public static partial class AirPlayerInstallChecks
             {
                 ui = new FakeStart(false);
                 TestAssert.Equal(2, await PlayerMode.StartAsync(fixture.Install, id, checkUpdate: true, ui.Seam));
-                TestAssert.Equal("Alpha did not prove it is the server this shortcut was made for.", ui.Problems.Single().WhatHappened);
+                TestAssert.Equal("This server does not match your invite.", ui.Problems.Single().WhatHappened);
                 TestAssert.True(ui.Problems.Single().WhatToDo.Contains("new invite link", StringComparison.Ordinal), ui.Problems.Single().WhatToDo);
             }
 
@@ -1047,7 +1049,15 @@ public static partial class AirPlayerInstallChecks
             PlayedWith = (server, connection);
             shown();
             return Task.FromResult(0);
-        }, Binds is { } bound ? [bound] : [], Moved);
+        }, Binds is { } bound ? [bound] : [], Moved, (problem, canMove) =>
+        {
+            // Batch 923: the short-names question (Move or Cancel) or its message; MoveGame answers Move.
+            GameQuestions.Add((problem, canMove));
+            return canMove && MoveGame;
+        });
+
+        public bool MoveGame { get; init; }
+        public List<(PlayerProblem Problem, bool CanMove)> GameQuestions { get; } = [];
 
         /// <summary>Batch 856: the moved dialog's seam alone, as the <c>--install</c> window gets it.</summary>
         public ServerMoved.Ui Moved => new(LocalAppData, Lines.Add, question =>
@@ -1105,16 +1115,24 @@ public static partial class AirPlayerInstallChecks
         parent.Controls.Cast<System.Windows.Forms.Control>().OrderBy(child => child.TabIndex).SelectMany(child =>
             child is System.Windows.Forms.ButtonBase ? [child.AccessibleName!] : TabOrder(child));
 
-    /// <summary>Every control has a name and a description for a screen reader, and only Windows' own colours (high contrast applies).</summary>
-    private static void AssertAccessible(System.Windows.Forms.Form window)
+    /// <summary>
+    /// Every control has a name and a description for a screen reader. A window in Windows' own colours (the removal window) has no colour of its own, so
+    /// high contrast applies. Batch 920: a <paramref name="themed"/> window (setup, the app's first window) wears the host pages' navy, and every text in
+    /// it is at least 4.5:1 on its background; under a high-contrast theme it keeps Windows' colours too.
+    /// </summary>
+    private static void AssertAccessible(System.Windows.Forms.Form window, bool themed = false)
     {
+        var own = themed && !System.Windows.Forms.SystemInformation.HighContrast;
+        if (own) TestAssert.Equal(PlayerInstallWindow.Tokens.Panel.ToArgb(), window.BackColor.ToArgb(), "the window's background is not the pages' panel");
         foreach (var control in new[] { window }.Concat(All(window)))
         {
             var what = $"{control.GetType().Name} '{control.AccessibleName}' ({control.Text})";
             TestAssert.False(string.IsNullOrWhiteSpace(control.AccessibleName), "no accessible name: " + what);
             TestAssert.True(control.AccessibleDescription is not null && (control.Text.Length == 0 || control.AccessibleDescription.Length > 0),
                 "no accessible description: " + what);
-            TestAssert.True(control.ForeColor.IsSystemColor && control.BackColor.IsSystemColor, $"a colour of its own ({control.ForeColor}, {control.BackColor}): " + what);
+            if (!own) TestAssert.True(control.ForeColor.IsSystemColor && control.BackColor.IsSystemColor, $"a colour of its own ({control.ForeColor}, {control.BackColor}): " + what);
+            else if (control is System.Windows.Forms.Label or System.Windows.Forms.ButtonBase or System.Windows.Forms.TextBox && control.Text.Length > 0)
+                TestAssert.True(Contrast(control.ForeColor, control.BackColor) >= 4.5, $"text at {Contrast(control.ForeColor, control.BackColor):0.00}:1: " + what);
             if (control is System.Windows.Forms.ButtonBase) TestAssert.True(control.TabStop, "a button Tab skips: " + what);
         }
     }

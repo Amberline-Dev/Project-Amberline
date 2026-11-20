@@ -132,7 +132,7 @@ public static class PlatformManagement
                 "</tr>";
         });
         var counted = intro + (home ? $" {reports.Length} are kept" : $" {reports.Length} kept") +
-            (reports.Length > ShownReports ? home ? $"; the {ShownReports} newest are shown." : $", the {ShownReports} newest shown." : ".") + "</p>";
+            (reports.Length > ShownReports ? home ? $". The {ShownReports} newest are shown." : $", the {ShownReports} newest shown." : ".") + "</p>";
         return home
             ? counted + Wide("reports-heading", "<table><thead><tr><th scope=col>Time</th><th scope=col>Reported by</th><th scope=col>Reported</th><th scope=col>Offense</th>" +
                 "<th scope=col>Game</th><th scope=col>Description</th><th scope=col>Status</th></tr></thead><tbody>" + string.Concat(rows) + "</tbody></table>")
@@ -170,8 +170,8 @@ public static class PlatformManagement
                 Wide("leavers-heading", "<table><thead><tr><th scope=col>Summoner name</th><th scope=col>Leaves</th><th scope=col>Warning</th><th scope=col>Queue wait</th>" +
                     "<th scope=col>Dodges</th><th scope=col>Change</th></tr></thead><tbody>" + string.Concat(rows) + "</tbody></table>");
         return "<h2>Leavers</h2><p>Leaves (left and did not come back, or AFK) in each account's last " +
-            $"{PlatformAccounts.LeaverWindowGames} matchmade games; custom games never count. From one leave the client shows its leaver " +
-            "warning at each login; from two the player waits before being matched (5, 10 or 15 minutes, and the whole party with them) " +
+            $"{PlatformAccounts.LeaverWindowGames} matchmade games. Custom games never count. With one leave, the client shows its leaver " +
+            "warning at each login. With two, the player and their whole party wait 5, 10 or 15 minutes before being matched, " +
             $"until {PlatformAccounts.LowPriorityGames} games are completed. A dodge (leaving a queue game's champion selection) keeps the " +
             "player and any party with them out of every queue for 6 minutes, 30 for a repeat within 24 hours. " +
             "Clear forgives the account's leaves and dodges so far.</p>" +
@@ -251,12 +251,12 @@ public static class PlatformManagement
             {
                 "grant" => "The RP is given.",
                 "logout" => "Done. The next time their PC connects, they log in again.",
-                "logout-unsaved" => "Done until Amberline restarts: Amberline could not save it just now. Try again in a minute.",
+                "logout-unsaved" => "Amberline could not save this, so it lasts only until Amberline restarts. Try again in a minute.",
                 "password" => "Saved. Send the new password to the player privately.",
                 "password-unsaved" => "Saved, and the player was logged out. Send the new password to the player privately. Amberline could not save every " +
-                    "change just now (their remote sign-in): set a new password again in a minute.",
+                    "change (their remote sign-in). Set a new password again in a minute.",
                 "code" => "The reward code is cancelled.",
-                "leaver" => "Cleared: the player's leaves and dodges so far are forgiven.",
+                "leaver" => "Cleared. The player's leaves and dodges so far are forgiven.",
                 "report" => "The report is closed.",
                 _ => null,
             };
@@ -304,14 +304,14 @@ public static class PlatformManagement
                 {{noticeForm}}
                 {{giveRp}}
                 {{logout}}
-                <h2>Set a new password</h2><p>For any login, yours too. The player is logged out at once.</p>
+                <h2>Set a new password</h2><p>For any login, including yours. The player is logged out immediately.</p>
                 <form method=post action=/manage/password novalidate>{{field}}{{Logins("password", "password-login")}}
                 {{HostPages.Field("password-new", "New password", "At least 10 characters.", At("password-new"), "type=password required minlength=10 maxlength=128 autocomplete=new-password", name: "password")}}
                 {{HostPages.Field("password-confirm", "Repeat the new password", null, At("password-confirm"), "type=password required minlength=10 maxlength=128 autocomplete=new-password", name: "confirm")}}
                 {{Send("Save")}}
                 <h2>Make a reward code</h2><p>A one-time code for Influence Points (IP){{(rpOff ? "" : " and RP")}}, typed in the store's Redeem a code page.</p>
                 <form method=post action=/manage/reward-code/create novalidate{{HostPages.Wait("Making the reward code.")}}>{{field}}<input type=hidden name=requestId value="{{Guid.NewGuid()}}">
-                {{Number("code", "code-ip", "ip", "IP amount", "0 to 1,000,000.", 0, "0")}}{{(rpOff ? "" : Number("code", "code-rp", "rp", "RP amount", "0 to 1,000,000; IP or RP above 0.", 0, "1000"))}}
+                {{Number("code", "code-ip", "ip", "IP amount", "0 to 1,000,000.", 0, "0")}}{{(rpOff ? "" : Number("code", "code-rp", "rp", "RP amount", "0 to 1,000,000. The IP or the RP must be more than 0.", 0, "1000"))}}
                 {{Send("Make a reward code")}}
                 <h2 id=codes-heading>Reward codes</h2>{{(codes.Length == 0 ? "<p>You have not made a reward code yet.</p>"
                     : Wide("codes-heading", "<table><thead><tr><th scope=col>Status</th><th scope=col>Made</th><th scope=col>Amount</th><th scope=col>Used by</th><th scope=col>Change</th></tr></thead>" +
@@ -352,15 +352,15 @@ public static class PlatformManagement
                 $"<option value=\"{a.Id}\">{WebUtility.HtmlEncode(a.Summoner)}{(rpOff ? "" : $" · {PlatformEconomy.For(a).Rp} RP")}</option>"));
             var revokeForm = remoteAccess is null ? "" :
                 $"<h2>Revoke remote access</h2><p>Ends the account's friend sign-in token. Tunnels already open end when the companion reconnects.</p>" +
-                (context.Request.Query["revoke"] == "unsaved" ? "<p role=status>The token ended, but that could not be saved just now: it lasts only until " +
+                (context.Request.Query["revoke"] == "unsaved" ? "<p role=status>The token ended, but this could not be saved. It lasts only until " +
                     "the platform restarts. Revoke it again in a minute.</p>" : "") +
                 $"<form method=post action=/manage/remote-revoke>{field}<label>Account<select name=accountId required>{accountOptions}</select></label><button>Revoke remote access</button></form>";
             // NOT RETAIL: host tool for a friend who forgot the password (retail's was Riot's account website).
-            var passwordForm = "<h2>Set a new password</h2><p>The old password stops working at once: the account's remote-access token is " +
-                "revoked and its sessions end, so the player logs in again with the new one. Send it to them privately.</p>" +
+            var passwordForm = "<h2>Set a new password</h2><p>The old password stops working immediately. The player is signed out everywhere " +
+                "and logs in again with the new one. Send it to them privately.</p>" +
                 (context.Request.Query["password"] == "changed" ? "<p role=status>The password was changed.</p>" : "") +
-                (context.Request.Query["password"] == "unsaved" ? "<p role=status>The password was changed and the player was logged out, but the end of " +
-                    "their remote-access token could not be saved just now. Set a new password again in a minute.</p>" : "") +
+                (context.Request.Query["password"] == "unsaved" ? "<p role=status>The password was changed and the player was logged out, but " +
+                    "their remote sign-in could not be ended for good. Set a new password again in a minute.</p>" : "") +
                 $"<form method=post action=/manage/password>{field}<label>Account<select name=accountId required>{accountOptions}</select></label>" +
                 "<label>New password<input type=password name=password required minlength=10 maxlength=128 autocomplete=new-password></label>" +
                 "<label>Repeat the new password<input type=password name=confirm required minlength=10 maxlength=128 autocomplete=new-password></label>" +
@@ -375,7 +375,7 @@ public static class PlatformManagement
                 : "<p>Public registration is off. Create each friend's account with <a href=\"/register\">local registration</a> on this host, then send that friend the username and password privately.</p>";
             var current = notice;
             var noticeForm = broadcast is null ? "" :
-                "<h2>Notify players</h2><p>Shows a line in every connected client's ticker (and in later logins) until you clear it or the platform restarts. Send an empty message to clear it.</p>" +
+                "<h2>Notify players</h2><p>Shows a line in the ticker of every connected client and of later logins, until you clear it or the platform restarts. Send an empty message to clear it.</p>" +
                 (current is { } shown ? $"<p>Showing now ({WebUtility.HtmlEncode(shown.Severity)}, reached {shown.Reached} clients): {WebUtility.HtmlEncode(shown.Text)}</p>" : "<p>No notice is showing.</p>") +
                 $"<form method=post action=/manage/broadcast>{field}<label>Message<input name=message maxlength=200></label>" +
                 "<label>Severity<select name=severity><option>INFO</option><option selected>WARN</option><option>ERROR</option></select></label><button>Send to players</button></form>";
@@ -385,11 +385,11 @@ public static class PlatformManagement
             var (link, missing) = inviteLink?.Invoke() ?? (null, "The invite link appears on Amberline's Users page.");
             var copyLink = link is null ? "" : $"<p><button type=button data-copy=invite-link>Copy</button></p><script src={CopyScriptPath} defer></script>";
             var friends = $$"""
-                <h2>Play with friends</h2><p>Send this invite link to your friends. They bring their own {{PlatformLine.PatchName}} AIR client and game; the player app the link's page offers sets them up for this server.</p>
+                <h2>Play with friends</h2><p>Send this invite link to your friends. They bring their own {{PlatformLine.PatchName}} AIR client and game. The player app on the link's page sets them up for this server.</p>
                 {{HostInvite.InviteBox(link, missing)}}{{copyLink}}
                 {{registration}}
                 <p>Port {{PlatformLine.HttpPort}} is local-only and cannot be used by friends connecting to your public IP.</p>
-                <p>Friends connect through HTTPS TCP {{remotePort}}; games use the configured UDP game ports. The raw AIR login and RTMP ports stay local.</p>
+                <p>Friends connect through HTTPS TCP {{remotePort}}. Games use the configured UDP game ports. The raw AIR login and RTMP ports stay local.</p>
                 <h2>Create an account</h2><p><a href="/register">Open account registration</a></p>
                 """;
             var grantRp = rpOff ? "" : $$"""
@@ -406,7 +406,7 @@ public static class PlatformManagement
                 {{grantRp}}
                 {{revokeForm}}
                 {{passwordForm}}
-                <h2>Issue one-time reward code</h2><p>Codes grant testing IP{{(rpOff ? "" : " and/or RP")}}. The raw code is shown only in the issuance response.</p>
+                <h2>Issue one-time reward code</h2><p>Codes grant testing IP{{(rpOff ? "" : " and RP")}}. The code is shown only once, right after you issue it.</p>
                 <form method=post action=/manage/reward-code/create>{{field}}<input type=hidden name=requestId value="{{Guid.NewGuid()}}">
                 <label>IP amount<input type=number name=ip min=0 max=1000000 value=0 required></label>
                 {{(rpOff ? "" : "<label>RP amount<input type=number name=rp min=0 max=1000000 value=1000 required></label>")}}<button>Issue reward code</button></form>
@@ -417,7 +417,7 @@ public static class PlatformManagement
             context.Response.Headers.ContentSecurityPolicy = OperatorPolicy;
             return Results.Content($$"""
                 <!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content="width=device-width">{{(live ? "<meta http-equiv=refresh content=5>" : "")}}
-                <title>Game testing · Host</title><style>body{font:17px system-ui;background:#10202b;color:#f4eee0;max-width:900px;margin:5vh auto;padding:24px}label{display:block;margin:14px 0}input,button{font:inherit;padding:9px}input{display:block;width:95%}a{color:#ead399}li{margin:12px 0}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 14px 4px 0;vertical-align:top;font-size:15px}</style>
+                <title>Game testing · Host</title><style>body{font:17px system-ui;background:#10202b;color:#f4eee0;max-width:900px;margin:5vh auto;padding:24px;overflow-wrap:anywhere}label{display:block;margin:14px 0}input,button{font:inherit;padding:9px}input{display:block;width:95%}a{color:#ead399}li{margin:12px 0}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 14px 4px 0;vertical-align:top;font-size:15px}.message{white-space:pre-wrap;overflow-wrap:anywhere}</style>
                 {{body}}
                 </html>
                 """, "text/html");
@@ -463,7 +463,7 @@ public static class PlatformManagement
             // The home host's page copies the code with page.js's Copy (no inline handler).
             if (invite is not null)
                 return HostMode.Page($"""
-                    <h1>Your reward code</h1><p>It gives {ip.ToString("N0", CultureInfo.InvariantCulture)} IP{(rpOff && rp == 0 ? "" : $" and {rp.ToString("N0", CultureInfo.InvariantCulture)} RP")} once. Copy it now: Amberline shows it only this once.</p>
+                    <h1>Your reward code</h1><p>It gives {ip.ToString("N0", CultureInfo.InvariantCulture)} IP{(rpOff && rp == 0 ? "" : $" and {rp.ToString("N0", CultureInfo.InvariantCulture)} RP")} once. Copy it now. Amberline shows it only once.</p>
                     <p class=message id=reward-code>{WebUtility.HtmlEncode(issued.Code)}</p>
                     <p class=buttons><button type=button data-copy=reward-code>Copy</button> <span id=copy-status role=status></span></p>
                     <p><a href="/manage">Back</a></p>
@@ -551,7 +551,7 @@ public static class PlatformManagement
         public (string Text, string? Field) Home { get; } = home;
     }
 
-    private const string Expired = "The page expired. Please try again.";
+    private const string Expired = "The page expired. Try again.";
 
     /// <summary>A notice's kind as the home host reads it (the client's ticker severities).</summary>
     private static string Kind(string severity) => severity switch { "INFO" => "Information", "ERROR" => "Error", _ => "Warning" };
@@ -572,7 +572,7 @@ public static class PlatformManagement
         _ when ex.Message.StartsWith("A player notice", StringComparison.Ordinal) => ("A notice has at most 200 characters, on one line.", "notice-message"),
         _ when ex.Message.StartsWith("Choose INFO", StringComparison.Ordinal) => ("Choose the kind of notice.", "notice-kind"),
         _ when ex.Message.StartsWith("A redeemed reward code", StringComparison.Ordinal) => ("That code was used already, so it cannot be cancelled.", null),
-        _ => ("The page was out of date, so nothing changed. Here it is again: check it and try once more.", null),
+        _ => ("The page was out of date, so nothing changed. Check the page and try again.", null),
     };
 
     private static string RenderRewardCodeRow(PlatformRewardCode reward, string field)

@@ -43,4 +43,14 @@ public static class PlatformLine
     /// until it is locked, the login copy and the stand-in refuse it and name that release.
     /// </summary>
     public static readonly EarlierHome CopyLoginsFrom = new("Amberline", "amberline-install.json", "1.0.0.126", RemotePort: 8391, LocksFrom: "0.1.26");
+
+    /// <summary>
+    /// NOT RETAIL (batch 923): whether the host's own game (Play on this PC) needs 8.3 short names in <paramref name="gameFolder"/>: always on this line,
+    /// whose game runs loose from any folder (the companion's <c>CompanionLine.PrepareLayout</c>), and its loose spell index matches the <c>.inibin</c>
+    /// files only through their short names (<c>GameFolderReport.ShortNames</c>). The 1.0.0.126 line needs them only outside the managed layout's shape.
+    /// </summary>
+    public static bool NeedsShortNames(string gameFolder) => true;
+
+    /// <summary>NOT RETAIL (batch 923): what the host does about a game folder whose files have no short names (the setup's note and the dashboard's card).</summary>
+    public const string ShortNamesAdvice = "Copy the game folder to drive C:, then choose the copy under Settings, Your game folders.";
 }

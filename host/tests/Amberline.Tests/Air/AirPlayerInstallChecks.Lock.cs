@@ -28,7 +28,7 @@ public static partial class AirPlayerInstallChecks
             File.WriteAllText(Path.Combine(fixture.Install, "their.txt"), "the player's own");
             var plan = fixture.Plan();
             Refused(() => PlayerInstall.Install(fixture.Profile, plan, Connection("127.0.0.1", new string('A', 64)), "Alpha", fixture.Tool),
-                "holds other files. Choose a new or empty folder.");
+                "already contains other files. Choose an empty or new folder.");
             TestAssert.True(Directory.Exists(fixture.Air) && File.Exists(fixture.GameExecutable), "a refused install moves nothing");
             File.Delete(Path.Combine(fixture.Install, "their.txt"));
 

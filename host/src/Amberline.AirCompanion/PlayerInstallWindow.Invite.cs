@@ -18,8 +18,8 @@ internal static partial class PlayerInstallWindow
             {
                 Caption = PlayerInvite.Product,
                 Heading = $"Add {invite.Name} ({invite.Host})?",
-                Text = $"{PlayerInvite.Product} sets up the game to play on {invite.Name} and puts it on your desktop. " +
-                    "Add it only if you know its host.",
+                Text = $"{PlayerInvite.Product} sets up the game for {invite.Name} and adds it to your desktop. " +
+                    "Add it only if you know the host.",
                 Icon = TaskDialogIcon.Information,
                 AllowCancel = true,
                 SizeToContent = true,
@@ -46,11 +46,16 @@ internal static partial class PlayerInstallWindow
     }
 
     /// <summary>
-    /// The downloaded app's window: "Now click Join on your invite page, or paste the invite link here", a paste box and Add. Add takes only an
-    /// invite this app can use (<see cref="InviteLink.Decode"/>); otherwise the refusal shows under the box and the window stays.
+    /// The downloaded app's window. Batch 920 (owner, 20 November 2026; the texts are the orchestrator's): the headline is the Join step in the browser
+    /// (<see cref="Headline"/>, then <see cref="Allow"/>); below it, smaller, the fallback (<see cref="Fallback"/>), a paste box and Add. Add takes only
+    /// an invite this app can use (<see cref="InviteLink.Decode"/>); otherwise the refusal shows under the box and the window stays.
     /// </summary>
     internal sealed class WelcomeWindow : Form
     {
+        internal const string Headline = "Go back to your browser and click Join on the invite page.";
+        internal const string Fallback = "If Join does not open anything, paste the invite link here.";
+        internal static string Allow => $"Your browser may ask to open {PlayerInvite.Product}. Allow it.";
+
         private readonly TextBox box;
         private readonly Label problem;
 
@@ -70,22 +75,40 @@ internal static partial class PlayerInstallWindow
             AutoSize = true;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
             var width = (int)(520 * Font.SizeInPoints / 10F);
-            var heading = Line("Welcome", $"{PlayerInvite.Product} is ready.", width);
+            var heading = Line("Join", "", width);
             heading.Font = UiFont(FontStyle.Bold, 2);
-            heading.Text = $"{PlayerInvite.Product} is ready";
-            var intro = Line("What to do", "", width);
-            intro.Text = intro.AccessibleDescription = "Now click Join on your invite page, or paste the invite link here.";
-            box = Named(new TextBox { Width = width, Margin = new Padding(0, 6, 0, 6) }, "Invite link", "Paste the invite link the host sent you.");
-            problem = Line("Problem", "Why the invite link can't be used.", width);
+            heading.Text = heading.AccessibleDescription = Headline;
+            var allow = Line("Allow", "", width);
+            allow.Text = allow.AccessibleDescription = Allow;
+            var fallback = Line("Paste instead", "", width);
+            fallback.Text = fallback.AccessibleDescription = Fallback;
+            fallback.Margin = new Padding(0, 22, 12, 4);
+            box = Named(new TextBox { Width = width - 16, Margin = Padding.Empty, Location = new Point(6, 5) }, "Invite link", "Paste the invite link the host sent you.");
+            // Batch 920: the pages' field: the box on the field colour with room around the text, in a two-pixel border (--line, --focus while it has the focus).
+            var field = Named(new Panel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(6, 5, 6, 5), Margin = Padding.Empty, Location = new Point(2, 2) },
+                "Invite link field", "The field around the invite link box.");
+            field.Controls.Add(box);
+            var ring = Named(new Panel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(2), Margin = new Padding(0, 2, 0, 4) },
+                "Invite link box", "The border of the invite link box.");
+            ring.Controls.Add(field);
+            problem = Line("Problem", "Why the invite link cannot be used.", width);
             problem.Font = UiFont(FontStyle.Bold);
             problem.Visible = false;
             var add = Action("&" + AddButton, AddButton, "Adds the server from the invite link.");
             var close = Action("Close", "Close", "Closes this window.");
-            var rows = Rows((heading, null), (intro, null), (box, null), (problem, null), (Buttons(close, add), null));
+            var rows = Rows((heading, null), (allow, null), (fallback, null), (ring, null), (problem, null), (Buttons(close, add), null));
             Named(rows, PlayerInvite.Product, AccessibleDescription);
             Controls.Add(rows);
             AcceptButton = add;
             CancelButton = close;
+            // The Join step is the first thing to do, so no button here is gold: the fallback stays quiet.
+            if (Theme(this, [heading]))
+            {
+                box.BorderStyle = BorderStyle.None;
+                (field.BackColor, ring.BackColor) = (Tokens.Field, Tokens.Line);
+                box.GotFocus += (_, _) => ring.BackColor = Tokens.Focus;
+                box.LostFocus += (_, _) => ring.BackColor = Tokens.Line;
+            }
             add.Click += (_, _) =>
             {
                 if (InviteLink.Decode(box.Text).Refusal is { } refusal)

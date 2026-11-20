@@ -107,7 +107,7 @@ public static class HostFirewall
     {
         if (!rules.Any(rule => Unsafe(rule.Program))) return null;
         return new FirewallProblem("A-NET-02",
-            "Amberline cannot ask Windows Firewall to allow it from this folder: its path has a character Windows cannot pass safely.",
+            "Amberline cannot ask Windows Firewall to allow it from this folder. Its path has a character that Windows cannot pass safely.",
             "Move Amberline to a folder whose path has only plain letters, digits, spaces, dots and dashes, then try again. " +
             "Or allow its two programs by hand in Windows Defender Firewall (" +
             string.Concat(rules.Select(rule => $"{rule.Protocol} {rule.LocalPort} for {rule.Name switch { SignInRule => "sign-in", OldSignInRule => "old sign-in", _ => "games" }}, ")) +
@@ -219,7 +219,7 @@ public static class HostFirewall
     {
         FirewallState.Allowed => null,
         FirewallState.SomeNetworks => new("A-NET-02", "Windows lets players in on some network types only.",
-            "Choose Allow through Windows Firewall again: players need every network type."),
+            "Choose Allow through Windows Firewall again. Players need every network type."),
         FirewallState.OtherFolder => new("A-NET-02", "Windows Firewall has Amberline's rule for another folder.",
             "Choose Allow through Windows Firewall again to point the rule at this folder."),
         FirewallState.OtherPorts => new("A-NET-02", "Windows Firewall's rule must be updated for the new game ports.",

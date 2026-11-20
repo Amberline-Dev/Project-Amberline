@@ -120,7 +120,7 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
         var bytes = moves.Where(move => !delete || !(sameDrive ?? FolderMove.SameRoot)(move.Source, move.Target)).Sum(FolderMove.CopyBytes);
         var drive = Path.GetPathRoot(folder)!;
         if (bytes > new DriveInfo(drive).AvailableFreeSpace)
-            throw new InstallRefusedException($"Drive {drive.TrimEnd('\\')} has not enough free space: the game and the AIR client need {FolderMove.Gigabytes(bytes)} GB.");
+            throw new InstallRefusedException($"Drive {drive.TrimEnd('\\')} does not have enough free space. The game and the AIR client need {FolderMove.Gigabytes(bytes)} GB.");
         return new(moves, notes, game, air, delete, bytes);
     }
 
@@ -145,14 +145,14 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
     {
         if (staged is null || !Directory.Exists(staged)) return (null, null);
         var target = LauncherBeside(install);
-        const string Stays = "your 2011 launcher setting stays as it is.";
+        const string Stays = " Your 2011 launcher setting is not changed.";
         try
         {
             if (File.Exists(target) || (Directory.Exists(target) && !File.Exists(Path.Combine(target, ClientZip.Marker))))
-                return (null, $"{target} holds other files, so Amberline did not put the client zip's 2011 launcher there; " + Stays);
+                return (null, $"{target} already contains other files, so Amberline did not put the client zip's 2011 launcher there." + Stays);
             // Batch 857 review (LOW 9): at the client zip's time, a folder of that name owned by another account (or a link) is never replaced.
             if (InstallLock.Refusal(target) is { } foreign)
-                return (null, $"{foreign}, so Amberline did not put the client zip's 2011 launcher there; " + Stays);
+                return (null, $"{foreign}, so Amberline did not put the client zip's 2011 launcher there." + Stays);
             File.WriteAllText(Path.Combine(staged, ClientZip.Marker), "Amberline put the 2011 launcher from the client zip here; it replaces this folder only while this file is in it.\r\n");
             if (Directory.Exists(target) && !FolderMove.TryDeleteTree(target)) throw new IOException($"{target}, made from an earlier client zip, could not be replaced.");
             Directory.Move(staged, target);
@@ -163,7 +163,7 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
             {
                 Console.Error.WriteLine($"Client zip, 2011 launcher: {HostFolders.Check(FolderKind.Launcher, target, new FolderSetup { LauncherSha256 = launcherSha256 }).Problem}");
                 FolderMove.TryDeleteTree(target);
-                return (null, "The client zip's 2011 launcher did not pass its check, so " + Stays);
+                return (null, "The client zip's 2011 launcher did not pass its check." + Stays);
             }
             HostMode.Change(settings, saved => saved with { LauncherRoot = target });
             return (target, $"The client zip's 2011 launcher is in {target}, beside the install folder.");
@@ -171,12 +171,12 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
         catch (InstallRefusedException refused)
         {
             Console.Error.WriteLine($"Client zip, 2011 launcher: {refused.Message}");
-            return (null, "The client zip's 2011 launcher could not be locked beside the install folder, so " + Stays);
+            return (null, "The client zip's 2011 launcher could not be locked beside the install folder." + Stays);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Console.Error.WriteLine($"Client zip, 2011 launcher: {ex}");
-            return (null, "The client zip's 2011 launcher could not be put beside the install folder, so " + Stays);
+            return (null, "The client zip's 2011 launcher could not be put beside the install folder." + Stays);
         }
     }
 
@@ -373,7 +373,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
         foreach (var path in update ? new[] { full } : new[] { full, ClientPlan.LauncherBeside(full), ClientZip.StagingFor(full) })
             if (InstallLock.Refusal(path, rules.Account) is { } refused) return $"{refused}." + other;
         if (Directory.Exists(full) && !File.Exists(Path.Combine(full, FolderMove.InstallMarker)) && Directory.EnumerateFileSystemEntries(full).Any())
-            return "That folder holds other files. Choose a new or empty folder.";
+            return "That folder already contains other files. Choose an empty or new folder.";
         return null;
     }
 
@@ -593,7 +593,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Console.Error.WriteLine($"Install, game and AIR client: {ex}");
-            return "Amberline could not copy the game and the AIR client: the disk may be full, or a program uses their files." + ClientPlan.Unchanged;
+            return "Amberline could not copy the game and the AIR client. The disk may be full, or a program may be using their files." + ClientPlan.Unchanged;
         }
         finally
         {
@@ -611,7 +611,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     /// <summary>Batch 653: the word list's pause, and the line while the installed Amberline starts until its page answers.</summary>
     public const string ContinueLine = "Press Enter to continue.";
     /// <summary>The window's line instead of the question when Update now started it (<see cref="Confirmed"/>).</summary>
-    public const string ConfirmedLine = "You chose Update now on Amberline's page, so the update goes on. Your settings and users stay.";
+    public const string ConfirmedLine = "You chose Update now on Amberline's page, so the update continues. Your settings and users stay.";
     public const string StartingLine = "Starting Amberline and opening its page in your browser. This takes a few seconds.";
 
     /// <summary>

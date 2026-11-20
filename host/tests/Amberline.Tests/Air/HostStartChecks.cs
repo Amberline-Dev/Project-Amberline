@@ -45,7 +45,7 @@ public static class HostStartChecks
             TestAssert.Equal(("A-FILES-06", "Windows Security may have removed exehost.exe, a part of Amberline.", (string?)null),
                 (card?.Code, card?.Message, card?.Action), "the removed file is named");
             TestAssert.True(card!.WhatToDo.Contains("Protection history", StringComparison.Ordinal) &&
-                card.WhatToDo.Contains("your settings and users stay", StringComparison.Ordinal), card.WhatToDo);
+                card.WhatToDo.Contains("Your settings and users stay", StringComparison.Ordinal), card.WhatToDo);
             // Batch 751 merge-sweep fix: the Hide subject is a digest of the app folder and the problem's kind, never the folder itself.
             TestAssert.Equal(FilesSubject(app, "missing"), card.Subject, "the subject does not reveal the folder");
             File.Delete(Path.Combine(app, "platform", "Amberline.Platform.exe"));
@@ -136,8 +136,8 @@ public static class HostStartChecks
         TestAssert.True(HostChecks.PortRefused(new SocketException((int)SocketError.AccessDenied)), "a port Windows keeps for itself");
         TestAssert.False(HostChecks.PortRefused(new IOException("The disk is full.")), "another IO error");
         TestAssert.False(HostChecks.PortRefused(new SocketException((int)SocketError.ConnectionRefused)), "another socket error");
-        TestAssert.Equal("Another program uses a port Amberline needs. Is Amberline already running for another Windows user, or the player app " +
-            "for another server open? (A-NET-01)", HostChecks.PortInUse(null), "without a port");
+        TestAssert.Equal("Another program uses a port Amberline needs. Amberline may already be running for another Windows user, or the player app " +
+            "may be open for another server. (A-NET-01)", HostChecks.PortInUse(null), "without a port");
 
         // Each port the full start listens on, held by another program; the page's own port is the single-instance check's.
         foreach (var which in new[] { "rtmp", "xmpp", "public" })
@@ -213,7 +213,7 @@ public static class HostStartChecks
             var screen = home.Screen.ToString();
             TestAssert.Equal(2, exit, screen);
             TestAssert.Equal(HostChecks.NewerData(home.Loop.Paths.Settings) + Environment.NewLine, screen, "A-DATA-01, in plain words");
-            TestAssert.True(screen.Contains("(A-DATA-01)", StringComparison.Ordinal) && screen.Contains("newer Amberline", StringComparison.Ordinal), screen);
+            TestAssert.True(screen.Contains("(A-DATA-01)", StringComparison.Ordinal) && screen.Contains("newer version of Amberline", StringComparison.Ordinal), screen);
             TestAssert.Equal((0, 0), (home.Opened.Count, home.Loop.Starts), "no page, no listener");
             TestAssert.Equal(null, await HostMode.ProbeAsync(home.Port), "nothing listens");
             TestAssert.Equal(before, Snapshot(home.Loop.Paths.Data), "the data folder is untouched");
@@ -409,7 +409,7 @@ public static class HostStartChecks
         var soon = HostChecks.CertificateCard(now.AddDays(60), now);
         TestAssert.Equal(("A-CERT-01", $"Your users' invite link and shortcuts stop working on {now.AddDays(60).ToLocalTime().ToString("d MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture)}. Make a new link.", "certificate"),
             (soon?.Code, soon?.Message, soon?.Action), "60 days before");
-        TestAssert.Equal("Your users' invite link and shortcuts stopped working: Amberline's certificate ran out.", HostChecks.CertificateCard(now.AddDays(-1), now)?.Message);
+        TestAssert.Equal("Your users' invite link and shortcuts no longer work because Amberline's certificate has expired.", HostChecks.CertificateCard(now.AddDays(-1), now)?.Message);
         IPAddress Ip(string text) => IPAddress.Parse(text);
         TestAssert.Equal(null, HostChecks.VpnCard(Ip("192.168.1.20"), Ip("192.168.1.20")), "the internet goes out through the router's interface");
         TestAssert.Equal(null, HostChecks.VpnCard(null, Ip("10.8.0.2")), "no router side known");
@@ -447,7 +447,7 @@ public static class HostStartChecks
             // Make a new invite link (batch 917; Make new Play files before): asks first, needs the token, keeps the old file and restarts with a
             // new 20-year certificate.
             var confirm = await browser.GetStringAsync(HostAttention.CertificatePath);
-            TestAssert.True(confirm.Contains("stop working at once", StringComparison.Ordinal), confirm);
+            TestAssert.True(confirm.Contains("stop working. Send everyone the new link.", StringComparison.Ordinal), confirm);
             using (var forged = await browser.PostAsync(HostAttention.CertificatePath, new FormUrlEncodedContent([])))
                 TestAssert.Equal(HttpStatusCode.BadRequest, forged.StatusCode, "a form without its token");
             TestAssert.True(old.AsSpan().SequenceEqual(File.ReadAllBytes(pfx)), "nothing replaced yet");

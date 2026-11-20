@@ -377,7 +377,14 @@ public sealed class HostDashboard : IAsyncDisposable
         }
         Hidden = new HostHidden(loop.Paths.Data);
         Attention = new HostAttention(loop, games, Network.TestAsync, Hidden);
+        // NOT RETAIL (batch 923): once per start; the game folder changes only through Settings, whose save restarts Amberline.
+        _gameCard = new(() => HostFolders.ShortNamesCard(settings.DataRoot, ShortNames));
     }
+
+    private readonly Lazy<DashboardCard?> _gameCard;
+
+    /// <summary>DIAGNOSTICS (batch 923): the short-names answer for the host's game folder (<see cref="HostFolders.ShortNamesCard"/>); a check's fake answers per folder.</summary>
+    public Func<string, string>? ShortNames { get; init; }
 
     /// <summary>The game ports in the page's words: "UDP" and the first port for one game, else the first to the last ("UDP 5319 to 5322" on 132).</summary>
     public static string GamePortsText(int firstGamePort, int games) =>
@@ -519,7 +526,7 @@ public sealed class HostDashboard : IAsyncDisposable
 
         var routerOk = false;
         string[]? guide = null;
-        if (homeOnly) { routerOk = true; Add("router", "ok", "Home network only: the router is not needed"); }
+        if (homeOnly) { routerOk = true; Add("router", "ok", "Home network only, so the router is not needed"); }
         else if (Network.Off) Add("router", "unknown", "Amberline did not check your router");
         // A test from while the home network only was chosen says nothing about the router; the next test asks it.
         else if (!net.RouterDone || net.HomeOnly) Add("router", "checking", "Looking for your router");
@@ -533,7 +540,7 @@ public sealed class HostDashboard : IAsyncDisposable
         else
         {
             routerOk = true;
-            Add("router", "ok", $"Found your router{Model(net.Router?.ModelName, " (\"{0}\")")}; it opened the ports for this PC");
+            Add("router", "ok", $"Your router{Model(net.Router?.ModelName, " (\"{0}\")")} opened the ports for this PC");
         }
 
         var addressOk = false;
@@ -579,7 +586,7 @@ public sealed class HostDashboard : IAsyncDisposable
         // The address line is "unknown" with no card when the router was not found; while the router's own card is hidden, that line is not a warning.
         var warned = open.Any(check => check.State == "bad" || check.State == "unknown" && !(check.Id == "address" && hiddenChecks.Contains("router")));
         var headline = $"Running since {Clock(_since, now)}." + (canJoin ? " Players can join."
-            : checking ? " Checking whether players can reach you." : warned ? " Players may not be able to join: see Needs your attention." : "");
+            : checking ? " Checking whether players can reach you." : warned ? " Players may not be able to join. See Needs your attention." : "");
         var network = checking ? "Network: checking"
             : bad > 0 ? $"Network: {Count(bad, "thing")} {(bad == 1 ? "needs" : "need")} your attention"
             : hiddenChecks.Count > 0 ? $"Network: {hiddenChecks.Count} hidden"
@@ -595,8 +602,10 @@ public sealed class HostDashboard : IAsyncDisposable
         var friend = last is { } at ? $"Last player connected {Ago(now - at)}" : "No player has connected yet";
         cards.AddRange(Attention.Cards(now, net));
         if (Support is not null) cards.AddRange(Support.Cards(homeOnly));
+        if (_gameCard.Value is { } game) cards.Add(game);
         // Batch 751: a check that ran in this pass forgets the hidden entries of its cards that it did not raise, so the same problem shows again later.
         void Settle(string code) => Hidden.Keep(code, subject => cards.Any(card => card.Code == code && card.Subject == subject));
+        Settle("A-FILES-07");
         if (!Network.Off && net.Firewall is not null) Settle("A-NET-02");
         if (!homeOnly && !Network.Off && net.RouterDone && !net.HomeOnly)
             foreach (var code in new[] { "A-NET-03", "A-NET-04", "A-NET-05", "A-NET-06", "A-NET-07" }) Settle(code);
@@ -690,7 +699,7 @@ public sealed class HostDashboard : IAsyncDisposable
     private async Task<IResult> EndAsync(HttpContext context, IAntiforgery antiforgery, bool restart)
     {
         if (!await antiforgery.IsRequestValidAsync(context))
-            return Confirm(context, antiforgery, restart, "The page expired. Please choose again.", StatusCodes.Status400BadRequest);
+            return Confirm(context, antiforgery, restart, "The page expired. Choose again.", StatusCodes.Status400BadRequest);
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
         // ponytail: compares counts, not the games themselves; one game ending while another starts goes unasked. Send the game ids if it matters.
         if (!int.TryParse(form["games"], NumberStyles.None, CultureInfo.InvariantCulture, out var warned) || _games().Count > warned)
@@ -746,7 +755,7 @@ public sealed class HostDashboard : IAsyncDisposable
 
     /// <summary>The page for a game that is no longer running: its id is unknown, or it ended before the answer came.</summary>
     private static IResult Gone() => HostMode.Page(
-        $"<h1>This game has already ended.</h1><p><a href={PagePath}>Back to the dashboard</a></p>", StatusCodes.Status404NotFound);
+        $"<h1>This game has already ended</h1><p><a href={PagePath}>Back to the dashboard</a></p>", StatusCodes.Status404NotFound);
 
     /// <summary>
     /// DIAGNOSTICS: the board the page shows: the real games and lobbies, plus the demo data's two games and their lobbies line while the switch was read on at this start
@@ -800,7 +809,7 @@ public sealed class HostDashboard : IAsyncDisposable
         <section id=attention-section class=attention aria-labelledby=attention-title hidden><h2 id=attention-title>Needs your attention</h2><ul id=attention class=cards></ul>
         <form method=post action={{PagePath}}/firewall data-action=firewall hidden{{HostPages.Wait("Waiting for Windows. Choose Yes when Windows asks.")}}>{{token}}
         <button type=submit class=secondary>Allow through Windows Firewall</button>
-        <p class=tip>Windows asks once, for Windows Command Processor: choose Yes.</p></form>
+        <p class=tip>Windows asks once, for Windows Command Processor. Choose Yes.</p></form>
         <form method=post action={{PagePath}}/network data-action=network hidden{{HostPages.Wait("Testing your network. This takes up to a minute.")}}>{{token}}<button type=submit class=secondary>Test again</button></form>
         {{HostAttention.Forms(token)}}{{HostSupport.Forms(token)}}
         <template id=hide-template><form method=post action={{PagePath}}/hide>{{token}}<input type=hidden name=code><input type=hidden name=subject><button type=submit class=secondary>Hide<span class=vh> this message</span></button></form></template>
@@ -828,6 +837,6 @@ public sealed class HostDashboard : IAsyncDisposable
         <h2>Network</h2><ul id=checks class=checks><li>Checking…</li></ul>
         <section id=guide hidden aria-labelledby=guide-title><h2 id=guide-title>Open the ports on your router by hand</h2><ol id=guide-steps></ol></section>
         </details>
-        <p class=tip>Something not working? Send a <a href={{HostSupport.PagePath}}>support log</a> with your issue report.</p>
+        <p class=tip>If something does not work, send a <a href={{HostSupport.PagePath}}>support log</a> with your issue report.</p>
         """;
 }

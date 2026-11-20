@@ -213,7 +213,7 @@ public static class HostFolderCopyChecks
             TestAssert.Equal(HttpStatusCode.Redirect, failing.Status, failing.Page);
             var failed = await browser.EndAsync();
             TestAssert.True(failed.Contains("<h1>Your game files were not copied</h1>", StringComparison.Ordinal) &&
-                failed.Contains("Amberline could not copy the game and the AIR client: the disk may be full, or a program uses their files. Nothing was moved, and your folders are as they were.",
+                failed.Contains("Amberline could not copy the game and the AIR client. The disk may be full, or a program may be using their files. Nothing was moved, and your folders are as they were.",
                     StringComparison.Ordinal) && failed.Contains("<button>Try again</button>", StringComparison.Ordinal), "the failure: " + failed);
             Unchanged("a failed copy");
 
@@ -259,7 +259,7 @@ public static class HostFolderCopyChecks
         {
             var page = await browser.Client.GetStringAsync("/setup");
             TestAssert.True(page.Contains("<button id=zip-choose name=choose value=zip aria-describedby=zip-hint>Use the client zip…</button>", StringComparison.Ordinal) &&
-                page.Contains($"into {Encode(folder.Install)}; the zip stays as it is.", StringComparison.Ordinal), "the page offers the client zip: " + page);
+                page.Contains($"into {Encode(folder.Install)}. The zip is not changed.", StringComparison.Ordinal), "the page offers the client zip: " + page);
 
             picks.Enqueue(null);
             var closed = await browser.PostAsync("/setup", ("game", ""), ("air", ""), ("choose", "zip"));

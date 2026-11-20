@@ -30,8 +30,8 @@ public static class HostChecks
 
     /// <summary>A-NET-01: a port Amberline needs is taken; <paramref name="port"/> is null when the start could not tell which.</summary>
     public static string PortInUse(int? port) =>
-        $"Another program uses a port Amberline needs{(port is null ? "" : $" ({port})")}. Is Amberline already running for another " +
-        "Windows user, or the player app for another server open? (A-NET-01)";
+        $"Another program uses a port Amberline needs{(port is null ? "" : $" ({port})")}. Amberline may already be running for another " +
+        "Windows user, or the player app may be open for another server. (A-NET-01)";
 
     /// <summary>Whether a start failed because Windows refused one of its listening ports (taken, or reserved by Windows).</summary>
     public static bool PortRefused(Exception error) => error switch
@@ -69,8 +69,8 @@ public static class HostChecks
         {
             if (JsonNode.Parse(File.ReadAllText(settingsFile)) is JsonObject settings && settings["dataVersion"] is JsonValue value &&
                 value.TryGetValue<double>(out var version) && version > DataVersion)
-                return "Your settings come from a newer Amberline. Start that version, or update this one: download the newest Amberline " +
-                    "and start it. Amberline did not change your settings. (A-DATA-01)";
+                return "Your settings come from a newer version of Amberline. Start that version, or download the newest version " +
+                    "and start it. Your settings were not changed. (A-DATA-01)";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { }
         return null;
@@ -79,7 +79,7 @@ public static class HostChecks
     /// <summary>A-FILES-06 for a part of Amberline that is gone, named by its place in the app folder (the derived match server).</summary>
     public static string MissingPart(string app, string file) =>
         $"Windows Security may have removed {Path.GetFileName(file)}, a part of Amberline (in {Path.GetRelativePath(app, Path.GetDirectoryName(file)!)}). " +
-        "Restore it in Windows Security (Protection history), or download Amberline again and start it; your settings and users stay. (A-FILES-06)";
+        "Restore it in Windows Security, under Protection history, or download Amberline again and start it. Your settings and users stay. (A-FILES-06)";
 
     /// <summary>
     /// A-FILES-06: compares the app folder with its <c>BUILD.json</c> (each file's size and SHA-256) and names the first file that is
@@ -121,7 +121,7 @@ public static class HostChecks
         string Subject(string kind) => Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(app)))[..16] + ":" + kind;
         if (missing.Count > 0)
             return new("A-FILES-06", $"Windows Security may have removed {Path.GetFileName(missing[0])}, a part of Amberline{More(missing.Count + changed.Count)}.",
-                "Restore it in Windows Security (Protection history), or download Amberline again; your settings and users stay. Then press Restart.", null,
+                "Restore it in Windows Security, under Protection history, then choose Restart Amberline. Or download Amberline again. Your settings and users stay.", null,
                 Subject("missing"));
         return changed.Count == 0 ? null
             : new("A-FILES-06", $"A part of Amberline was changed: {Path.GetFileName(changed[0])}{More(changed.Count)}.",
@@ -134,7 +134,7 @@ public static class HostChecks
     public static DashboardCard? CertificateCard(DateTimeOffset notAfter, DateTimeOffset now) =>
         notAfter - now > CertificateWarning ? null
         : new("A-CERT-01", notAfter <= now
-                ? "Your users' invite link and shortcuts stopped working: Amberline's certificate ran out."
+                ? "Your users' invite link and shortcuts no longer work because Amberline's certificate has expired."
                 : $"Your users' invite link and shortcuts stop working on {notAfter.ToLocalTime().ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}. Make a new link.",
             "Choose Make a new invite link, then send every user the new link.",
             "certificate");
@@ -195,7 +195,7 @@ public sealed class HostHidden
 
     /// <summary>The codes the page hides generically; A-NET-09, A-NET-10 and A-RUN-01 keep their own Hide.</summary>
     public static bool Hideable(string code) => code is "A-NET-02" or "A-NET-03" or "A-NET-04" or "A-NET-05" or "A-NET-06" or "A-NET-07" or "A-NET-08"
-        or "A-CERT-01" or "A-FILES-06" or "A-DATA-02";
+        or "A-CERT-01" or "A-FILES-06" or "A-FILES-07" or "A-DATA-02";
 
     public int Count { get { lock (HostAttention.StateGate) return _hidden.Count; } }
 
@@ -338,7 +338,7 @@ public sealed class HostAttention : IAsyncDisposable
             ? ("?from=settings", HostSettingsPage.PagePath) : ("", HostDashboard.PagePath);
         app.MapGet(CertificatePath, (HttpContext context, IAntiforgery antiforgery) => HostMode.Page($"""
             <h1>Make a new invite link?</h1>
-            <p>Amberline restarts with a new certificate, and every user's old invite link and desktop shortcut stop working at once. Send them the new link.</p>
+            <p>Amberline restarts, and every user's old invite link and desktop shortcut stop working. Send everyone the new link.</p>
             <form method=post action="{CertificatePath}{From(context).Query}"{HostPages.Wait("Making a new invite link. Amberline restarts in a few seconds.")}>{Program.RegistrationToken(context, antiforgery)}<div class=buttons><button type=submit>Make a new invite link</button>
             <a class="button secondary" href={From(context).Back}>Cancel</a></div></form>
             """));
@@ -398,12 +398,12 @@ public sealed class HostAttention : IAsyncDisposable
                                        ex is OperationCanceledException && !stop.IsCancellationRequested)
             {
                 // Not answering is the network panel's card; the address stays out of the log, so only what failed is written.
-                Console.WriteLine($"The router did not tell its address ({ex.GetType().Name}).");
+                Console.WriteLine($"The router did not report its address ({ex.GetType().Name}).");
                 return;
             }
         }
         if (WanAddress.Classify(answer) != WanAddressClass.Public || !steps.Follow(answer!.ToString())) return;
-        Console.WriteLine("The address the router reports changed; users need the new invite link (A-NET-09).");
+        Console.WriteLine("The address your router reports has changed. Users need the new invite link. (A-NET-09)");
         SetChanged(DateTimeOffset.Now);
         await _retest(stop);
     }

@@ -72,8 +72,8 @@ internal static class PlayerMode
         var server = id is null ? null : Path.Combine(install, "servers", id);
         if (server is null || !File.Exists(Path.Combine(server, "server.json")))
         {
-            PlayerInstallWindow.ShowProblem(new(PlayerInstall.DefaultServerName, "This shortcut's server is not set up any more.",
-                "Open your server's invite link again: it sets the server up and makes a new shortcut.",
+            PlayerInstallWindow.ShowProblem(new(PlayerInstall.DefaultServerName, "This shortcut's server is no longer set up.",
+                "Open your server's invite link again. It sets up the server and makes a new shortcut.",
                 $"No connection at {(server is null ? "(the shortcut names no server)" : Path.Combine(server, "server.json"))}", null));
             return 2;
         }
@@ -113,7 +113,7 @@ internal static class PlayerMode
     /// (<see cref="ServerMoved.Ui"/>).
     /// </summary>
     internal sealed record ShortcutUi(Action<string> Status, Action Hide, Func<PlayerProblem, bool> TryAgain, Func<PlayerProblem, bool, bool> Leftover,
-        Func<string, string, Action, Task<int>> Play, IReadOnlyList<int> Ports, ServerMoved.Ui Moved)
+        Func<string, string, Action, Task<int>> Play, IReadOnlyList<int> Ports, ServerMoved.Ui Moved, Func<PlayerProblem, bool, bool>? ShortNames = null)
     {
         public static ShortcutUi Windows(PlayerInstallWindow.StatusWindow status, string title)
         {
@@ -136,7 +136,12 @@ internal static class PlayerMode
                     return PlayerInstallWindow.AskCloseLeftover(problem, canClose);
                 },
                 (server, connection, shown) => Program.RunDesktopAsync(server, MaestroPort, connection, shown, askClassic, status.Show), LocalPorts,
-                ServerMoved.Ui.Windows(status, Console.WriteLine));
+                ServerMoved.Ui.Windows(status, Console.WriteLine),
+                (problem, canMove) =>
+                {
+                    status.Hide();
+                    return PlayerInstallWindow.AskMoveGame(problem, canMove);
+                });
         }
     }
 
@@ -187,6 +192,8 @@ internal static class PlayerMode
                     if (await MovedTo(read) is { } moved) return await ServerMoved.RunAsync(title, (await read).Connection.Host, moved, log, ui.Moved);
                     if (MissingClient(server, title, log) is { } missing) problem = missing;
                     else if (!await ClearLeftoversAsync(install, server, title, log, ui)) return 2;
+                    // NOT RETAIL (batch 923): before the update check, so the finishing run of an update (the released tool's first start) repairs too.
+                    else if (profile is not null && RepairShortNames(server, title, log, ui, profile) is { } stopped) return stopped;
                     else if (BusyPort(ui.Ports) is { } port) problem = PortInUse(title, port, $"127.0.0.1:{port} could not be bound on this PC.", log);
                     else if (checkUpdate && await StagedUpdateAsync(install, server, read) is { } staged)
                     {
@@ -218,12 +225,11 @@ internal static class PlayerMode
         if (!string.IsNullOrEmpty(host)) details = details.Replace(host, "the server", StringComparison.OrdinalIgnoreCase);
         for (var inner = exception; inner is not null; inner = inner.InnerException)
             if (inner is System.Security.Authentication.AuthenticationException)
-                return new(title, $"{title} did not prove it is the server this shortcut was made for.",
-                    "Ask the host for a new invite link and open it.", details, log);
+                return new(title, NotTheServer, NotTheServerToDo, details, log);
         // Batch 697: a local listener that could not bind (taken after BusyPort looked) is this PC's port, not the server.
         if (exception is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse }) return PortInUse(title, null, details, log);
         if (exception is HttpRequestException { StatusCode: null } or TaskCanceledException or SocketException)
-            return new(title, $"Can't reach {title}.",
+            return new(title, $"Cannot reach {title}.",
                 "Check that you are online and that the host's server is on, then choose Try again.", details, log);
         return new(title, $"{title} could not start.",
             "Choose Try again. If it keeps happening, choose Copy and send the text to the host.", details, log);
@@ -238,8 +244,81 @@ internal static class PlayerMode
         if (air is null || !File.Exists(Path.Combine(air, AirFile))) (label, missing) = ("AIR client", air ?? "(not recorded)");
         else if (game is null || !File.Exists(game)) (label, missing) = ("game client", game is null ? "(not recorded)" : Path.GetDirectoryName(game)!);
         return label is null ? null : new(title, $"The {label} is missing.",
-            $"{title} can't find it in {missing}. Open {title}'s invite link again to repair the setup.",
+            $"{title} cannot find it in {missing}. Open {title}'s invite link again to repair the setup.",
             $"Missing: {missing}", log);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 923; 1.0.0.132 only since batch 926, <see cref="CompanionLine.ShortNameStartRepair"/>): the game's files have no 8.3 short names, so the 1.0.0.132 game would stop at
+    /// its loading screen ("Avatar spell not found!"). An install's own game on another drive is offered the move to the system drive
+    /// (<see cref="PlayerInstall.MoveGame"/>): Move or Cancel. Otherwise (the system drive gives none either, the game is on it already or is not the
+    /// install's own, too little space, a move that failed or left files without them) one message says what to do, and the start ends: it never
+    /// offers the move again for the same game, so it never loops. Null when the start goes on; else its exit code.
+    /// </summary>
+    private static int? RepairShortNames(string server, string title, string log, ShortcutUi ui, PlayerProfile profile)
+    {
+        if (!CompanionLine.ShortNameStartRepair || ui.ShortNames is not { } ask || Remembered(server, "stockExecutable") is not { } executable) return null;
+        var game = Path.GetDirectoryName(executable)!;
+        if (profile.ShortNamesOf(game) != "off") return null;
+        Console.WriteLine("start: the game's files have no 8.3 short names");
+        var drive = profile.SystemDriveName;
+        var record = PlayerInstall.ReadRecord(profile);
+        var home = PlayerInstall.GameHome(profile);
+        var details = $"Game folder: {game}\r\nShort names: off";
+        int Stop(string whatHappened, string whatToDo)
+        {
+            Console.WriteLine($"start: {whatHappened}");
+            ask(new(title, whatHappened, whatToDo, details, log), false);
+            return 2;
+        }
+        var again = $"remove {FolderMove.HostName} with its game files (Uninstall.cmd in {record?.Install ?? "its install folder"}). Then open your server's " +
+            $"invite link again, and setup installs the game on drive {drive}.";
+        var noneAnywhere = $"Windows does not give new files on drive {drive} short names either. Ask the person who manages this PC to run this command once " +
+            $"as administrator: fsutil 8dot3name set 0. After that, {again}";
+        if (profile.ShortNamesOf(home) == "off") return Stop(CantStart, noneAnywhere);
+        if (record is null || !FolderMove.Same(record.Game, game) || !FolderMove.Inside(game, record.Install) || profile.OnSystemDrive(game))
+            return Stop(CantStart, "To fix this, " + again);
+        var bytes = PlayerInstall.GameBytes(game);
+        var free = new DriveInfo(profile.SystemRoot).AvailableFreeSpace;
+        var sizes = $"The game needs {FolderMove.Gigabytes(bytes)} GB there, and drive {drive} has {FolderMove.Gigabytes(free)} GB free.";
+        if (bytes > free) return Stop(CantStartHere, $"Free some space on drive {drive}, then start again. Amberline can then move the game there. {sizes}");
+        if (!ask(new(title, CantStartHere, $"Move it to drive {drive}? {sizes} Amberline copies it, checks every file, then removes the old copy. " +
+            "This takes several minutes.", details, log), true))
+        {
+            Console.WriteLine("start: the move was canceled");
+            return 2;
+        }
+        ui.Status(Moving(drive));
+        try
+        {
+            record = PlayerInstall.MoveGame(profile, record, new StatusSteps(ui.Status));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InstallRefusedException)
+        {
+            Console.WriteLine(exception.ToString());
+            details += "\r\n" + PlayerProblem.Describe(exception);
+            return Stop($"The game could not be moved to drive {drive}.", "Your game was not moved. Start again to try once more. If this keeps happening, " +
+                "choose Copy and send the text to the host.");
+        }
+        details = $"Game folder: {record.Game}\r\nShort names: off";
+        if (profile.ShortNamesOf(record.Game) == "off") return Stop(CantStart, noneAnywhere);
+        Console.WriteLine("start: the game moved to the system drive");
+        return null;
+    }
+
+    /// <summary>NOT RETAIL (batch 923): the start's texts when the game's files have no short names.</summary>
+    internal const string CantStartHere = "The game cannot start from this drive because Windows does not give its files short names.";
+    internal const string CantStart = "The game cannot start because Windows did not give its files short names.";
+
+    /// <summary>The start's texts when the server's certificate is not the one the invite pinned.</summary>
+    internal const string NotTheServer = "This server does not match your invite.";
+    internal const string NotTheServerToDo = "The host may have set it up again. Ask the host for a new invite link.";
+    internal static string Moving(string drive) => $"Moving the game to drive {drive}. This takes several minutes.";
+
+    /// <summary>Each step of the move as the start window's line, in order (Progress&lt;T&gt; would post them to the thread pool).</summary>
+    private sealed class StatusSteps(Action<string> status) : IProgress<InstallProgress>
+    {
+        public void Report(InstallProgress value) => status(value.Text);
     }
 
     /// <summary>
@@ -349,7 +428,7 @@ internal static class PlayerMode
     /// <summary>A local port another program holds: the server is not to blame, so the dialog never says "Can't reach".</summary>
     private static PlayerProblem PortInUse(string title, int? port, string details, string log) =>
         new(title, port is null ? "A port this start needs is in use by another program." : $"Port {port} is in use by another program.",
-            $"{title} needs it on this PC. Close the other program, then choose Try again. If you can't tell which program it is, restart the PC.",
+            $"{title} needs it on this PC. Close the other program, then choose Try again. If you do not know which program it is, restart the PC.",
             details, log);
 
     private static void StartStaged(string staged, string id)
@@ -421,7 +500,7 @@ internal static class PlayerMode
             var problem = folder is null ? null : check(folder);
             if (folder is not null && problem is null) return folder;
             if (Console.IsInputRedirected)
-                throw new ArgumentException(folder is null ? $"No {label} was given; pass it on the command line." : $"The {label} is not usable: {problem}.");
+                throw new ArgumentException(folder is null ? $"No {label} was given. Pass it on the command line." : $"The {label} is not usable: {problem}.");
             if (folder is not null) Console.WriteLine($"The {label} is not usable: {problem}.");
             Console.Write($"Drag your {label} here (the folder with {file}), then press Enter: ");
             var answer = Console.ReadLine();
@@ -444,10 +523,10 @@ internal static class PlayerMode
         }
         foreach (var candidate in new[] { Path.Combine(AppContext.BaseDirectory, "server.json"), Path.Combine(stage, "connections", "server.json") })
             if (TryConnection(candidate) is { } found) return found;
-        if (Console.IsInputRedirected) throw new ArgumentException("No connection file: pass --connection <server.json from the operator>.");
+        if (Console.IsInputRedirected) throw new ArgumentException("No connection file was found. Pass --connection <server.json from your host>.");
         while (true)
         {
-            Console.Write("Drag the connection file (server.json) from the operator here, then press Enter: ");
+            Console.Write("Drag the connection file (server.json) from your host here, then press Enter: ");
             var answer = Console.ReadLine();
             if (string.IsNullOrWhiteSpace(answer)) throw new OperationCanceledException();
             if (TryConnection(FullPath(answer)) is { } chosen) return chosen;
@@ -470,7 +549,7 @@ internal static class PlayerMode
     {
         var next = copy + ".next";
         if (Directory.Exists(next)) Directory.Delete(next, recursive: true);
-        Console.WriteLine("Preparing your AIR copy; the first run takes a few minutes. Your AIR folder is only read.");
+        Console.WriteLine("Preparing your AIR copy. The first run takes a few minutes. Your AIR folder is not changed.");
         try
         {
             AirOverlay.Prepare(new AirOverlayOptions(airFolder, next, platformUrl, maestroPort));

@@ -503,7 +503,7 @@ public static class ClassicLauncherChecks
             TestAssert.Equal(new ClassicPlan(false, null), ClassicStart.Decide(stage with { LauncherRoot = null }, root, Free, MutexFree, sha), "a stage without a launcher folder never takes it");
             TestAssert.Equal(new ClassicPlan(true, null), ClassicStart.Decide(stage, root, Free, MutexFree, sha), "everything in order: the classic start");
 
-            TestAssert.Equal("The classic launcher didn't open: The classic launcher is not version 1.0.0.251. Starting the usual way.",
+            TestAssert.Equal("The classic launcher did not open: The classic launcher is not version 1.0.0.251. Starting the usual way.",
                 ClassicStart.FallbackMessage("The classic launcher is not version 1.0.0.251."), "the fallback sentence, the reason's final period trimmed");
 
             // Never stuck: any exception of the classic steps (the stand-in's mutex can throw more than InvalidOperationException) is a reason
@@ -516,7 +516,7 @@ public static class ClassicLauncherChecks
                 var reason = Guarded(() => throw thrown, running.Token);
                 TestAssert.True(reason is not null && reason.Contains(thrown.GetType().Name, StringComparison.Ordinal), $"{thrown.GetType().Name} becomes a reason: {reason}");
             }
-            TestAssert.Equal<string?>("The classic launcher didn't open: It stopped with IOException (pipe). Starting the usual way.",
+            TestAssert.Equal<string?>("The classic launcher did not open: It stopped with IOException (pipe). Starting the usual way.",
                 ClassicStart.FallbackMessage(Guarded(() => throw new IOException("pipe"), running.Token)!), "the guarded reason in the fallback sentence");
             TestAssert.Equal<string?>(null, Guarded(() => Task.FromResult<string?>(null), running.Token), "a session that ran: no reason");
             TestAssert.Equal<string?>("It closed before it was ready.", Guarded(() => Task.FromResult<string?>("It closed before it was ready."), running.Token), "a reason passes through");
@@ -635,7 +635,7 @@ public static class ClassicLauncherChecks
 
             // Final review: the install's own launcher folder fails the check. A set-up install cannot change its install folder, so a picked folder and a
             // download are both sent to Uninstall's "Remove the 2011 launcher" instead of "Choose another install folder".
-            const string incomplete = "The 2011 launcher in this install is incomplete. Remove it first: open Uninstall and choose Remove the 2011 launcher.";
+            const string incomplete = "The 2011 launcher in this install is incomplete. Remove it first. To do that, open Uninstall and choose Remove the 2011 launcher.";
             File.Delete(Path.Combine(record.Install, "launcher", "xml", "slideshow.xml"));
             var replacement = Path.Combine(temp, "replacement");
             WriteLauncherFiles(replacement);
@@ -1012,7 +1012,7 @@ public static class ClassicLauncherChecks
             var log = new List<string>();
             var request = new ClassicLayoutRequest(root, launcher, air, game, 8390);
             TestAssert.Equal<string?>(null, ClassicLauncherLayout.Ensure(request, log.Add).Refusal, "laid out, locked");
-            string Delete(string folder) => $"Delete the folder {folder}; Amberline then lays it out again, locked to your Windows account, at the next start.";
+            string Delete(string folder) => $"Delete the folder {folder}. Amberline sets it up again at the next start, locked to your Windows account.";
 
             // Marked, but others can change it now (review B): the mark skips nothing.
             Amberline.AirCompanion.InstallLock.Restamp(root, null);
@@ -1032,7 +1032,7 @@ public static class ClassicLauncherChecks
                 "and it is never deleted or changed");
 
             // Re-review 2 (HIGH 1): removing the layout from such a root is refused too. Nothing in it changes, and the player is told to delete it.
-            RefusedWith(() => ClassicLauncherLayout.Remove(root, _ => { }), $"Amberline removed nothing there; delete the folder {root} yourself.");
+            RefusedWith(() => ClassicLauncherLayout.Remove(root, _ => { }), $"Amberline removed nothing there. Delete the folder {root} yourself.");
             var profile = new PlayerProfile(Path.Combine(temp, "profile", "Local"), Path.Combine(temp, "profile", "Desktop"));
             var removal = PlayerUninstall.RemoveAll(profile, new PlayerInstall.Record(Path.Combine(temp, "install"), air, game), deleteGame: false, radsRoot: root);
             TestAssert.True(removal.Left.Contains(root), $"the uninstall lists the root to delete by hand: {string.Join(", ", removal.Left)}");
@@ -1170,7 +1170,7 @@ public static class ClassicLauncherChecks
 
             var untouched = Times(root);
             IReadOnlyList<string>? asked = null;
-            const string running = "League of Legends.exe is running from x; close it first.";
+            const string running = "League of Legends.exe is running from x. Close it first.";
             var busy = ClassicLauncherLayout.Ensure(request, log.Add, folders => { asked = folders; return running; });
             TestAssert.Equal<string?>(running, busy.Refusal, "a running launcher, AIR or game refuses the start");
             TestAssert.Equal(string.Join("|", root, air132, game132), string.Join("|", asked!), "asked about the root and where 132's junctions lead");

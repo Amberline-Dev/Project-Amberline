@@ -287,7 +287,7 @@ public static class HostSessionChecks
             var hostRoutes = routes.Where(route => HostGate.IsHostPath(route.Path)).ToArray();
             foreach (var expected in new[] { "/open", "/manage", "/manage/online.json", "/manage/grant", "/manage/password", "/manage/broadcast.json", "/register",
                          "/host", "/host/status.json", "/host/page.js", "/host/stop", "/host/restart", "/host/firewall", "/host/network",
-                         "/host/invite", "/host/play-file", "/host/friends", "/host/users", "/host/users/add", "/host/users/password", "/host/users/disable",
+                         "/host/invite", "/host/friends", "/host/users", "/host/users/add", "/host/users/password", "/host/users/disable",
                          "/host/users/enable", "/host/users/delete", HostAccountPage.PagePath, HostAccountPage.StylePath,
                          HostSettingsPage.PagePath, HostSettingsPage.NamePath, HostSettingsPage.AddressPath, HostSettingsPage.FoldersPath, HostSettingsPage.UninstallPath })
                 TestAssert.True(hostRoutes.Any(route => route.Path == expected), expected + " is one of the routes walked");

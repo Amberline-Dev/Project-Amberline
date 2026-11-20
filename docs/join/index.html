@@ -5,80 +5,53 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Join Amberline</title>
 <style>
-:root {
-  color-scheme: light dark;
-  --bg: #f4f5f7;
-  --card: #ffffff;
-  --text: #1c2130;
-  --muted: #5b6375;
-  --line: #d6dbe4;
-  --accent: #2a5db0;
-  --on-accent: #ffffff;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #121419;
-    --card: #1b1f27;
-    --text: #e7eaf0;
-    --muted: #a6aec0;
-    --line: #2c3340;
-    --accent: #6f9fe8;
-    --on-accent: #0b1220;
-  }
-}
-* { box-sizing: border-box; }
-[hidden] { display: none !important; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-}
-main { max-width: 36rem; margin: 0 auto; padding: 2rem 1rem; }
-h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 1rem; overflow-wrap: anywhere; }
-p { margin: .25rem 0 .75rem; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; }
-.muted { color: var(--muted); font-size: .92rem; }
-.btn {
-  display: inline-block;
-  max-width: 100%;
-  margin: .25rem 0 .75rem;
-  padding: .6rem 1rem;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font: inherit;
-  font-weight: 600;
-  text-decoration: none;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-.btn.secondary { background: transparent; color: var(--accent); }
-.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
-.steps > li { position: relative; counter-increment: step; padding: 0 0 1.5rem 2.5rem; }
-.steps > li:last-child { padding-bottom: 0; }
-.steps > li::before {
-  content: counter(step);
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 700;
-  line-height: 1.75rem;
-  text-align: center;
-}
+:root{color-scheme:dark;--top:#13233a;--bottom:#03060c;--panel:#0b1728;--inner:#060e1a;--gold:#c9ab6f;--gold-dim:#806a3a;
+--gold-hi:#f3e2b3;--text:#e9e2d0;--muted:#a3a9b5;--field:#040a13;--line:#8593a8;--focus:#f2d98e;--bad:#f2978b;--bad-bg:#2b1414;
+--ok:#a6dcae;--ok-bg:#122418}
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;background:var(--bottom)}
+body{margin:0;padding:48px 16px;min-height:100vh;color:var(--text);background:radial-gradient(120% 70% at 50% 0%,var(--top),var(--bottom) 75%);
+font:1rem/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+main{max-width:30rem;margin:0 auto;padding:28px 24px 30px;border:1px solid var(--gold-dim);border-radius:4px;overflow-wrap:anywhere;
+text-align:center;background:linear-gradient(180deg,var(--panel),var(--inner));box-shadow:inset 0 0 0 1px rgba(201,171,111,.14),0 16px 40px rgba(0,0,0,.55)}
+@media (max-width:23rem){main{padding-left:16px;padding-right:16px}h1{font-size:1rem}}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+header{margin:0 0 26px;text-align:center}
+.wordmark{position:relative;display:inline-block;margin:0 -.3em 0 0;padding:0 0 20px;color:var(--gold);letter-spacing:.3em;text-transform:uppercase;
+font:600 clamp(1.9rem,8.5vw,2.75rem)/1.1 "Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;
+background:linear-gradient(105deg,transparent 42%,rgba(255,248,224,.95) 50%,transparent 58%) 160% 0/250% 100% no-repeat,
+linear-gradient(180deg,#fff4d2 0%,#f1d48c 30%,#c99c4c 52%,#8b6327 58%,#d7b36a 78%,#f7e6b0 100%);
+-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+filter:drop-shadow(0 0 12px rgba(201,171,111,.35)) drop-shadow(0 2px 0 rgba(0,0,0,.9));animation:sheen 7s ease-in-out 1s infinite}
+.wordmark::before,.wordmark::after{content:"";position:absolute;left:50%}
+.wordmark::before{bottom:3px;width:9px;height:9px;background:var(--gold-hi);box-shadow:0 0 10px var(--gold);transform:translateX(calc(-50% - .15em)) rotate(45deg)}
+.wordmark::after{bottom:7px;width:115%;height:1px;transform:translateX(calc(-50% - .15em));
+background:linear-gradient(90deg,transparent,var(--gold) 22%,var(--gold) 44%,transparent 46.5%,transparent 53.5%,var(--gold) 56%,var(--gold) 78%,transparent)}
+@keyframes sheen{0%,55%{background-position:160% 0,0 0}100%{background-position:-60% 0,0 0}}
+@media (prefers-reduced-motion:reduce){.wordmark{animation:none}}
+h1{margin:0 0 22px;color:var(--gold);font-size:1.125rem;line-height:1.35;font-weight:600;letter-spacing:.16em;text-align:center;text-transform:uppercase;overflow-wrap:anywhere}
+p{max-width:65ch;margin:0 0 14px}
+.muted{color:var(--muted);font-size:.9375rem}
+.problem{position:relative;max-width:none;margin:0 0 22px;padding:12px 16px 12px 46px;border:1px solid var(--bad);border-radius:2px;background:var(--bad-bg);text-align:left}
+.problem::before{content:"\2717";position:absolute;left:14px;top:13px;width:20px;height:20px;border:1px solid;border-radius:50%;color:var(--bad);font:700 .75rem/18px system-ui,sans-serif;text-align:center}
+.steps{margin:0;padding:0;list-style:none;counter-reset:step;text-align:left}
+.steps>li{position:relative;counter-increment:step;padding:0 0 24px 46px}
+.steps>li:last-child{padding-bottom:0}
+.steps>li::before{content:counter(step);position:absolute;left:0;top:0;width:30px;height:30px;border:1px solid var(--gold);border-radius:50%;background:linear-gradient(180deg,#1d2e45,#0a1322);color:var(--gold-hi);font:700 .9375rem/28px system-ui,sans-serif;text-align:center}
+.btn{display:flex;align-items:center;justify-content:center;width:100%;min-height:44px;margin:0 0 12px;padding:8px 18px;border:1px solid var(--gold);border-radius:2px;background:linear-gradient(180deg,#1d2e45,#0a1322);color:var(--gold-hi);font:inherit;font-weight:600;letter-spacing:.12em;line-height:1.3;text-align:center;text-transform:uppercase;text-decoration:none;overflow-wrap:anywhere;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 0 #3b2c13}
+.btn:hover{color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 3px 0 #3b2c13,0 0 16px rgba(201,171,111,.5)}
+.btn.secondary{background:transparent}
+@media (forced-colors:active){.btn{border-color:ButtonText}.problem{border-color:CanvasText}.wordmark{background:none;-webkit-text-fill-color:CanvasText;filter:none}}
 </style>
 </head>
 <body>
+<header><p class="wordmark" id="mark">AMBERLINE</p></header>
 <main>
   <h1 id="heading">Join Amberline</h1>
-  <noscript><p class="card">This page needs JavaScript to read the invite.</p></noscript>
-  <section id="steps" class="card" hidden>
+  <noscript><p class="problem">This page needs JavaScript to read the invite.</p></noscript>
+  <p id="problem" class="problem" role="alert" hidden></p>
+  <section id="steps" hidden>
     <ol class="steps">
       <li>
         <a id="download" class="btn">Download Amberline Player</a>
@@ -88,14 +61,11 @@ p { margin: .25rem 0 .75rem; }
       </li>
       <li>
         <a id="join" class="btn">Join</a>
-        <p class="muted">If nothing happens, open Amberline Player and paste this page's link.</p>
+        <p id="hint" class="muted">If nothing happens, open Amberline Player and paste this page's link.</p>
         <button id="copy" class="btn secondary" type="button">Copy invite link</button>
         <p id="copied" class="muted" role="status"></p>
       </li>
     </ol>
-  </section>
-  <section id="problem" class="card" hidden>
-    <p id="problemText"></p>
   </section>
 </main>
 <script>
@@ -105,8 +75,8 @@ const RELEASES = "https://github.com/Amberline-Dev/Project-Amberline/releases/do
 const DAMAGED = "This invite link is damaged. Ask the host to copy it again.";
 const NEWER = "This invite needs a newer Amberline Player. Download it from the invite page.";
 const LINES = {
-  "126": { scheme: "amberline-player", tag: /^v(\d+\.\d+\.\d+)$/, asset: "Amberline-Player-" },
-  "132": { scheme: "amberline-132-player", tag: /^p132-v(\d+\.\d+\.\d+)$/, asset: "Amberline-132-Player-" }
+  "126": { scheme: "amberline-player", tag: /^v(\d+\.\d+\.\d+)$/, asset: "Amberline-Player-", app: "Amberline Player", button: "Download Amberline Player", mark: "AMBERLINE" },
+  "132": { scheme: "amberline-132-player", tag: /^p132-v(\d+\.\d+\.\d+)$/, asset: "Amberline-132-Player-", app: "Amberline 132 Player", button: "Download Amberline 132 Player", mark: "AMBERLINE 132" }
 };
 
 /* The bare base64url invite: what follows #, without a scheme, surrounding spaces and quotes. */
@@ -172,10 +142,19 @@ function joinUrl(invite, encoded) {
   return LINES[invite.line].scheme + ":" + encoded;
 }
 
+/* The line's own labels: its download button and its wordmark. Without a valid invite the wordmark stays AMBERLINE. */
+function downloadLabel(invite) {
+  return LINES[invite.line].button;
+}
+
+function brandMark(invite) {
+  return invite && LINES[invite.line] ? LINES[invite.line].mark : "AMBERLINE";
+}
+
 function wire() {
   const $ = (id) => document.getElementById(id);
   const show = (text) => {
-    $("problemText").textContent = text;
+    $("problem").textContent = text;
     $("problem").hidden = false;
   };
   const result = decodeInvite(location.hash);
@@ -183,15 +162,19 @@ function wire() {
   const serverName = result.invite.name;
   document.title = "Join " + serverName;
   $("heading").textContent = "Join " + serverName;
+  $("mark").textContent = brandMark(result.invite);
   if (!/Windows/.test(navigator.userAgent)) return show("Open this link on your Windows PC.");
   $("download").href = downloadUrl(result.invite);
+  $("download").textContent = downloadLabel(result.invite);
   $("join").href = joinUrl(result.invite, result.encoded);
   $("join").textContent = "Join " + serverName;
+  const app = LINES[result.invite.line].app;
+  $("hint").textContent = "If nothing happens, open " + app + " and paste this page's link.";
   $("steps").hidden = false;
   $("copy").addEventListener("click", () => {
     Promise.resolve()
       .then(() => navigator.clipboard.writeText(location.href))
-      .then(() => { $("copied").textContent = "Copied. Paste it into Amberline Player."; },
+      .then(() => { $("copied").textContent = "Copied. Paste it into " + app + "."; },
             () => { $("copied").textContent = "Could not copy. Copy the address from the address bar instead."; });
   });
 }

@@ -132,7 +132,7 @@ public sealed class HostSupport : IAsyncDisposable
         });
         app.MapGet(PagePath, () => HostMode.Page($"""
             <h1>Support log</h1>
-            <p>Send this report with your issue report. Names, addresses and passwords are left out; read it first.</p>
+            <p>Send this log with your issue report. Names, addresses and passwords are left out. Read it before you send it.</p>
             <label for=report>Support log</label>
             <textarea id=report readonly rows=16 spellcheck=false>{Boxed(Report(DateTimeOffset.Now))}</textarea>
             <div class=buttons><button type=button data-copy=report>Copy</button> <span id=copy-status role=status></span>
@@ -252,7 +252,7 @@ public sealed class HostSupport : IAsyncDisposable
         new("A-DATA-02", free < FullDisk
                 ? $"The drive Amberline keeps its data on ({drive}) is full: {Size(free)} free. Games, settings and the log may not save."
                 : $"The drive Amberline keeps its data on ({drive}) is almost full: {Size(free)} free.",
-            $"Free at least {Size(LowDisk)} on {drive}, for example by emptying the Recycle Bin. This message goes by itself.", null,
+            $"Free at least {Size(LowDisk)} on {drive}, for example by emptying the Recycle Bin. This message then disappears.", null,
             drive + (free < FullDisk ? ":full" : ":low"));
 
     /// <summary>A seat's saved identity: its game's id and its seat number (batch 751).</summary>
@@ -279,7 +279,7 @@ public sealed class HostSupport : IAsyncDisposable
         Line($"Made: {local.ToString("d MMMM yyyy, HH:mm (zzz)", CultureInfo.InvariantCulture)}");
         Line($"Amberline: {(version is null ? "(development build)" : version + (built is { } at ? $", built {at.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}" : ""))}");
         Line($"Windows: {Environment.OSVersion.VersionString}{(Environment.Is64BitOperatingSystem ? " (64-bit)" : "")}; .NET {Environment.Version}");
-        Line("Names and addresses are replaced by marks such as <login>; logins are only counted; no password is in this report.");
+        Line("Names and addresses are replaced by marks such as <login>. Logins are only counted. This report contains no passwords.");
         var logins = _logins();
         if (_dashboard?.Status(now) is { } status)
         {

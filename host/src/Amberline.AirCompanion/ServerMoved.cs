@@ -76,7 +76,7 @@ internal static class ServerMoved
 
     // The design's words (Part 1 step 4); the dialog only ever shows on the 1.0.0.126 line.
     internal const string Patch = "1.0.0.132 (January 2012)";
-    internal const string SignIn = "You sign in with the same username and password as before. Your 1.0.0.126 setup stays.";
+    internal const string SignIn = "Use the same username and password as before. Your 1.0.0.126 setup is kept.";
     internal const string SettingUp = "Setting up patch 1.0.0.132. This takes a minute or two.";
 
     /// <summary>
@@ -113,7 +113,7 @@ internal static class ServerMoved
         ui.Log($"moved: the server now runs patch {Patch}");
         var installed = Installed(ui.LocalAppData, moved);
         var question = new Question(title, $"{title} now runs patch {Patch}.",
-            (installed is null ? "Set it up now? " : "It is set up on this PC already. Start it? ") + SignIn, installed is not null);
+            (installed is null ? "Set it up now? " : "It is already set up on this PC. Start it? ") + SignIn, installed is not null);
         if (!ui.Ask(question))
         {
             ui.Log("moved: not now");

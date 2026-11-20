@@ -33,4 +33,14 @@ public static class PlatformLine
     /// neither and never deleted, so an older Amberline still running keeps its own.
     /// </summary>
     public const string CookiePrefix = "Amberline126";
+
+    /// <summary>
+    /// Batch 923: whether the host's own game (Play on this PC) needs 8.3 short names in <paramref name="gameFolder"/>: only when the folder does not read
+    /// like <c>projects\lol_game_client\releases\0.0.0.51</c>, the shape the managed layout serves on any drive (batch 776). The 1.0.0.132 line runs its
+    /// game loose and always needs them (its copy of this file).
+    /// </summary>
+    public static bool NeedsShortNames(string gameFolder) => Amberline.Rads.ManagedLayout.ParseGameDirectory(gameFolder) is null;
+
+    /// <summary>Batch 923: what the host does about a game folder whose files have no short names (the setup's note and the dashboard's card).</summary>
+    public const string ShortNamesAdvice = @"Keep the game in a folder like projects\lol_game_client\releases\0.0.0.51, or move it to drive C:.";
 }

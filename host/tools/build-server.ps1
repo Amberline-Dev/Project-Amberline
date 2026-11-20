@@ -352,14 +352,14 @@ WHAT IS HERE
               exehost (runs the client's movement code from your own game executable).
   platform/   Amberline.Platform: accounts, store, lobby and the AIR front. It starts the match servers itself.
   platform/platform-data/platform.json   the configuration. publicHost and the ports are the ones this package was built
-              for; replace every <...> value before the first start.
+              for. Replace every <...> value before the first start.
   platform/platform-data/remote/host.pfx   the Platform's TLS certificate and its private key. Keep it private. Every
-              invite link pins its SHA-256 ({PIN}): replace this file and every player needs a new invite link.
+              invite link pins its SHA-256 ({PIN}). If you replace this file, every player needs a new invite link.
   platform/platform-data/bootstrap/companion.zip   the player tool (Windows x64), served to the player app.
-  INVITE-LINK.txt   the link each player needs (see PLAYERS); /manage shows it too.
+  INVITE-LINK.txt   the link each player needs (see PLAYERS). /manage shows it too.
   BUILD.json  the build identity and the SHA-256 of every file.
   No game or AIR file is in this package. Copy your own {PATCHVERSION} game folder (the game executable, DATA, LEVELS)
-  and your own {PATCHVERSION} AIR client folder (its .swf file, assets) to this machine; dataRoot and airRoot name them.
+  and your own {PATCHVERSION} AIR client folder (its .swf file, assets) to this machine. dataRoot and airRoot name them.
 
 REQUIREMENTS
   {REQUIREMENTS}
@@ -383,18 +383,18 @@ ADMINISTRATION
 PLAYERS
   Send each player the invite link (INVITE-LINK.txt) and, privately, the login you created for them. Each player needs
   Windows 10 or 11 and their own {PATCHVERSION} game and AIR client folders, or the client zip ({CLIENTZIP}).
-  The link opens the Join page: the player downloads the player app from the project's release, opens it once, then
-  chooses Join. The app asks before it adds "{SERVERNAME}", downloads the player tool from this server (the server's
-  certificate must match the pin in the link, the archive its SHA-256) and opens a setup window: it unpacks the client zip
-  the player chooses, or finds or asks for the two folders, and moves them into one install folder the player picks (on
-  another drive: copied, every file checked, then the originals removed), and puts a shortcut named "{SERVERNAME}" on the
-  desktop, with a copy in that folder. The shortcut asks this server for a newer player tool, updates it when there is one,
-  and starts the AIR client, without a console window. A player who already installed for another server keeps that
-  install: your link only adds your server and its shortcut. Opening the link again repairs the shortcut.
+  The link opens the Join page. The player downloads the player app from the project's release, opens it once, then
+  chooses Join. The app asks before it adds "{SERVERNAME}" and downloads the player tool from this server. It checks the
+  server's certificate against the pin in the link and the tool against its SHA-256.
+  A setup window then installs the game and the AIR client into one folder the player picks, from the client zip or from
+  the two folders, and puts a shortcut named "{SERVERNAME}" on the desktop. The shortcut updates the player tool when this
+  server has a newer one, then starts the AIR client.
+  A player who already installed for another server keeps that install. Your link only adds your server and its
+  shortcut. Opening the link again repairs the shortcut.
 
 REBUILDING AND UPDATING
-  A rebuild into this folder keeps platform-data/remote/host.pfx, so every invite link keeps working; the old folder is moved
-  to <folder>.previous-<stamp>. A build into another folder keeps it with -Certificate <this host.pfx>.
+  A rebuild into this folder keeps platform-data/remote/host.pfx, so every invite link keeps working. The old folder is moved
+  to <folder>.previous-<stamp>. To keep the certificate in a build into another folder, pass -Certificate <this host.pfx>.
   To update a running server, stop the Platform and copy the new package over it, except platform-data/platform.json.
   The Platform reads companion.zip's SHA-256 when it starts, so players get the new tool at their next start.
 '@
@@ -494,18 +494,18 @@ STARTING
 4. Follow the setup page that opens in your browser.
 5. Keep the Amberline window open while players play.
 
-ONLY THE CLIENT ZIP?
+IF YOU HAVE ONLY THE CLIENT ZIP
 When START-HERE asks for your game folder, paste the zip's path or drag the zip into its
-window. Amberline unpacks the game and the AIR client from it into the install folder, and
-its 2011 launcher beside it. The zip stays as it is. The setup page also offers "Use the
-client zip" (and Settings, Change the folders, later).
+window. Amberline installs the game and the AIR client from it into the install folder,
+and its 2011 launcher next to it. The zip is not changed. The setup page also offers
+"Use the client zip", and so does Settings, Change the folders.
 
 UPDATING
 Choose Update now on Amberline's page. Or unzip the new zip, double-click its
 START-HERE.cmd and answer Y when it asks to update.
 Your settings and users stay. If the new version does not start, the old one comes back.
-Amberline asks GitHub once a day whether a new version is out (untick it on the setup page
-to stop that). It never installs anything by itself.
+Amberline asks GitHub once a day whether a new version is out. To stop this, clear the
+check box on the setup page or on the Updates page. It never installs anything by itself.
 
 WINDOWS WARNINGS
 - "Windows protected your PC": Amberline is not signed. Download the zip only from the
@@ -513,13 +513,13 @@ WINDOWS WARNINGS
   open PowerShell in its folder and type
   Get-FileHash .\{ZIP}
   Then choose More info, and Run anyway.
-- Windows 11's Smart App Control blocks unsigned programs, Amberline too. Amberline never
-  asks you to turn protections off.
+- Windows 11's Smart App Control blocks unsigned programs, including Amberline. Amberline
+  never asks you to turn protections off.
 
 WHERE AMBERLINE KEEPS ITS DATA
 In the install folder: app, app.previous (the version before the last update), data, game
-and air. Its READ ME.txt says how to remove Amberline. Outside it: only the desktop icon
-and %LOCALAPPDATA%\{HOME}\install.json.{BEFORE637}
+and air. Its READ ME.txt says how to remove Amberline. Outside it, there is only the
+desktop icon and %LOCALAPPDATA%\{HOME}\install.json.{BEFORE637}
 '@
     # Batch 829: installs from before batch 637 exist only on the line released before it. A line without them says so in its patch.json
     # (homeBefore637 false: 132), and its READ ME FIRST leaves the sentence out; 126 has no such key and keeps it.
@@ -623,7 +623,7 @@ if ($Layout -eq 'Home') {
 
 ## Windows warnings
 
-Windows will warn you because Amberline is new and not signed. Check that you downloaded it from this releases page and that its SHA-256 matches the one above, then choose More info, then Run anyway. On Windows 11 with Smart App Control on, Windows blocks Amberline completely; Amberline cannot change that.
+Windows warns you because Amberline is new and not signed. Check that you downloaded it from this releases page and that its SHA-256 matches the one above. Then choose More info, then Run anyway. On Windows 11 with Smart App Control on, Windows blocks Amberline completely. Amberline cannot change that.
 '@
     $source = if ($gitCheckout) { "Built from source commit $commit, with no local changes." } else { 'Built from a folder without git: the source commit is unknown.' }
     Set-Content -LiteralPath $notesPath -Value $notes.Replace('{RELEASE}', $releaseName).Replace('{VERSION}', $Version).Replace('{SOURCE}', $source).Replace('{ZIP}', $zipName).Replace('{HASH}', $sha).Replace('{PLAYERHASH}', $playerSha).Replace('{PLAYER}', $playerName) -Encoding utf8

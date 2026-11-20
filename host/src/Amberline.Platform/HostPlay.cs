@@ -131,7 +131,7 @@ public sealed class HostPlay(Func<ProcessStartInfo, Process?> start)
             try { await antiforgery.ValidateRequestAsync(context); }
             catch (AntiforgeryValidationException)
             {
-                return HostMode.Page("<h1>Play on this PC</h1><p class=problem role=alert>The page expired. Please try again.</p>" +
+                return HostMode.Page("<h1>Play on this PC</h1><p class=problem role=alert>The page expired. Try again.</p>" +
                     Button(Program.RegistrationToken(context, antiforgery)), StatusCodes.Status400BadRequest);
             }
             var (started, page) = loop.Play.Run(loop.Paths, settings);

@@ -79,7 +79,7 @@ internal static class PlayerDownload
         if (bytes > MaxBytes || bytes != manifest.Bytes) throw Bad("its sizes do not add up");
         bool Pinned(string path, string pin) => files.Any(entry => entry.Path == path && string.Equals(entry.Sha256, pin, StringComparison.OrdinalIgnoreCase));
         if (!Pinned(Game + "/League of Legends.exe", pins.Game) || !Pinned("air/LolClient.exe", pins.Air))
-            throw new InstallRefusedException($"The server's copy is not the {RetailClients.Version} game and AIR client (an executable's SHA-256 differs), so Setup does not download it.");
+            throw new InstallRefusedException($"The server's copy is not the {RetailClients.Version} game and AIR client (an executable's SHA-256 is different). Setup does not download it.");
         // NOT RETAIL (classic launcher, design §1): a list that has the 2011 launcher has all of its files, and its EXE has the launcher pin.
         if (files.Any(entry => entry.Path.StartsWith("launcher/", StringComparison.Ordinal)))
         {
@@ -87,7 +87,7 @@ internal static class PlayerDownload
                 if (!files.Any(entry => entry.Path == "launcher/" + file.Replace('\\', '/')))
                     throw Bad($"it lists the 2011 launcher without its file {file.Replace('\\', '/')}");
             if (!Pinned("launcher/LoLLauncher.exe", pins.Launcher))
-                throw new InstallRefusedException("The server's 2011 launcher is not version 1.0.1.19 (its executable's SHA-256 differs), so Setup does not download it.");
+                throw new InstallRefusedException("The server's 2011 launcher is not version 1.0.1.19 (its SHA-256 is different). Setup does not download it.");
         }
         return new(files, bytes);
     }
@@ -120,15 +120,19 @@ internal static class PlayerDownload
         if (IsDriveRoot(install)) throw new InstallRefusedException("Choose a folder for the install, not a whole drive.");
         if (HostInstallation(install) is not null)
             throw new InstallRefusedException("The install folder is inside an Amberline server installation. Choose a folder of your own.");
+        // NOT RETAIL (batch 923): a new install's download lands on the system drive, where its files get short names (PlayerInstall.OnSystemDrive).
+        if (kept is null && profile is not null) PlayerInstall.OnSystemDrive(profile, install);
         // NOT RETAIL (classic launcher, review round 1): an install's own clients are never fetched again: a kept install takes the launcher alone.
         if (kept is not null && (Listed(offer, "air/") || Listed(offer, "game/")))
-            throw new InstallRefusedException("The install already has its game and AIR client; only the 2011 launcher can be added to it.");
+            throw new InstallRefusedException("This install already has the game and the AIR client. Only the 2011 launcher can be added to it.");
+        // Batch 919: a part a download already put in place (its install did not finish) is taken as it is, and not fetched again (DownloadAsync).
+        IReadOnlyList<string> placed = kept is null ? PlayerInstall.Placed(install, pins ?? new ClientPins()) : [];
         // A download of the launcher alone (an install that has its clients already) leaves the clients where they are.
-        if (Listed(offer, "air/")) NotThere(Path.Combine(install, "air"), "AIR client");
-        if (Listed(offer, "game/")) NotThere(Path.Combine(install, "game"), "game client");
+        if (Listed(offer, "air/") && !placed.Contains("air")) NotThere(Path.Combine(install, "air"), "AIR client");
+        if (Listed(offer, "game/") && !placed.Contains("game")) NotThere(Path.Combine(install, "game"), "game client");
         // NOT RETAIL (classic launcher, design §1): a launcher folder the player picked moves in with this plan; a launcher in the list is placed by Place.
         if (launcher is not null && Listed(offer, "launcher/"))
-            throw new InstallRefusedException("The 2011 launcher is both picked and in the server's list. Choose the folder or download it, not both.");
+            throw new InstallRefusedException("You chose a 2011 launcher folder, and the server also offers the launcher. Choose the folder or the download, not both.");
         var moves = new List<FolderMove.Move>();
         var notes = new List<string>();
         string? launcherRun = null;
@@ -145,7 +149,7 @@ internal static class PlayerDownload
         else if (Listed(offer, "launcher/"))
         {
             launcherRun = Path.Combine(install, PlayerInstall.LauncherFolder);
-            PlayerInstall.LauncherNotThere(launcherRun, pins ?? new ClientPins(), installed: kept is not null);
+            if (!placed.Contains(PlayerInstall.LauncherFolder)) PlayerInstall.LauncherNotThere(launcherRun, pins ?? new ClientPins(), installed: kept is not null);
         }
         var copyBytes = moves.Where(move => move.KeepSource || !SameRoot(move.Source, move.Target)).Sum(CopyBytes);
         var staging = Path.Combine(install, Staging);
@@ -155,9 +159,9 @@ internal static class PlayerDownload
         try { free = new DriveInfo(root).AvailableFreeSpace; }
         catch (Exception exception) when (exception is IOException or ArgumentException or UnauthorizedAccessException)
         { throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} is not available. Choose another install folder."); }
-        var needed = Math.Max(0, offer.Bytes - staged) + copyBytes;
+        var needed = Math.Max(0, Missing(offer, placed).Bytes - staged) + copyBytes;
         if (needed > free)
-            throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} has {Gigabytes(free)} GB free; the download needs {Gigabytes(needed)} GB. Choose another install folder or free some space.");
+            throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} has {Gigabytes(free)} GB free, and the download needs {Gigabytes(needed)} GB. Free some space or choose another install folder.");
         return new(install, kept?.Air ?? Path.Combine(install, "air"), kept?.Game ?? Path.Combine(install, GameRelease), moves, null, copyBytes, notes,
             launcherRun);
     }
@@ -171,6 +175,10 @@ internal static class PlayerDownload
         var files = offer.Files.Where(entry => keep(entry.Path)).ToList();
         return new(files, files.Sum(entry => entry.Size));
     }
+
+    /// <summary>Batch 919: the offer without the parts already in place (<see cref="PlayerInstall.Placed"/>: <c>air</c>, <c>game</c>, <c>launcher</c>).</summary>
+    private static Offer Missing(Offer offer, IReadOnlyList<string> placed) =>
+        placed.Count == 0 ? offer : Subset(offer, path => !placed.Contains(path[..path.IndexOf('/')]));
 
     /// <summary>
     /// The checks of the staged parts the offer lists (the game and the AIR client, and the 2011 launcher, NOT RETAIL: design §1), then each part is
@@ -186,17 +194,17 @@ internal static class PlayerDownload
         {
             var local = Local(staging, entry.Path);
             if (!File.Exists(local))
-                throw new InstallRefusedException($"The download from {server} is not complete ({entry.Path} is missing). Nothing was installed; choose Download again.");
+                throw new InstallRefusedException($"The download from {server} is not complete ({entry.Path} is missing). Nothing was installed. Download the game again.");
             if (!Same(local, entry))
-                throw new InstallRefusedException($"A downloaded file changed before it was put in place ({entry.Path}). Nothing was installed; choose Download again.");
+                throw new InstallRefusedException($"A downloaded file changed before it was put in place ({entry.Path}). Nothing was installed. Download the game again.");
         }
         if (Listed(offer, "game/") && RetailClients.GameProblem(Path.Combine(staging, GameRelease), pins.Game) is { } game)
-            throw new InstallRefusedException($"The game from {server} is not complete ({game}). Nothing was installed; ask the host.");
+            throw new InstallRefusedException($"The game from {server} is not complete ({game}). Nothing was installed. Tell your host.");
         if (Listed(offer, "air/") && RetailClients.AirProblem(Path.Combine(staging, "air"), pins.Air) is { } air)
-            throw new InstallRefusedException($"The AIR client from {server} is not complete ({air}). Nothing was installed; ask the host.");
+            throw new InstallRefusedException($"The AIR client from {server} is not complete ({air}). Nothing was installed. Tell your host.");
         if (Listed(offer, "launcher/") &&
             ClassicLauncherFiles.Problem(Path.Combine(staging, PlayerInstall.LauncherFolder), pins.Launcher) is { } launcher)
-            throw new InstallRefusedException($"The 2011 launcher from {server} is not complete ({launcher}). Nothing was installed; ask the host.");
+            throw new InstallRefusedException($"The 2011 launcher from {server} is not complete ({launcher}). Nothing was installed. Tell your host.");
         cancel.ThrowIfCancellationRequested();
         var parts = new List<(string From, string To)>();
         if (Listed(offer, "air/")) parts.Add((Path.Combine(staging, "air"), plan.Air));
@@ -231,8 +239,11 @@ internal static class PlayerDownload
     {
         // NOT RETAIL (batch 857 review, HIGH 1): the install lock's shared first step (InstallLock.Prepare) before the first write into the install,
         // the staging folder: a link, another account's folder or one that could not be locked refuses the download. <paramref name="profile"/> is
-        // the player's local application data.
-        if (InstallLock.Prepare(plan.Install, profile, PlayerInstall.Markers) is { } notLocked) Console.Error.WriteLine($"download: not locked: {notLocked}");
+        // the player's local application data. Batch 919: then the folder's mark, which the install's own first step finds after the staging folder is
+        // gone; the folder a finished download of an older tool left in the profile counts as Amberline's (PlayerInstall.Prepare).
+        if (PlayerInstall.Prepare(plan.Install, profile, pins) is { } notLocked) Console.Error.WriteLine($"download: not locked: {notLocked}");
+        // Batch 919: the parts already in place (a download whose install did not finish) are taken as they are; only the rest is fetched and placed.
+        offer = Missing(offer, PlayerInstall.Placed(plan.Install, pins));
         var staging = Path.Combine(plan.Install, Staging);
         Directory.CreateDirectory(staging);
         var files = offer.Files.ToDictionary(entry => Local(staging, entry.Path), StringComparer.OrdinalIgnoreCase);
@@ -319,7 +330,7 @@ internal static class PlayerDownload
                 whole = true;
                 continue;
             }
-            throw new InvalidDataException($"A file from the server does not match its SHA-256 in the list ({entry.Path}). Nothing was installed; ask the host to check their game files.");
+            throw new InvalidDataException($"A file from the server does not match its SHA-256 in the list ({entry.Path}). Nothing was installed. Ask the host to check their game files.");
         }
     }
 

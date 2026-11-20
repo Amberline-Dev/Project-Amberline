@@ -155,7 +155,7 @@ internal static partial class ClassicLauncherLayout
             MakeRoot(root);
             return null;
         }
-        return Changeable(root, $"Delete the folder {root}; Amberline then lays it out again, locked to your Windows account, at the next start.");
+        return Changeable(root, $"Delete the folder {root}. Amberline sets it up again at the next start, locked to your Windows account.");
     }
 
     /// <summary>
@@ -214,7 +214,7 @@ internal static partial class ClassicLauncherLayout
         log($"classic-layout: removing the other patch line's 2011 launcher layout ({OtherStampName}) under {root}");
         Remove(root, log, OtherStampName);
         return File.Exists(stamp)
-            ? $"The other patch line's 2011 launcher files under {root} could not all be removed (a program still uses them)."
+            ? $"Some of the other patch line's 2011 launcher files under {root} could not be removed. A program still uses them."
             : null;
     }
 
@@ -236,7 +236,7 @@ internal static partial class ClassicLauncherLayout
         root = Path.GetFullPath(root);
         if (!File.Exists(Path.Combine(root, LauncherProject, StampName)) && !File.Exists(Path.Combine(root, RootMarker))) return [];
         if ((InstallLock.Above(root, null) is { } open ? open + "." : Changeable(root, null)) is { } refused)
-            throw new InstallRefusedException($"{refused} Amberline removed nothing there; delete the folder {root} yourself.");
+            throw new InstallRefusedException($"{refused} Amberline removed nothing there. Delete the folder {root} yourself.");
         var removed = Remove(root, log, StampName);
         // Batch 857 review: the root's mark and lock record go with the last of this layout, so a root that held nothing else is empty again (a
         // takeover by the other line keeps them: the root stays Amberline's).

@@ -483,7 +483,7 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
     {
         try
         {
-            OpenSpectatorPort(port, "Spectating is off for this session: close that program, then start again to spectate.");
+            OpenSpectatorPort(port, "Spectating is off for this session. Close that program, then start again to spectate.");
             return true;
         }
         catch (IOException error)

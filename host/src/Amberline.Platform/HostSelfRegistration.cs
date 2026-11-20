@@ -133,7 +133,7 @@ public sealed class HostSelfRegistration(HostLoop loop, PlatformAccounts account
             <form method=post action={{PagePath}} novalidate>{{token}}
             {{HostPages.Field("username", "Username", "3 to 24 letters (a to z), digits or _.", At("username"),
                 $"required minlength=3 maxlength=24 autocomplete=username value=\"{WebUtility.HtmlEncode(username)}\"")}}
-            {{HostPages.Field("summoner", "Summoner name", "What other players see. Empty: your username.", At("summoner"),
+            {{HostPages.Field("summoner", "Summoner name", "What other players see. If empty, your username is used.", At("summoner"),
                 $"maxlength={Amberline.Server.MatchRoster.MaxNameLength} value=\"{WebUtility.HtmlEncode(summoner)}\"", required: false)}}
             {{HostPages.Field("password", "Password", "At least 10 characters.", At("password"),
                 "type=password required minlength=10 maxlength=128 autocomplete=new-password")}}

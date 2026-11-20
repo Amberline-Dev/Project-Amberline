@@ -92,7 +92,7 @@ public static class HostSettingsChecks
             // The host's Save: the friend ticked, the host's own box not; ids that are no login are dropped. The old switch goes.
             await SavedAsync(browser, HostSettingsPage.CheatsPath, "cheats", HostSettingsPage.PagePath,
                 ("cheat", friendId.ToString()), ("cheat", "999999"), ("cheat", "-1"), ("cheat", "x"));
-            Has(await GetAsync(browser, HostSettingsPage.PagePath + "?saved=cheats"), "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
+            Has(await GetAsync(browser, HostSettingsPage.PagePath + "?saved=cheats"), "<p class=notice role=status>Saved. It applies to games that start from now on.</p>",
                 Box(hostId, false) + "<span><b>cheat_host</b>", Box(friendId, true) + "<span><b>cheat_friend</b>");
             TestAssert.Equal(friendId.ToString(), string.Join(",", CheatList(home) ?? []), "platform.json ticks the friend only");
             TestAssert.True(!rule(hostId) && rule(friendId), "games give the cheat commands to the ticked login only");
@@ -161,7 +161,7 @@ public static class HostSettingsChecks
     {
         Has(await GetAsync(browser, HostSettingsPage.PagePath), "<h2 id=paid-title>Skins and RP</h2>", $"action={HostSettingsPage.PaidContentPath}",
             "<input type=checkbox name=on value=on checked>Offer skins and RP",
-            "Off: everyone plays the default looks, and the store shows no skins and no RP. Nothing anyone owns is removed.");
+            "When this is off, everyone plays the default looks, and the store shows no skins and no RP. Nothing anyone owns is removed.");
         TestAssert.False(accounts.Controls.PaidContentOff, "a settings file without the field offers skins and RP");
 
         await SavedAsync(browser, HostSettingsPage.PaidContentPath, "paid", HostSettingsPage.PagePath);
@@ -325,7 +325,7 @@ public static class HostSettingsChecks
             Has(wrong, WebUtility.HtmlEncode(HostAddress.Check("192.168.1.20").Problem!));
             await SavedAsync(browser, HostSettingsPage.AddressPath, "address", ("choice", HostAddress.Lan), ("lan", "192.168.1.20"));
             var moved = await GetAsync(browser, HostSettingsPage.PagePath + "?saved=address");
-            Has(moved, "<p class=notice role=status>Saved. Send your users the new invite link: their old one looks at the old address.",
+            Has(moved, "<p class=notice role=status>Saved. Send your users the new invite link. Their old link still uses the old address.",
                 "<b>192.168.1.20</b> (home network only)");
             TestAssert.Equal("192.168.1.20", Setting(home, "publicHost"), "platform.json holds the new address");
             TestAssert.Equal(HostAddress.Lan, Setting(home, "addressSource"), "and where it came from");
@@ -471,7 +471,7 @@ public static class HostSettingsChecks
                 $"Also delete the game and AIR client copies ({HostUninstall.Size(plan.Size(UninstallKind.Clients))})",
                 $"Also delete your logins and settings ({HostUninstall.Size(plan.Size(UninstallKind.Data))})",
                 WebUtility.HtmlEncode($"The game folder you chose stays where it is: {home.Game}"), "Type uninstall to confirm",
-                "<li>its Windows Firewall rules (Windows asks once, for Windows Command Processor: choose Yes)</li>");
+                "<li>its Windows Firewall rules. Windows asks once, for Windows Command Processor. Choose Yes.</li>");
 
             var unconfirmed = await TextAsync(await PostAsync(browser, HostSettingsPage.UninstallPath, form, ("clients", "on"), ("confirm", "yes")), HttpStatusCode.BadRequest);
             Has(unconfirmed, "Type uninstall in the box to confirm.", "id=confirm-error", "name=clients value=on checked");
@@ -647,7 +647,7 @@ public static class HostSettingsChecks
                 Has(await script.Content.ReadAsStringAsync(), $"fetch('{Copy}/status.json'");
             var done = await CopiedAsync(browser, Copy);
             var (game, air) = (Path.Combine(folder.Install, @"game\projects\lol_game_client\releases\0.0.0.51"), Path.Combine(folder.Install, "air"));
-            Has(done, "<h1>Change the folders</h1>", "<p class=notice>Done: the game files are in", "aria-current=page>Settings</a>", $"<form method=post action={Folders} data-wait=",
+            Has(done, "<h1>Change the folders</h1>", "<p class=notice>Done. The game files are now in", "aria-current=page>Settings</a>", $"<form method=post action={Folders} data-wait=",
                 $"name=game value=\"{WebUtility.HtmlEncode(game)}\"");
             Has(await TextAsync(await PostAsync(browser, Folders, done, ("game", game), ("air", air)), HttpStatusCode.OK), $"<h1>Starting {HostPages.Product}</h1>");
             TestAssert.True(await run.WaitAsync(TimeSpan.FromSeconds(30)), "Continue saves the copies and restarts");

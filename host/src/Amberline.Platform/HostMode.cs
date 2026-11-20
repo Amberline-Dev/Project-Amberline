@@ -32,6 +32,8 @@ public sealed record HostPaths(string Data, string App)
     public string Logs => Path.Combine(Data, "logs");
     /// <summary>NOT RETAIL (batch 857): the install lock's record that a full pass completed (<see cref="Folders.InstallLock.Check"/>).</summary>
     public string LockRecord => Path.Combine(Data, "host", "install-lock.txt");
+    /// <summary>NOT RETAIL (batch 922): the file share's record of its last check, so a restart hashes only new or changed files (<see cref="HostFileShare"/>).</summary>
+    public string ShareRecord => Path.Combine(Data, "host", "file-share.json");
     public string ServerExecutable =>
         Path.GetFullPath(Path.Combine(App, "..", "server", OperatingSystem.IsWindows() ? "Amberline.Server.exe" : "Amberline.Server"));
     public string Bootstrap => Path.GetFullPath(Path.Combine(App, "..", "bootstrap"));

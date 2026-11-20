@@ -53,7 +53,7 @@ public static partial class AirPlayerInstallChecks
             TestAssert.Equal(1, await PlayerMode.StartAsync(install, scene.Id, checkUpdate: true, ui.Seam));
             var question = ui.Moves.Single();
             TestAssert.Equal(("Alpha", "Alpha now runs patch 1.0.0.132 (January 2012).", false), (question.Title, question.WhatHappened, question.Installed));
-            TestAssert.Equal("Set it up now? You sign in with the same username and password as before. Your 1.0.0.126 setup stays.", question.WhatToDo);
+            TestAssert.Equal("Set it up now? Use the same username and password as before. Your 1.0.0.126 setup is kept.", question.WhatToDo);
             TestAssert.Equal((0, 0, 0, 0), (ui.Played, ui.Started.Count, ui.Problems.Count, ui.Questions.Count));
             TestAssert.Equal(new[] { PlayerMode.Checking }, ui.Lines.ToArray());
             TestAssert.False(Directory.Exists(Path.Combine(install, PlayerInstall.ToolFolder + ".next")), "a moved server's tool was staged");
@@ -224,7 +224,7 @@ public static partial class AirPlayerInstallChecks
             // The 1.0.0.132 server is off: "Can't reach", Try again, then Close; nothing is written.
             var ui = new FakeStart(true, false) { LocalAppData = local, SetUp = true };
             TestAssert.Equal(1, await ServerMoved.RunAsync("Alpha", "localhost", scene.Target(), log, ui.Moved));
-            TestAssert.Equal(new[] { "Can't reach Alpha.", "Can't reach Alpha." }, ui.Problems.Select(problem => problem.WhatHappened).ToArray());
+            TestAssert.Equal(new[] { "Cannot reach Alpha.", "Cannot reach Alpha." }, ui.Problems.Select(problem => problem.WhatHappened).ToArray());
             TestAssert.True(ui.Problems.All(problem => !problem.Details.Contains("localhost", StringComparison.OrdinalIgnoreCase)), ui.Problems[0].Report());
             TestAssert.Equal((0, false), (ui.Started.Count, Directory.Exists(folder)));
             TestAssert.Equal(new[] { ServerMoved.SettingUp, ServerMoved.SettingUp }, ui.Lines.ToArray());
@@ -234,7 +234,7 @@ public static partial class AirPlayerInstallChecks
             {
                 ui = new FakeStart { LocalAppData = local, SetUp = true };
                 TestAssert.Equal(1, await ServerMoved.RunAsync("Alpha", "localhost", scene.Target(), log, ui.Moved));
-                TestAssert.Equal("Alpha did not prove it is the server this shortcut was made for.", ui.Problems.Single().WhatHappened);
+                TestAssert.Equal("This server does not match your invite.", ui.Problems.Single().WhatHappened);
                 TestAssert.Equal((0, false), (ui.Started.Count, Directory.Exists(folder)));
             }
 
@@ -319,7 +319,7 @@ public static partial class AirPlayerInstallChecks
                 TestAssert.Equal(0, await PlayerMode.StartAsync(scene.Fixture.Install, scene.Id, checkUpdate: true, ui.Seam));
                 var question = ui.Moves.Single();
                 TestAssert.True(question.Installed, "the 1.0.0.132 install was not found");
-                TestAssert.True(question.WhatToDo.StartsWith("It is set up on this PC already. Start it?", StringComparison.Ordinal), question.WhatToDo);
+                TestAssert.True(question.WhatToDo.StartsWith("It is already set up on this PC. Start it?", StringComparison.Ordinal), question.WhatToDo);
                 TestAssert.Equal(tool132, ui.Started.Single().File);
                 TestAssert.Equal(new[] { "--shortcut", id132 }, ui.Started.Single().Arguments);
                 TestAssert.Equal((0, 0), (ui.Played, ui.Problems.Count));
@@ -366,7 +366,7 @@ public static partial class AirPlayerInstallChecks
             TestAssert.Equal(1, await ServerMoved.RunAsync("Alpha", "127.0.0.1", new ServerMoved.Target(port, pin, "Beta", MovedFolder),
                 Path.Combine(root, "shortcut.log"), ui.Moved));
             TestAssert.True(clock.Elapsed >= TimeSpan.FromSeconds(9) && clock.Elapsed < TimeSpan.FromSeconds(30), $"Set up's manifest read ended after {clock.Elapsed}");
-            TestAssert.Equal("Can't reach Alpha.", ui.Problems.Single().WhatHappened);
+            TestAssert.Equal("Cannot reach Alpha.", ui.Problems.Single().WhatHappened);
             TestAssert.True(ui.Problems.Single().Details.Contains("did not finish answering within 10 seconds", StringComparison.Ordinal), ui.Problems.Single().Details);
             TestAssert.Equal((0, false), (ui.Started.Count, Directory.Exists(Path.Combine(local, MovedFolder))));
         }

@@ -30,15 +30,15 @@ public static class ClientZipChecks
         Refused(() => Locate(root, Names("x/").Where(name => !name.EndsWith("LolClient.exe", StringComparison.Ordinal))),
             $"This zip has no AIR client in it, so it is not the client zip ({ClientZip.BundleName}).");
         foreach (var (twice, what) in new[] { (ReleasePath + "League of Legends.exe", "game client"), ("air/LolClient.exe", "AIR client"), ("launcher/LoLLauncher.exe", "2011 launcher") })
-            Refused(() => Locate(root, [.. Names("x/"), "copy/" + twice]), $"This zip has more than one {what} in it, so it is not known which to use.");
+            Refused(() => Locate(root, [.. Names("x/"), "copy/" + twice]), $"This zip has more than one {what} in it, so setup cannot tell which one to use.");
 
         // An entry that could land outside the staging folder, or a link, refuses the whole zip before anything is written.
         foreach (var unsafeName in new[] { "../escape.txt", "x/../../escape.txt", @"x\..\..\escape.txt", "C:/Windows/escape.txt", "/rooted.txt", "x/file.txt:stream", "x//double.txt", "x/./dot.txt" })
-            Refused(() => Locate(root, [.. Names("x/"), unsafeName]), "The zip holds an unsafe entry");
+            Refused(() => Locate(root, [.. Names("x/"), unsafeName]), "The zip contains an unsafe entry");
         var linked = Zip(Path.Combine(root, "link.zip"), Names("x/"));
         using (var archive = ZipFile.Open(linked, ZipArchiveMode.Update))
             archive.CreateEntry("x/air/assets/link").ExternalAttributes = unchecked((int)0xA1FF0000);
-        Refused(() => { using var archive = ZipFile.OpenRead(linked); ClientZip.Locate(archive); }, "The zip holds an unsafe entry (x/air/assets/link)");
+        Refused(() => { using var archive = ZipFile.OpenRead(linked); ClientZip.Locate(archive); }, "The zip contains an unsafe entry (x/air/assets/link)");
     });
 
     [Check("server.air-player-install-client-zip", TimeoutSeconds = 300)]

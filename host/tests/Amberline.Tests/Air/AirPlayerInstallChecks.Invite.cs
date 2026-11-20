@@ -151,8 +151,8 @@ public static partial class AirPlayerInstallChecks
                 ui = new FakeInvite(profile, yes: true, false);
                 TestAssert.Equal(1, await PlayerInvite.RunAsync(link, ui.Seam));
                 var problem = ui.Problems.Single();
-                TestAssert.Equal("Alpha did not prove it is the server this shortcut was made for.", problem.WhatHappened);
-                TestAssert.Equal("Ask the host for a new invite link and open it.", problem.WhatToDo);
+                TestAssert.Equal("This server does not match your invite.", problem.WhatHappened);
+                TestAssert.Equal("The host may have set it up again. Ask the host for a new invite link.", problem.WhatToDo);
                 TestAssert.False(problem.Details.Contains("localhost", StringComparison.OrdinalIgnoreCase), problem.Report());
                 TestAssert.Equal(("two", 0, false), (Version(companion), ui.Started.Count, File.Exists(Path.Combine(profile.PlayerFolder, "server.json"))));
             }

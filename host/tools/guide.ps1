@@ -242,7 +242,7 @@ function Read-Folder([string]$Kind, [string]$Title) {
         try { if ($path -and (Test-Path -LiteralPath $path -PathType Container)) { return (Resolve-Path -LiteralPath $path).Path } } catch { }
         if ($Kind -eq 'game' -and $path -and (Get-ClientZip $path)) {
             if ($prebuilt) { return (Get-ClientZip $path) }
-            Say 'Try again: building Amberline from the source code reads the game and AIR client folders, so it cannot take the client zip. Unzip it, then give its folders.' 'Yellow'
+            Say 'Try again: a build from the source code cannot use the client zip. Unzip it, then give its folders.' 'Yellow'
             return $null
         }
         Say 'Try again: that folder was not found.' 'Yellow'
@@ -361,7 +361,7 @@ function Select-Found([string]$Kind, [string]$Name, $Search, [string]$Title) {
     if (-not $Search) { return Read-Folder $Kind $Title }
     $finds = @(if ($Kind -eq 'game') { $Search.Games } else { $Search.Airs })
     $usable = @($finds | Where-Object { $_.Usable })
-    foreach ($other in @($finds | Where-Object { -not $_.Usable })) { Say "  Can't be used, $($other.Note): $($other.Folder)" -Whole }
+    foreach ($other in @($finds | Where-Object { -not $_.Usable })) { Say "  Cannot be used, $($other.Note): $($other.Folder)" -Whole }
     if (-not $usable.Count) {
         Say 'None found. Choose it yourself.'
         return Read-Folder $Kind $Title
@@ -596,7 +596,7 @@ function Test-TargetFolder([string]$Folder, [switch]$Package) {
         # A rebuild into a package folder moves the old one aside (build-server.ps1), so only a package folder may be built into again.
         $own = if ($Package) { 'README-DEPLOY.txt' } else { $installMarker }
         if (-not (Test-Path -LiteralPath (Join-Path $full $own) -PathType Leaf)) {
-            return 'That folder holds other files. Choose a new or empty folder.'
+            return 'That folder already contains other files. Choose an empty or new folder.'
         }
     }
     $null
@@ -658,9 +658,9 @@ try {
     $legacy = -not $installed -and (Test-Path -LiteralPath (Join-Path $app 'BUILD.json') -PathType Leaf)
     $update = [bool]($installed -or $legacy)
     $have = if ($update) { Get-AppVersion $app }
-    $later = @('From now on: start Amberline from its desktop icon. Keep its window open while players play.',
-        $(if ($prebuilt) { 'To update: choose Update now on its page, or unzip the newest release and double-click its START-HERE.cmd.' }
-        else { 'To update: get the newest code and double-click START-HERE.cmd again.' }))
+    $later = @('From now on, start Amberline from its desktop icon. Keep its window open while players play.',
+        $(if ($prebuilt) { 'To update, choose Update now on its page, or unzip the newest release and double-click its START-HERE.cmd.' }
+        else { 'To update, get the newest code and double-click START-HERE.cmd again.' }))
 
     # The answers of the last run, offered again; declined, their folders are still searched first. An update needs none.
     $choice = $null
@@ -697,7 +697,7 @@ try {
             $Target.gameRoot = $null
             Say 'Your client zip:'
             SayPath $Target.clientZip
-            Say 'Amberline unpacks the game and the AIR client from it, so the AIR client folder is not asked.'
+            Say 'The game and the AIR client are installed from it, so the AIR client folder is not needed.'
             return
         }
         Say 'Your game folder:'
@@ -745,7 +745,7 @@ try {
             if (-not (Read-YesNo 'rentedInstead' 'Build a package for a rented server instead?')) { Finish $kept }
             $where = 'rented'
         } else {
-            Say "This download $(if ($prebuilt) { 'is' } else { 'builds' }) $version. Updating also repairs it; your settings, logins and users stay."
+            Say "This download $(if ($prebuilt) { 'is' } else { 'builds' }) $version. Updating also repairs it. Your settings, logins and users stay."
             if ($installed) { Say 'To install elsewhere, uninstall this one first (Uninstall Amberline.cmd in its folder).' }
             Say 'Update this Amberline now?'
             # Read-YesNo's answers, and R.
@@ -755,7 +755,7 @@ try {
             } $updateOrRented
             if ($answer -eq 'N') { Finish @('Nothing was changed.', $openIt) }
             if ($answer -eq 'R') {
-                if ($prebuilt) { Finish @("Nothing was changed. A rented server's package is built from the Amberline source code: download it from GitHub on this PC and double-click its START-HERE.cmd.") }
+                if ($prebuilt) { Finish @("Nothing was changed. A rented server's package is built from the Amberline source code. Download it from GitHub on this PC and double-click its START-HERE.cmd.") }
                 $where = 'rented'
             }
         }
@@ -852,7 +852,7 @@ try {
             foreach ($name in @(Use-OwnCopies $choice)) { Say "Using the install folder's own copy of the $name." }
             $choice.deleteOriginals = 'N'
             $outside = @(@($choice.gameRoot, $choice.airRoot) | Where-Object { $_ -and -not (Test-Inside $_ $choice.installFolder) })
-            if ($choice.clientZip -and -not ($choice.gameRoot -and $choice.airRoot)) { Say 'Amberline unpacks the game and the AIR client from the client zip into it. The zip stays as it is.' }
+            if ($choice.clientZip -and -not ($choice.gameRoot -and $choice.airRoot)) { Say 'Amberline installs the game and the AIR client from the client zip into it. The zip is not changed.' }
             if ($outside.Count) {
                 $drive = [IO.Path]::GetPathRoot($choice.installFolder)
                 $bytes = 0L
@@ -932,7 +932,7 @@ try {
                 'Then: its page opens in your web browser.') + $later) 'Install folder' $folder
         }
         Finish (@(
-            "Now: a new window named Amberline copies the program$(if ($copies) { ', the game and the AIR client' }) into that folder$(if ($zipped) { ' and unpacks the game and the AIR client from the client zip into it' }).$deletes Then its page opens in your web browser.",
+            "Now: a new window named Amberline copies the program$(if ($copies) { ', the game and the AIR client' }) into that folder$(if ($zipped) { ' and installs the game and the AIR client from the client zip' }).$deletes Then its page opens in your web browser.",
             'On that page: set up your server, then choose Users and Add a user.') + $later) 'Install folder' $folder
     } else {
         $output = $choice.packageFolder

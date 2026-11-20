@@ -194,7 +194,7 @@ public static class HostOneFolderChecks
             Refused(Path.Combine(game, "Amberline"), "inside your game folder");
             Refused(Path.Combine(air, "Amberline"), "inside your AIR client folder");
             WriteFile(Path.Combine(root, "Documents", "letter.txt"), "someone's own file");
-            Refused(Path.Combine(root, "Documents"), "That folder holds other files. Choose a new or empty folder.");
+            Refused(Path.Combine(root, "Documents"), "That folder already contains other files. Choose an empty or new folder.");
             Refused("Amberline", "Type the full path");
             var installed = Path.Combine(root, "installed");
             WriteFile(Path.Combine(installed, FolderMove.InstallMarker), "{}");
@@ -350,13 +350,13 @@ public static class HostOneFolderChecks
             var (foreign, foreignBeside, foreignScreen) = await InstallAsync("Foreign", launcherSha, folder => WriteFile(Path.Combine(folder + "-launcher", "mine.txt"), "the host's own"));
             TestAssert.Equal("mine.txt", Entries(foreignBeside), "the folder in the way is untouched");
             TestAssert.Equal(null, LauncherRoot(foreign), "no launcher is named");
-            TestAssert.True(foreignScreen.Contains($"{foreignBeside} holds other files, so Amberline did not put the client zip's 2011 launcher there; " +
-                "your 2011 launcher setting stays as it is.", StringComparison.Ordinal), foreignScreen);
+            TestAssert.True(foreignScreen.Contains($"{foreignBeside} already contains other files, so Amberline did not put the client zip's 2011 launcher there. " +
+                "Your 2011 launcher setting is not changed.", StringComparison.Ordinal), foreignScreen);
 
             // A launcher that fails its check never fails the install, and leaves nothing beside it.
             var (failing, failingBeside, failingScreen) = await InstallAsync("Failing", new string('0', 64));
             TestAssert.True(LauncherRoot(failing) is null && !Directory.Exists(failingBeside), "a failing launcher is not kept");
-            TestAssert.True(failingScreen.Contains("The client zip's 2011 launcher did not pass its check, so your 2011 launcher setting stays as it is.", StringComparison.Ordinal),
+            TestAssert.True(failingScreen.Contains("The client zip's 2011 launcher did not pass its check. Your 2011 launcher setting is not changed.", StringComparison.Ordinal),
                 failingScreen);
 
             // One Amberline made from an earlier zip (its marker) is replaced whole.

@@ -63,7 +63,7 @@ public sealed record HostReleases(HttpMessageHandler Network, Func<ProcessStartI
 public static class HostUpdates
 {
     public const string ReleasesPage = "https://github.com/Amberline-Dev/Project-Amberline/releases";
-    public const string Notice = "Tell me about new versions (Amberline asks GitHub once a day; GitHub sees your address).";
+    public const string Notice = "Tell me about new versions (Amberline asks GitHub once a day, so GitHub sees your address).";
     public const string InstallPath = "/host/updates/install", StatusPath = InstallPath + "/status.json";
     public static readonly TimeSpan Interval = TimeSpan.FromDays(1);
     private const int NotesLength = 600;
@@ -74,14 +74,14 @@ public static class HostUpdates
 
     // Update now's answers when nothing was installed: one sentence each (TROUBLESHOOTING.md lists them).
     public const string NothingNewer = "There is no newer Amberline to install, so nothing was installed.";
-    public const string NoDownload = "GitHub names no download for this version that Amberline can check, so nothing was installed.";
-    public const string StillOpen = "The window of the last update is still open: let it finish or close it, then try again.";
+    public const string NoDownload = "GitHub has no download for this version that Amberline can verify, so nothing was installed.";
+    public const string StillOpen = "The window of the last update is still open. Let it finish or close it, then try again.";
     public const string DownloadFailed = "Amberline could not download the update from GitHub, so nothing was installed.";
-    public const string Incomplete = "The download was cut off or is not the size GitHub names, so nothing was installed.";
+    public const string Incomplete = "The download was cut off or has the wrong size, so nothing was installed.";
     public const string WrongHash = "The download does not match its SHA-256, so nothing was installed.";
-    public const string WrongVersion = "The download holds another Amberline version than the release names, so nothing was installed.";
-    public const string Damaged = "The download is not a whole Amberline release, so nothing was installed.";
-    public const string DiskFailed = "Amberline could not save or unpack the download (the disk may be full), so nothing was installed.";
+    public const string WrongVersion = "The download contains a different Amberline version than the release, so nothing was installed.";
+    public const string Damaged = "The download is not a complete Amberline release, so nothing was installed.";
+    public const string DiskFailed = "Amberline could not save or unpack the download, so nothing was installed. The disk may be full.";
     public const string NotStarted = "Windows did not start the new Amberline's installer, so nothing was installed.";
 
     public static string StateFile(string data) => Path.Combine(data, "host", "updates.json");

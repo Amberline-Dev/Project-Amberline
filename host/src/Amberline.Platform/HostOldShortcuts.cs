@@ -144,9 +144,9 @@ public sealed class HostOldShortcuts : IAsyncDisposable
         var patch = _from.Patch;
         var move = !found ? "" : $"""
             <form method=post action={MovePath}{HostPages.Wait("Copying the logins.")}>{token}
-            {(_guiding ? "" : $"<p>Your Amberline for {patch} is on this PC. Its users' old shortcuts can lead them here: each offers to set up this server, and they sign in with the same login.</p>")}
+            {(_guiding ? "" : $"<p>Your Amberline for {patch} is on this PC. Its users' old shortcuts can lead them here. Each shortcut offers to set up this server, and they sign in with the same login.</p>")}
             <div class=actions><button type=submit class=secondary>Move my {patch} players here</button></div>
-            <p class=tip>This copies the logins not here yet first. Your Amberline for {patch} stays installed; keep it closed while this one runs.</p></form>
+            <p class=tip>This first copies the logins that are not here yet. Your Amberline for {patch} stays installed. Keep it closed while this one runs.</p></form>
             """;
         var guiding = !_guiding ? "" :
             (line is { } shown ? $"<p class={(shown.Running ? "notice" : "warn")} role=status>{WebUtility.HtmlEncode(shown.Text)}</p>" : "") +
@@ -178,7 +178,7 @@ public sealed class HostOldShortcuts : IAsyncDisposable
         return page;
     }
 
-    private const string UnsavedText = "Amberline could not save this just now. Try again.";
+    private const string UnsavedText = "Amberline could not save this. Try again.";
 
     private static readonly IResult Unsaved = HostMode.Page($"<h1>Not saved</h1><p class=warn>{UnsavedText}</p>" +
         $"<div class=actions><a class=button href={HostInvite.UsersPath}>Back to Users</a></div>", StatusCodes.Status503ServiceUnavailable);
@@ -270,7 +270,7 @@ public sealed class HostOldShortcuts : IAsyncDisposable
         }
         catch (Exception ex) when (HostChecks.PortRefused(ex))
         {
-            Console.WriteLine($"Port {port} is taken; the stand-in for old {_from.Patch} shortcuts tries again later.");
+            Console.WriteLine($"Port {port} is in use. Amberline tries again later to guide old {_from.Patch} shortcuts.");
             return new(false, HostLoginCopy.Leased(current.Data) ? $"Close your Amberline for {_from.Patch}" : $"Port {port} is in use by another program", port);
         }
     }

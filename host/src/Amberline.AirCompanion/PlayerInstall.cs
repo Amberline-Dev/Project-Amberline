@@ -32,8 +32,29 @@ internal sealed record PlayerProblem(string Title, string WhatHappened, string W
 /// link's scheme registration (<see cref="PlayerInvite.SchemeKey"/>): the real one only in <see cref="Current"/>; a check passes none, or its
 /// own fake.
 /// </summary>
-internal sealed record PlayerProfile(string LocalAppData, string Desktop, bool WritesRegistry = false, PlayerInvite.SchemeKey? Links = null)
+internal sealed record PlayerProfile(string LocalAppData, string Desktop, bool WritesRegistry = false, PlayerInvite.SchemeKey? Links = null,
+    Func<string, bool>? SystemDrive = null, Func<string, string>? ShortNames = null)
 {
+    /// <summary>
+    /// NOT RETAIL (batch 923): the Windows system drive's root (<c>C:\</c> on a normal PC), where the 1.0.0.132 line's installs go
+    /// (<see cref="CompanionLine.SystemDriveInstall"/>). DIAGNOSTICS: a check's profile (no registry: never the real one) takes its own LocalAppData's drive.
+    /// </summary>
+    public string SystemRoot => Path.GetPathRoot(WritesRegistry ? Environment.SystemDirectory : LocalAppData)!;
+
+    /// <summary>The system drive as the player reads it (<c>C:</c>).</summary>
+    public string SystemDriveName => SystemRoot.TrimEnd('\\');
+
+    /// <summary>Whether <paramref name="folder"/> is on the system drive. DIAGNOSTICS: a check's <see cref="SystemDrive"/> answers per folder instead.</summary>
+    public bool OnSystemDrive(string folder) => SystemDrive?.Invoke(folder) ?? FolderMove.SameRoot(FolderMove.Full(folder), SystemRoot);
+
+    /// <summary>
+    /// NOT RETAIL (batch 923): whether files in <paramref name="folder"/> have 8.3 short names (<c>on</c>, <c>off</c> or <c>unknown</c>): a game folder's own
+    /// (<see cref="GameFolderReport.ShortNames"/>), any other folder's new ones (<see cref="GameFolderReport.NewShortNames"/>). DIAGNOSTICS: a check's
+    /// <see cref="ShortNames"/> answers per folder instead.
+    /// </summary>
+    public string ShortNamesOf(string folder) => ShortNames?.Invoke(folder) ??
+        (Directory.Exists(Path.Combine(folder, "DATA", "Spells")) ? GameFolderReport.ShortNames(folder) : GameFolderReport.NewShortNames(folder));
+
     public static PlayerProfile Current() => new(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), WritesRegistry: true, Links: PlayerInvite.SchemeKey.Windows);
 
@@ -91,7 +112,7 @@ internal static class PlayerInstall
     internal const string WindowlessName = "Amberline.exe";
     internal const string UninstallFile = "Uninstall.cmd";
     internal const string DefaultServerName = "Amberline";
-    internal const string CannotCancel = "This step can't be canceled, or your game files could end up half moved. It takes a moment.";
+    internal const string CannotCancel = "This step cannot be canceled. Stopping now could leave your game files half moved. It takes a moment.";
     internal const string HostUsesFolder = "Your Amberline server uses this folder, so it stays where it is.";
     private const string ToolExecutable = "Amberline.AirCompanion.exe";
     private const string GameExecutable = "League of Legends.exe";
@@ -210,7 +231,7 @@ internal static class PlayerInstall
             }
             catch (Exception exception) when (exception is IOException or JsonException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
-                throw new InstallRefusedException($"The settings of the Amberline server on this PC ({path}) cannot be read, so it is not known which folders it uses. Fix or remove that file, then try again.");
+                throw new InstallRefusedException($"The settings of the Amberline server on this PC ({path}) cannot be read, so Amberline does not know which folders the server uses. Fix or remove that file, then try again.");
             }
         return folders;
     }
@@ -225,9 +246,9 @@ internal static class PlayerInstall
         var air = Full(airFolder);
         var game = Full(gameFolder);
         if (RetailClients.AirProblem(air, pins.Air) is { } airProblem)
-            throw new InstallRefusedException($"This is not the {RetailClients.Version} AIR client: its executable is missing or different ({airProblem}).");
+            throw new InstallRefusedException($"This is not the {RetailClients.Version} AIR client. Its executable is missing or different ({airProblem}).");
         if (RetailClients.GameProblem(game, pins.Game) is { } gameProblem)
-            throw new InstallRefusedException($"This is not the {RetailClients.Version} game client: the game executable is missing or different ({gameProblem}).");
+            throw new InstallRefusedException($"This is not the {RetailClients.Version} game client. The game executable is missing or different ({gameProblem}).");
         // Batch 639: an AIR folder that also holds other things (the first outside tester's held the game and the downloaded repository
         // too) gives up only the AIR client's own entries, as the host's one-folder install does (batch 637); the rest stays where it is.
         var shared = new Move("AIR client", air, Path.Combine(install, "air"), AirEntries);
@@ -243,6 +264,10 @@ internal static class PlayerInstall
         if (InstallLock.Refusal(install) is { } foreign) throw new InstallRefusedException($"{foreign}. Choose another install folder.");
         if (HostInstallation(install) is not null)
             throw new InstallRefusedException("The install folder is inside an Amberline server installation. Choose a folder of your own.");
+        // NOT RETAIL (batch 923): a new install goes on the system drive; an install already set up (the record's folder: a second server, a repair)
+        // keeps its drive, and the game its start moved to the system drive (MovedGame) stays where the record says.
+        var kept = ReadRecord(profile) is { } record && Same(record.Install, install) ? record : null;
+        if (kept is null) OnSystemDrive(profile, install);
         var host = HostFolders(profile);
         var running = RunningImages();
         var moves = new List<Move>();
@@ -263,21 +288,38 @@ internal static class PlayerInstall
             NotThere(airRun, "AIR client");
             moves.Add(move);
             if (Others(move) is { Count: > 0 } others)
-                notes.Add($"AIR client: {air} holds other things too. Only the AIR client's own files move; these stay: {string.Join(", ", others)}.");
+                notes.Add($"AIR client: {air} also contains other files. Only the AIR client's own files are moved. These stay: {string.Join(", ", others)}.");
         }
 
         var gameRun = Path.Combine(install, GameRelease);
         if (Inside(game, install)) gameRun = game;
-        else if (host.Any(folder => Overlaps(folder, game)))
+        else if (kept is not null && Same(kept.Game, game) && MovedGame(kept) is not null) gameRun = game;
+        else if (host.Any(folder => Overlaps(folder, game)) && (!CompanionLine.SystemDriveInstall || StartsInPlace(profile, game)))
         {
             notes.Add("Game client: " + HostUsesFolder);
             gameRun = game;
+        }
+        else if (host.Any(folder => Overlaps(folder, game)))
+        {
+            // NOT RETAIL (batch 923; both lines since batch 926): a server's game on this PC that cannot start where it is (another drive, or files without
+            // short names) is copied into the install, with its language files, and the server's folder stays as it is: never moved, so no move rule applies.
+            notes.Add("Game client: " + HostUsesFolder + " A copy is made in the install folder, where the game can start.");
+            NotThere(gameRun, "game client");
+            moves.Add(new("game client", game, gameRun, KeepSource: true));
+            if (LanguageProject(game) is { } language)
+            {
+                var target = Path.Combine(install, "game", "projects", Path.GetFileName(language));
+                NotThere(target, "game's language files");
+                moves.Add(new("game's language files", language, target, KeepSource: true));
+            }
         }
         else
         {
             CheckMovable(game, install, "game client", running);
             NotThere(gameRun, "game client");
-            moves.Add(new("game client", game, gameRun));
+            // NOT RETAIL (batch 923; both lines since batch 926): a game from another drive, or one whose files have no short names, is copied in, never
+            // renamed: a rename keeps files without short names, and only files made on the system drive get them (StartsInPlace).
+            moves.Add(new("game client", game, gameRun, Copy: CompanionLine.SystemDriveInstall && !StartsInPlace(profile, game)));
             // The voice-over and UI text project beside the game (GameLanguagePack reads it from any ancestor of the game folder).
             if (LanguageProject(game) is { } language && !host.Any(folder => Overlaps(folder, language)))
             {
@@ -298,7 +340,7 @@ internal static class PlayerInstall
             notes.AddRange(picked.Notes);
         }
 
-        var copyBytes = moves.Where(move => move.KeepSource || !SameRoot(move.Source, move.Target)).Sum(CopyBytes) +
+        var copyBytes = moves.Where(move => move.KeepSource || move.Copy || !SameRoot(move.Source, move.Target)).Sum(CopyBytes) +
             (airCopyFrom is null ? 0 : TreeBytes(airCopyFrom, "AIR client"));
         var root = Path.GetPathRoot(install)!;
         long free;
@@ -306,8 +348,87 @@ internal static class PlayerInstall
         catch (Exception exception) when (exception is IOException or ArgumentException or UnauthorizedAccessException)
         { throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} is not available. Choose another install folder."); }
         if (copyBytes > free)
-            throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} has {Gigabytes(free)} GB free; the copy needs {Gigabytes(copyBytes)} GB. Choose another install folder or free some space.");
+            throw new InstallRefusedException($"Drive {root.TrimEnd('\\')} has {Gigabytes(free)} GB free, and the copy needs {Gigabytes(copyBytes)} GB. Free some space or choose another install folder.");
         return new(install, airRun, gameRun, moves, airCopyFrom, copyBytes, notes, launcherRun);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 923, <see cref="CompanionLine.SystemDriveInstall"/>): a new install's folder must be on the system drive, and files made there must
+    /// get short names. Every route that makes an install asks this first (the plan, the client zip, the download, the install folder's Change…).
+    /// </summary>
+    internal static void OnSystemDrive(PlayerProfile profile, string install)
+    {
+        if (!CompanionLine.SystemDriveInstall) return;
+        if (!profile.OnSystemDrive(install)) throw new InstallRefusedException(OtherDrive(profile));
+        // Batch 926 review: only a game that runs loose needs short names (1.0.0.132; the flag that also gates the start's repair). The
+        // 1.0.0.126 game runs from the managed layout on any drive, so a system drive without short names does not stop its install.
+        if (CompanionLine.ShortNameStartRepair && profile.ShortNamesOf(install) == "off") throw new InstallRefusedException(NoShortNamesAnywhere(profile));
+    }
+
+    /// <summary>NOT RETAIL (batch 923): the install folder's Change… (setup window): a folder on another drive gets <see cref="OtherDrive"/>; else null.</summary>
+    internal static string? InstallFolderProblem(PlayerProfile profile, string folder) =>
+        CompanionLine.SystemDriveInstall && !profile.OnSystemDrive(folder) ? OtherDrive(profile) : null;
+
+    /// <summary>NOT RETAIL (batch 923): the one line for an install folder on another drive (owner's words, 20 November 2026).</summary>
+    internal static string OtherDrive(PlayerProfile profile) => $"The game must be installed on drive {profile.SystemDriveName}, where Windows can run it.";
+
+    /// <summary>NOT RETAIL (batch 923): the system drive gives new files no short names either, so no folder on this PC can start the game.</summary>
+    internal static string NoShortNamesAnywhere(PlayerProfile profile) =>
+        $"Windows does not give new files on drive {profile.SystemDriveName} short names, so the game cannot start on this PC. Ask the person who manages " +
+        "this PC to run this command once as administrator: fsutil 8dot3name set 0. Then try again.";
+
+    /// <summary>
+    /// NOT RETAIL (batch 923): the game can start from <paramref name="game"/> as it is: it is on the system drive and its files do not lack short names
+    /// (<c>unknown</c> never blocks).
+    /// </summary>
+    internal static bool StartsInPlace(PlayerProfile profile, string game) => profile.OnSystemDrive(game) && profile.ShortNamesOf(game) != "off";
+
+    /// <summary>
+    /// NOT RETAIL (batch 923): where the shortcut's start moves an install's game that cannot start where it is (<see cref="MoveGame"/>): the player's own
+    /// folder on the system drive (<see cref="PlayerProfile.PlayerFolder"/>), in the install's layout (<c>game\projects\...</c>).
+    /// </summary>
+    internal static string GameHome(PlayerProfile profile) => Path.Combine(profile.PlayerFolder, "game");
+
+    /// <summary>
+    /// NOT RETAIL (batch 923): the <c>game</c> folder the start moved <paramref name="record"/>'s game into (<see cref="GameHome"/>), read from the record
+    /// alone: its game is <c>&lt;player folder&gt;\game\projects\...</c>, outside the install. Null for any other game, a server's above all.
+    /// </summary>
+    internal static string? MovedGame(Record record)
+    {
+        if (Inside(record.Game, record.Install) || !Full(record.Game).EndsWith(@"\" + GameRelease, StringComparison.OrdinalIgnoreCase)) return null;
+        var root = Full(record.Game)[..^(GameRelease.Length + 1)];
+        return Path.GetFileName(root).Equals(Path.GetFileName(FolderMove.PlayerFolder("")), StringComparison.OrdinalIgnoreCase) ? Path.Combine(root, "game") : null;
+    }
+
+    /// <summary>NOT RETAIL (batch 923): what <see cref="MoveGame"/> copies: the game and its language files.</summary>
+    internal static long GameBytes(string game) =>
+        TreeBytes(game, "game client") + (LanguageProject(game) is { } language ? TreeBytes(language, "game's language files") : 0);
+
+    /// <summary>
+    /// NOT RETAIL (batch 923): the shortcut's repair of an install whose game cannot start where it is (<see cref="PlayerMode"/>): the game and its language
+    /// files are copied into <see cref="GameHome"/>, every file checked, and the originals removed (<see cref="FolderMove.Execute"/>, all or none); then
+    /// the record names the new folder, and each server's stage and shortcuts (whose icon is the game's) are written again, as an install does.
+    /// </summary>
+    internal static Record MoveGame(PlayerProfile profile, Record record, IProgress<InstallProgress>? progress = null, MoveOptions? options = null)
+    {
+        var home = GameHome(profile);
+        var target = Path.Combine(Path.GetDirectoryName(home)!, GameRelease);
+        // A move that stopped leaves at most empty folders there (FolderMove.Execute removes its copies); files mean something else is in the way.
+        if (Directory.Exists(home) && Directory.EnumerateFiles(home, "*", SearchOption.AllDirectories).Any())
+            throw new InstallRefusedException($"{home} already contains files. Delete that folder, then start again.");
+        List<Move> moves = [new("game client", record.Game, target, Copy: true)];
+        if (LanguageProject(record.Game) is { } language) moves.Add(new("game's language files", language, Path.Combine(home, "projects", Path.GetFileName(language)), Copy: true));
+        Log(profile, $"repair: the game moves from {record.Game} to {target}");
+        var leftovers = FolderMove.Execute(moves, deleteOriginals: true, progress, options);
+        var moved = record with { Game = target };
+        PlayerMode.WriteJson(profile.RecordPath, moved);
+        foreach (var server in Directory.EnumerateDirectories(Path.Combine(record.Install, "servers")))
+            if (File.Exists(Path.Combine(server, "server.json")))
+                AddServer(profile, moved, Program.ReadRemoteInvitation(Path.Combine(server, "server.json")),
+                    Text(ReadObject(Path.Combine(server, "server.json")), "name") ?? DefaultServerName);
+        if (profile.WritesRegistry) PlayerUninstall.WriteAppsEntry(moved);
+        Log(profile, "repair: the game is on the system drive" + (leftovers.Count == 0 ? "" : "; left: " + string.Join(", ", leftovers)));
+        return moved;
     }
 
     /// <summary>
@@ -328,7 +449,7 @@ internal static class PlayerInstall
         if (Inside(launcher, install))
             throw new InstallRefusedException("The 2011 launcher folder is inside the install folder. Choose the folder you copied it from.");
         if (clients.Any(client => Overlaps(launcher, client)))
-            throw new InstallRefusedException("The 2011 launcher folder must be a folder of its own, apart from the AIR and game client folders.");
+            throw new InstallRefusedException("The 2011 launcher must be in a folder of its own, separate from the AIR and game client folders.");
         // NOT RETAIL (classic launcher, review round 1): a folder under a RADS root, or one a host on this PC keeps its launcher in, is copied and stays whole.
         var keep = InProjects(launcher) || HostLauncherFolders(profile).Any(hosted => Overlaps(hosted, launcher));
         var move = new Move("2011 launcher", launcher, target, LauncherEntries, keep);
@@ -337,8 +458,8 @@ internal static class PlayerInstall
         var others = Others(move);
         string[] notes = others.Count == 0 ? [] :
         [
-            $"2011 launcher: {launcher} holds other things too. Only the 2011 launcher's own files {(keep ? "are copied" : "move")}; " +
-            $"these stay: {string.Join(", ", others)}.",
+            $"2011 launcher: {launcher} also contains other files. Only the 2011 launcher's own files are {(keep ? "copied" : "moved")}. " +
+            $"These stay: {string.Join(", ", others)}.",
         ];
         return (launcher, [move], notes);
     }
@@ -351,7 +472,7 @@ internal static class PlayerInstall
     internal static void LauncherNotThere(string target, ClientPins pins, bool installed)
     {
         if (installed && Directory.Exists(target) && ClassicLauncherFiles.Problem(target, pins.Launcher) is not null)
-            throw new InstallRefusedException("The 2011 launcher in this install is incomplete. Remove it first: open Uninstall and choose Remove the 2011 launcher.");
+            throw new InstallRefusedException("The 2011 launcher in this install is incomplete. Remove it first. To do that, open Uninstall and choose Remove the 2011 launcher.");
         NotThere(target, "2011 launcher");
     }
 
@@ -379,15 +500,15 @@ internal static class PlayerInstall
         var launcherList = plan.Launcher is { } picked && !Same(picked, launcherTarget) ? ClassicLauncherFiles.ManifestFor(picked) : null;
         // NOT RETAIL (batch 857, design step 4; review HIGH 1, MEDIUM 4): the install lock's shared first step before anything moves in
         // (InstallLock.Prepare): a link, another account's folder or one that could not be locked refuses the install; a volume without permissions
-        // only goes to the log.
-        if (InstallLock.Prepare(plan.Install, profile.LocalAppData, Markers) is { } notLocked) Log(profile, $"install: not locked: {notLocked}");
+        // only goes to the log. Batch 919: then the folder's mark, so an install that stops after its moves is finished by the next one.
+        if (Prepare(plan.Install, profile.LocalAppData) is { } notLocked) Log(profile, $"install: not locked: {notLocked}");
         var leftovers = Execute(plan, progress, options, cancel);
         // A move on one drive keeps the old permissions: each folder moved in takes the install's, and the next start checks the whole install.
         foreach (var move in plan.Moves)
             if (InstallLock.Restamp(move.Target, LockRecord(plan.Install)) is { } moved) Log(profile, $"install: {move.Label} not locked: {moved}");
         var stayed = new List<string>();
         foreach (var move in plan.Moves.Where(move => move.Entries is not null && !move.KeepSource))
-            if (Others(move) is { Count: > 0 } others) stayed.Add($"These stayed in {move.Source}, because they are not part of the {move.Label}: {string.Join(", ", others)}.");
+            if (Others(move) is { Count: > 0 } others) stayed.Add($"These files stayed in {move.Source} because they are not part of the {move.Label}: {string.Join(", ", others)}.");
             else
                 try { Directory.Delete(move.Source); }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { leftovers = [.. leftovers, move.Source]; }
@@ -433,6 +554,8 @@ internal static class PlayerInstall
         AirRemoteInvitation connection, string serverName, string toolSource, IProgress<InstallProgress>? progress = null, CancellationToken cancel = default)
     {
         var install = Full(installFolder);
+        // NOT RETAIL (batch 923): before anything is unpacked (MakePlan asks again after it).
+        if (!(ReadRecord(profile) is { } record && Same(record.Install, install))) OnSystemDrive(profile, install);
         var staging = ClientZip.StagingFor(install);
         Log(profile, $"install: the client zip {zip}, unpacked in {staging}");
         try
@@ -610,6 +733,48 @@ internal static class PlayerInstall
     internal static readonly string[] Markers = [ToolFolder, "servers", PlayerDownload.Staging];
 
     /// <summary>
+    /// NOT RETAIL (batch 857, review LOW 10; batch 919): the install lock's first step for a player install folder (<see cref="InstallLock.Prepare"/>),
+    /// then its mark, <c>servers</c> (one of <see cref="Markers"/>; the install keeps it, the removal deletes it), so every later step knows the folder
+    /// as Amberline's. Before batch 919 the download made a folder in the user's profile without the lock (the profile's own permissions), filled it
+    /// and removed its staging folder, its only mark, so the install's own step refused the folder it had just filled ("holds other files"). With
+    /// <paramref name="pins"/> (the download), the folder a finished download of an older tool left counts as Amberline's too (<see cref="Leftover"/>).
+    /// </summary>
+    internal static string? Prepare(string install, string profile, ClientPins? pins = null)
+    {
+        var notLocked = InstallLock.Prepare(install, profile, Markers, made: pins is null ? null : folder => Leftover(folder, profile, pins));
+        Directory.CreateDirectory(Path.Combine(install, "servers"));
+        return notLocked;
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 919): the parts of a download already in <paramref name="install"/> (<c>air</c>, <c>game</c>, <c>launcher</c>), each passing its
+    /// pinned check (the one a found copy passes): a download whose install did not finish put them there, each file checked against the server's list
+    /// first. A download again takes them as they are and fetches only the rest.
+    /// </summary>
+    internal static IReadOnlyList<string> Placed(string install, ClientPins pins) => new (string Part, Func<string?> Problem)[]
+    {
+        ("air", () => RetailClients.AirProblem(Path.Combine(install, "air"), pins.Air)),
+        ("game", () => RetailClients.GameProblem(Path.Combine(install, GameRelease), pins.Game)),
+        (LauncherFolder, () => ClassicLauncherFiles.Problem(Path.Combine(install, LauncherFolder), pins.Launcher)),
+    }.Where(part => Directory.Exists(Path.Combine(install, part.Part)) && part.Problem() is null).Select(part => part.Part).ToList();
+
+    /// <summary>
+    /// NOT RETAIL (batch 919, owner finding 4 of 20 November 2026): the folder a finished download of an older tool (0.1.x since batch 857) left
+    /// inside the user's own profile when its install refused it: the parts it put in place and nothing else, AIR and the game among them, each
+    /// passing its pinned check (<see cref="Placed"/>). Review LOW 10 holds: such a folder holds only the clients this install uses, in the profile's
+    /// private folders; a file of anyone's own beside them, or a folder outside the profile (made locked, so it needs no exception), is refused.
+    /// </summary>
+    private static bool Leftover(string folder, string profile, ClientPins pins)
+    {
+        if (!Inside(folder, profile)) return false;
+        string[] parts = ["air", "game", LauncherFolder];
+        var names = Directory.EnumerateFileSystemEntries(folder).Select(entry => Path.GetFileName(entry)).ToList();
+        if (!names.All(name => parts.Contains(name, StringComparer.OrdinalIgnoreCase))) return false;
+        var placed = Placed(folder, pins);
+        return placed.Contains("air") && placed.Contains("game") && names.All(name => placed.Contains(name, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
     /// NOT RETAIL (batch 857, design step 4): the shortcut's start locks the install: a full pass the first time after the tool's update (or any
     /// move into the install), then the folder alone. Null when locked; else why not, which never stops the start.
     /// </summary>
@@ -723,7 +888,7 @@ internal static class PlayerInstall
         byte[] archive;
         using (var client = PinnedClient(pin)) archive = await GetAsync(client, new Uri(Origin(host, port), "/bootstrap/companion.zip"), 512 << 20, cancel, ToolBudget);
         if (Convert.ToHexString(SHA256.HashData(archive)) != sha)
-            throw new InvalidDataException("The downloaded player tool does not match the SHA-256 the server published; nothing was changed.");
+            throw new InvalidDataException("The downloaded player tool does not match the SHA-256 the server published. Nothing was changed.");
         TryDelete(folder + ".sha256");
         if (!TryDeleteTree(folder)) throw new IOException("An earlier update of the player tool is still in use.");
         using (var zip = new MemoryStream(archive)) ZipFile.ExtractToDirectory(zip, folder);

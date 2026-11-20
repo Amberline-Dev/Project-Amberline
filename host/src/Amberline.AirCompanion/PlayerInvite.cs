@@ -25,7 +25,7 @@ internal static class PlayerInvite
     /// <summary>The app's own copy in the player folder, which the link scheme starts.</summary>
     internal static readonly string CopyName = Product + ".exe";
 
-    internal const string Refused = "This invite link can't be used.";
+    internal const string Refused = "This invite link cannot be used.";
 
     /// <summary>
     /// The one downloaded file (a single-file publish, tools/build-server.ps1): its assembly is inside it, not beside it. The installed tool
@@ -134,7 +134,7 @@ internal static class PlayerInvite
     }
 
     internal static string Connecting(string name) =>
-        $"Connecting to {name}. The first time, this downloads its player tool (about 64 MB) and takes a few minutes.";
+        $"Connecting to {name}. The first time, this downloads the player tool (about 64 MB) and takes a few minutes.";
 
     /// <summary><c>--invite &lt;text&gt;</c>: only that one argument is read. Every failure is a dialog: the program has no console.</summary>
     internal static int Run(string? text)
@@ -230,8 +230,8 @@ internal static class PlayerInvite
             try { Adopt(profile, Environment.ProcessPath ?? throw new IOException("Windows did not name this program's file.")); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                PlayerInstallWindow.ShowProblem(new(Product, $"{Product} could not put itself in its folder.",
-                    $"Check that {profile.PlayerFolder} can be written, then open {Product} again.", PlayerProblem.Describe(exception), profile.InstallLog));
+                PlayerInstallWindow.ShowProblem(new(Product, $"{Product} could not copy itself to its folder.",
+                    $"Check that you can save files in {profile.PlayerFolder}, then open {Product} again.", PlayerProblem.Describe(exception), profile.InstallLog));
                 return 2;
             }
             return PlayerInstallWindow.AskInvite() is { } text ? Run(text) : 1;

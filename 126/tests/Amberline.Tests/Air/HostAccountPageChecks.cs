@@ -29,7 +29,7 @@ public static class HostAccountPageChecks
     private const string Account = HostAccountPage.PagePath;
     private const string NoMatch = "That name and password do not match.";
     private const string Changed = "Your password is changed. Sign in again in the client.";
-    private const string NotSignedOut = "Amberline could not finish signing you out everywhere just now. Change your password again in a minute.";
+    private const string NotSignedOut = "Amberline could not sign you out everywhere. Change your password again in a minute.";
     private const string OwnLogin = "This is the host's own login. It cannot be deleted here.";
     private const string InAGame = "You are in a lobby or a game. Try again once you have left the lobby or the game has ended.";
 
@@ -363,7 +363,7 @@ public static class HostAccountPageChecks
                 TestAssert.True(fastestUnknown >= fastestWrong / 4, $"an unknown name took {fastestUnknown.TotalMilliseconds} ms, a wrong password {fastestWrong.TotalMilliseconds} ms");
 
                 var expired = await PostAsync(person, Account, null, HttpStatusCode.BadRequest, Change("user1", Password, NewPassword, NewPassword));
-                TestAssert.True(expired.Contains("The page expired. Please try again.", StringComparison.Ordinal), "a form without its token: " + expired);
+                TestAssert.True(expired.Contains("The page expired. Try again.", StringComparison.Ordinal), "a form without its token: " + expired);
                 NothingBack(expired, "a form without its token", Password, NewPassword);
             }
             await LoginAsync(browser, "user1", Password, HttpStatusCode.OK);

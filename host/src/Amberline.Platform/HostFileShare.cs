@@ -24,6 +24,10 @@ namespace Amberline.Platform;
 /// <item>Each address gets <see cref="PerAddress"/> transfers at a time and all players together <see cref="InAll"/>
 /// (<see cref="Program.RequestPartition"/>, <see cref="Program.FilesPartition"/>), so the tunnels of a running game keep their share
 /// of the port.</item>
+/// <item>NOT RETAIL (batch 922; the owner, 20 November 2026: "make restarts reuse the last file check"): a build that shares keeps what it found in
+/// <see cref="HostPaths.ShareRecord"/>: each file's manifest path, path on disk, size, last write time and SHA-256, and the folders, pins and protocol it
+/// was made for. A start with the switch on runs every check again and lists the files again, but takes a file's SHA-256 from that record while its path,
+/// size and last write time are unchanged; turning the switch on or Save hashes every file and replaces the record (see <see cref="Build"/>).</item>
 /// </list>
 /// </summary>
 public sealed class HostFileShare(HostLoop loop, string game, string air, int remotePort, bool on, string? launcher)
@@ -31,13 +35,16 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
     public const string Prefix = "/files";
     public const int PerAddress = 4, InAll = 16;
     /// <summary>The owner's notice beside the switch, in one sentence.</summary>
-    public const string Notice = "You share your own copy of the game, so make sure you may share it: Amberline itself never ships these files.";
+    public const string Notice = "You share your own copy of the game. Make sure you are allowed to share it. Amberline never includes these files.";
     /// <summary>Where each folder goes in the player's install (<see cref="FolderMove.GameRelease"/>, <c>air</c>).</summary>
     public const string GameRoot = "game/projects/lol_game_client/releases/0.0.0.51", AirRoot = "air";
     /// <summary>NOT RETAIL (batch 761, task 8): where the host's 2011 launcher goes in the player's install (its own <c>launcher</c> folder beside <c>air</c> and <c>game</c>).</summary>
     internal const string LauncherRoot = "launcher";
 
     public sealed record Entry(string Path, long Size, string Sha256);
+
+    /// <summary>DIAGNOSTICS (batch 922): each file a build lists, by its path on disk, and whether the build read it to hash it; the checks count them.</summary>
+    public static event Action<string, bool>? Checked;
 
     /// <summary>
     /// What a build found: the files by their manifest path, the manifest's bytes and the folders' sizes, or why nothing is shared. A
@@ -46,8 +53,17 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
     internal sealed record Shared(IReadOnlyDictionary<string, (string Source, Entry Entry, string? Id)> Files, byte[] Manifest, long GameBytes, long AirBytes,
         long LauncherBytes, string? Problem, string? LauncherNote = null, bool Open = false);
 
+    /// <summary>NOT RETAIL (batch 922): how far a build got, for Settings while it runs: whether it reuses the last check, and whether it has had to hash a file.</summary>
+    internal sealed class Progress(bool reusing)
+    {
+        public volatile bool Reusing = reusing, Hashing;
+    }
+
+    private sealed record Building(Task<Shared> Result, Progress Progress);
+
     private volatile bool _on = on;
-    private volatile Task<Shared>? _built = on ? Start(loop, game, air, launcher) : null;
+    // A start reuses the last check (Build); Set, which Settings' switch and Save call, checks every file.
+    private volatile Building? _built = on ? Start(loop, game, air, launcher, full: false) : null;
 
     public bool On => _on;
 
@@ -55,11 +71,11 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
     public bool Serves(HttpContext context) => _on && context.Connection.LocalPort == remotePort && context.Request.IsHttps &&
         HttpMethods.IsGet(context.Request.Method) && context.Request.Path.StartsWithSegments(Prefix);
 
-    /// <summary>Settings' switch: saved in platform.json and served at once; turning it on checks the folders again.</summary>
+    /// <summary>Settings' switch: saved in platform.json and served at once; turning it on (or Save while it is on) checks every file again.</summary>
     internal void Set(bool value)
     {
         HostMode.Change(loop.Paths.Settings, saved => saved with { ShareFiles = value });
-        if (value) _built = Start(loop, game, air, launcher);
+        if (value) _built = Start(loop, game, air, launcher, full: true);
         _on = value;
     }
 
@@ -72,7 +88,7 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
     private async Task ServeAsync(HttpContext context)
     {
         if (!Serves(context) || _built is not { } built) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
-        var shared = await built.WaitAsync(context.RequestAborted);
+        var shared = await built.Result.WaitAsync(context.RequestAborted);
         var path = context.Request.Path.Value!;
         // The rest of the address after /files/ is compared with the manifest's paths as it is; a file changed since the manifest is not served.
         var entry = path.Length > Prefix.Length ? path[(Prefix.Length + 1)..] : null;
@@ -113,16 +129,23 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
         return null;
     }
 
-    /// <summary>Settings' lines under the switch: what is shared and its size, that it checks the files, or why it cannot be shared.</summary>
+    /// <summary>
+    /// Settings' lines under the switch: what is shared and its size, that it checks the files, or why it cannot be shared. Batch 922: a start that reuses the
+    /// last check says minutes only once it has to hash a file; a sharing host without a 2011 launcher folder is told how to share the launcher too.
+    /// </summary>
     internal string Status()
     {
         if (!_on || _built is not { } built) return "";
-        if (!built.IsCompleted) return "<p>Amberline is checking every file once before it shares them. This takes a few minutes; open this page again to see when it is done.</p>";
-        var shared = built.Result;
+        if (!built.Result.IsCompleted)
+            return !built.Progress.Reusing ? "<p>Amberline is checking the game files before sharing them. This takes a few minutes. Open this page again to see when it is done.</p>"
+                : built.Progress.Hashing ? "<p>Amberline is checking the files that changed since its last check. This can take a few minutes. Open this page again to see when it is done.</p>"
+                : "<p>Amberline is comparing the files with its last check. This takes less than a minute. Open this page again to see when it is done.</p>";
+        var shared = built.Result.Result;
         if (shared.Problem is { } problem)
             return $"<p class=problem role=alert>Your copy cannot be shared: {WebUtility.HtmlEncode(problem)} Nothing is shared.</p>";
-        return $"<p>Shared: {SharedParts(shared)}. A player who has no copy of their own downloads them during setup, through your internet upload.</p>" +
+        return $"<p>Shared: {SharedParts(shared)}. Players who have no copy of their own download these files during setup, using your internet upload.</p>" +
             (shared.LauncherNote is { } note ? $"<p class=warn>The 2011 launcher is not shared. {WebUtility.HtmlEncode(note)}</p>" : "") +
+            (launcher is null ? "<p>No 2011 launcher folder is chosen, so the 2011 launcher is not shared. To share it too, choose Change the folders under Your game folders, then its folder under 2011 launcher.</p>" : "") +
             (shared.Open ? $"<p class=warn>{OpenWarning}</p>" : "");
     }
 
@@ -132,10 +155,13 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
         : $"the game folder ({HostUninstall.Size(shared.GameBytes)}) and the AIR client folder ({HostUninstall.Size(shared.AirBytes)})";
 
     // Batch 857 (the orchestrator, 17 November 2026): only the files of the locked install and of the 2011 launcher folder beside it must be private.
-    private static Task<Shared> Start(HostLoop loop, string game, string air, string? launcher) =>
-        Task.Run(() => Build(game, air, loop.Paths.Data, (loop.Folders.GameSha256, loop.Folders.AirSha256, loop.Folders.LauncherSha256),
+    private static Building Start(HostLoop loop, string game, string air, string? launcher, bool full)
+    {
+        var progress = new Progress(reusing: !full);
+        return new(Task.Run(() => Build(game, air, loop.Paths.Data, (loop.Folders.GameSha256, loop.Folders.AirSha256, loop.Folders.LauncherSha256),
             HostMode.UsableLauncher(launcher, loop.Paths),
-            HostPaths.InstallFolder(loop.Paths.App) is { } install ? [install, ClientPlan.LauncherBeside(install)] : []));
+            HostPaths.InstallFolder(loop.Paths.App) is { } install ? [install, ClientPlan.LauncherBeside(install)] : [], loop.Paths.ShareRecord, full, progress)), progress);
+    }
 
     /// <summary>
     /// The client's own run-time files, which hold the host's data, never the game's: its logs (<c>*.log</c>, the release folder's
@@ -177,10 +203,22 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
         }
     }
 
-    /// <summary>The manifest of the two folders, or why they cannot be shared. Reads every file once.</summary>
+    /// <summary>
+    /// The manifest of the two folders, or why they cannot be shared. Reads every file once to hash it, unless <paramref name="full"/> is false and
+    /// <paramref name="record"/> holds the last check made for these folders, pins and protocol.
+    /// <para>NOT RETAIL (batch 922): a file's SHA-256 is then taken from the record while its manifest path, its path on disk, its size and its last write
+    /// time (both read from the open file) are what the record says; every other check runs as on a full check, and the three executables are checked
+    /// against their pins on their bytes whatever the record says. The reuse trusts size and last write time: a file rewritten with the same size and the
+    /// same last write time keeps its old SHA-256 until Settings' Save (a full check). The player's side hashes every downloaded file against the list, so
+    /// such a file fails there and is never installed; TROUBLESHOOTING's answer is Save. A full check removes the record when it starts, so a Save that is
+    /// refused or cut short leaves none; a reusing start keeps it (a start cut short leaves it for the next), and every build that shares replaces it.</para>
+    /// </summary>
     internal static Shared Build(string game, string air, string data, (string Game, string Air, string Launcher) pins, string? launcher,
-        IReadOnlyList<string> locked)
+        IReadOnlyList<string> locked, string record, bool full = true, Progress? progress = null)
     {
+        var last = full ? null : Last(record, game, air, launcher, pins);
+        if (progress is not null) progress.Reusing = last is not null;
+        if (full) Forget(record);
         static Shared Refused(string problem) => new(new Dictionary<string, (string, Entry, string?)>(), [], 0, 0, 0, problem);
         if (RetailClients.GameProblem(game, pins.Game) is { } gameProblem) return Refused($"the game folder: {gameProblem}.");
         if (RetailClients.AirProblem(air, pins.Air) is { } airProblem) return Refused($"the AIR client folder: {airProblem}.");
@@ -205,6 +243,7 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
         if (launcherFolder is not null && FolderMove.Overlaps(launcherFolder, data))
             return Refused($"{launcherFolder} holds Amberline's own data folder.");
         var files = new Dictionary<string, (string Source, Entry Entry, string? Id)>(StringComparer.Ordinal);
+        var remembered = new List<Remembered>();
         var open = false;
         long gameBytes = 0, airBytes = 0, launcherBytes = 0;
         try
@@ -245,11 +284,20 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
                                 return Refused($"{file.FullName} is reached another way (a junction, a subst or mapped drive, or a short 8.3 name), so Amberline does not share it. Choose the folder by its own full path.");
                             open |= !InstallLock.Private(stream.GetAccessControl());
                         }
-                        files[path] = (file.FullName, new(path, file.Length, Convert.ToHexString(SHA256.HashData(stream))), id);
+                        // NOT RETAIL (batch 922): the last check's SHA-256 while the record's path, size and last write time still hold (see Build).
+                        var size = stream.Length;
+                        var written = File.GetLastWriteTimeUtc(stream.SafeFileHandle);
+                        var sha = last?.GetValueOrDefault(path) is { } kept && kept.Size == size && kept.Written == written &&
+                            string.Equals(kept.Source, file.FullName, StringComparison.OrdinalIgnoreCase) ? kept.Sha256 : null;
+                        if (sha is null && progress is not null) progress.Hashing = true;
+                        Checked?.Invoke(file.FullName, sha is null);
+                        sha ??= Convert.ToHexString(SHA256.HashData(stream));
+                        files[path] = (file.FullName, new(path, size, sha), id);
+                        remembered.Add(new(path, file.FullName, size, written, sha));
+                        if (prefix.StartsWith(LauncherRoot + "/", StringComparison.Ordinal)) launcherBytes += size;
+                        else if (prefix.StartsWith(AirRoot + "/", StringComparison.Ordinal)) airBytes += size;
+                        else gameBytes += size;
                     }
-                    if (prefix.StartsWith(LauncherRoot + "/", StringComparison.Ordinal)) launcherBytes += file.Length;
-                    else if (prefix.StartsWith(AirRoot + "/", StringComparison.Ordinal)) airBytes += file.Length;
-                    else gameBytes += file.Length;
                 }
             }
         }
@@ -261,9 +309,57 @@ public sealed class HostFileShare(HostLoop loop, string game, string air, int re
         if (files.GetValueOrDefault(GameRoot + "/" + HostFolders.GameExecutable).Entry?.Sha256 != pins.Game ||
             files.GetValueOrDefault(AirRoot + "/LolClient.exe").Entry?.Sha256 != pins.Air || launcherChanged)
             return Refused("an executable changed while Amberline checked it.");
-        var manifest = JsonSerializer.SerializeToUtf8Bytes(new { protocol = 1, bytes = gameBytes + airBytes + launcherBytes,
+        var manifest = JsonSerializer.SerializeToUtf8Bytes(new { protocol = Protocol, bytes = gameBytes + airBytes + launcherBytes,
             files = files.Values.Select(file => file.Entry).OrderBy(entry => entry.Path, StringComparer.Ordinal) }, Json);
+        Remember(record, new(Protocol, game, air, launcher, pins.Game, pins.Air, pins.Launcher, [.. remembered]));
         return new(files, manifest, gameBytes, airBytes, launcherBytes, null, launcherSkipped, open);
+    }
+
+    private const int Protocol = 1;
+
+    /// <summary>NOT RETAIL (batch 922): the last check that shared (<see cref="HostPaths.ShareRecord"/>): what it was made for and each file it listed.</summary>
+    private sealed record Record(int Protocol, string? Game, string? Air, string? Launcher, string? GamePin, string? AirPin, string? LauncherPin, Remembered[]? Files);
+
+    private sealed record Remembered(string? Path, string? Source, long Size, DateTime Written, string? Sha256);
+
+    /// <summary>The last check's files by their manifest path, when its record was made for these folders, pins and protocol; else null (a full check).</summary>
+    private static Dictionary<string, Remembered>? Last(string record, string game, string air, string? launcher, (string Game, string Air, string Launcher) pins)
+    {
+        static bool Same(string? saved, string? now) => string.Equals(saved, now, StringComparison.OrdinalIgnoreCase);
+        Record? last;
+        try { last = JsonSerializer.Deserialize<Record>(File.ReadAllBytes(record), Json); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException) { return null; }
+        if (last is not { Protocol: Protocol, Files: { } saved } || !Same(last.Game, game) || !Same(last.Air, air) || !Same(last.Launcher, launcher) ||
+            (last.GamePin, last.AirPin, last.LauncherPin) != pins)
+            return null;
+        var kept = new Dictionary<string, Remembered>(StringComparer.Ordinal);
+        foreach (var file in saved)
+            if (file is not { Path: { } path, Source: not null, Sha256: { Length: 64 } sha } || !sha.All(char.IsAsciiHexDigitUpper) || !kept.TryAdd(path, file))
+                return null;
+        return kept;
+    }
+
+    private static void Remember(string record, Record found)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(record)!);
+            File.WriteAllBytes(record + ".tmp", JsonSerializer.SerializeToUtf8Bytes(found, Json));
+            File.Move(record + ".tmp", record, overwrite: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"File share: the record of this check could not be saved, so the next start checks every file again ({exception.Message}).");
+        }
+    }
+
+    private static void Forget(string record)
+    {
+        try { if (File.Exists(record)) File.Delete(record); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"File share: the record of the last check could not be removed ({exception.Message}).");
+        }
     }
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);

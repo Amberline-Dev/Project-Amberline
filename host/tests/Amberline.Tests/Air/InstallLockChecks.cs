@@ -170,7 +170,7 @@ public static class InstallLockChecks
             var theirs = Path.Combine(drive, "Theirs");
             Write(Path.Combine(theirs, "their.txt"));
             var theirsBefore = Sddl(theirs);
-            Refused(() => AirInstallLock.Prepare(theirs, null, ["marker"]), "holds other files. Choose a new or empty folder.", "a folder of other files");
+            Refused(() => AirInstallLock.Prepare(theirs, null, ["marker"]), "already contains other files. Choose an empty or new folder.", "a folder of other files");
             TestAssert.Equal(theirsBefore, Sddl(theirs), "a refused folder is left as it is");
             Write(Path.Combine(theirs, "marker"));
             AirInstallLock.Prepare(theirs, null, ["marker"]);
@@ -196,7 +196,7 @@ public static class InstallLockChecks
             var open = new DirectoryInfo(shared).GetAccessControl();
             open.AddAccessRule(new FileSystemAccessRule(Users, FileSystemRights.DeleteSubdirectoriesAndFiles, AccessControlType.Allow));
             new DirectoryInfo(shared).SetAccessControl(open);
-            TestAssert.Equal($"other Windows accounts can delete, rename or change {shared}, which holds this install", AirInstallLock.Lock(inShared, top: root),
+            TestAssert.Equal($"other Windows accounts can delete, rename or change {shared}, which contains this install", AirInstallLock.Lock(inShared, top: root),
                 "a parent that lets others delete its folders");
             var realParent = Directory.CreateDirectory(Path.Combine(drive, "real-parent")).FullName;
             var linkedParent = Path.Combine(drive, "linked-parent");

@@ -32,7 +32,7 @@ public static class HostFolderChecks
 
             var good = HostFolders.Check(FolderKind.Game, game, setup);
             TestAssert.True(good.Ok && good.Folder == game, good.Problem);
-            TestAssert.True(good.Warnings.SequenceEqual(["Voices and fonts may be missing: lol_game_client_en_us is not next to lol_game_client."]),
+            TestAssert.True(good.Warnings.SequenceEqual(["Voices and fonts may be missing because lol_game_client_en_us is not next to lol_game_client."]),
                 string.Join(" | ", good.Warnings));
             Directory.CreateDirectory(Path.Combine(root, "dl", "projects", "lol_game_client_en_us", "releases", "0.0.0.20", "DATA"));
             TestAssert.Equal(0, HostFolders.Check(FolderKind.Game, game, setup).Warnings.Count, "the language folder beside the game ends the warning");
@@ -42,8 +42,8 @@ public static class HostFolderChecks
             Says("Amberline cannot find that AIR client folder.", Problem(FolderKind.Air, "not a full address"));
             var empty = Directory.CreateDirectory(Path.Combine(root, "empty")).FullName;
             Says($"This folder does not contain the game. Choose the folder you downloaded the {Amberline.AirCompanion.RetailClients.Year} game into. (A-FILES-01)", Problem(FolderKind.Game, empty));
-            Says("This folder does not contain the AIR client (it holds an assets folder).", Problem(FolderKind.Air, empty));
-            Says($"This folder has the game, but not the {Amberline.AirCompanion.RetailClients.Year} version Amberline needs (version {Amberline.AirCompanion.RetailClients.Version}).",
+            Says("This folder does not contain the AIR client, which has an assets folder.", Problem(FolderKind.Air, empty));
+            Says($"This folder has another version of the game. Amberline needs version {Amberline.AirCompanion.RetailClients.Version} from {Amberline.AirCompanion.RetailClients.Year}.",
                 Problem(FolderKind.Game, game, setup with { GameSha256 = new string('0', 64) }));
             TestAssert.Equal(game, HostFolders.Check(FolderKind.Game, game, setup with { GameSha256 = new string('0', 64) }).Folder,
                 "the refused folder is named on its row");
@@ -54,18 +54,18 @@ public static class HostFolderChecks
             Says(@"The game folder is incomplete: DATA\BuildingBlocks is missing.", Problem(FolderKind.Game, game));
 
             File.Delete(Path.Combine(air, "assets", "swfs", "AirGeneratedContent.swf"));
-            Says(@"This AIR client is incomplete: 1 file is missing or damaged (for example assets\swfs\AirGeneratedContent.swf). Download it again. (A-FILES-04)",
+            Says(@"This AIR client is incomplete. 1 file is missing or damaged, for example assets\swfs\AirGeneratedContent.swf. Download it again. (A-FILES-04)",
                 Problem(FolderKind.Air, air));
             File.Delete(Path.Combine(air, "LolClient.swf"));
             File.Delete(Path.Combine(air, "mod_lgn.dat"));
-            Says("This AIR client is incomplete: 3 files are missing or damaged (for example the AIR client's .swf file).", Problem(FolderKind.Air, air));
+            Says("This AIR client is incomplete. 3 files are missing or damaged, for example the AIR client's .swf file.", Problem(FolderKind.Air, air));
             var other = Air(Path.Combine(root, "other-air"));
-            Says($"This is not the {Amberline.AirCompanion.RetailClients.Year} AIR client Amberline needs (version {Amberline.AirCompanion.RetailClients.Version}).", Problem(FolderKind.Air, other, setup with { AirSha256 = new string('0', 64) }));
+            Says($"This is another version of the AIR client. Amberline needs the one for version {Amberline.AirCompanion.RetailClients.Version} from {Amberline.AirCompanion.RetailClients.Year}.", Problem(FolderKind.Air, other, setup with { AirSha256 = new string('0', 64) }));
 
             // A-FILES-05: a saved folder that is gone sends the start back to setup with the old address.
             var gone = Path.Combine(root, "moved-game");
-            Says($"The game folder you chose is gone (it was at {gone}). Choose it again. (A-FILES-05)", HostFolders.Gone(gone, air)!);
-            Says($"The AIR client folder you chose is gone (it was at {gone}). Choose it again. (A-FILES-05)", HostFolders.Gone(game, gone)!);
+            Says($"The game folder you chose is no longer at {gone}. Choose it again. (A-FILES-05)", HostFolders.Gone(gone, air)!);
+            Says($"The AIR client folder you chose is no longer at {gone}. Choose it again. (A-FILES-05)", HostFolders.Gone(game, gone)!);
             TestAssert.Equal(null, HostFolders.Gone(game, air));
             var paths = HostPaths.Resolve(Path.Combine(root, "data"), Path.Combine(root, "Local"), Path.Combine(root, "app", "platform"));
             Directory.CreateDirectory(paths.Data);
@@ -82,12 +82,12 @@ public static class HostFolderChecks
 
             // Warnings from the stock client's folder hazards (MAX_PATH, the system code page), the same list the companion logs.
             var deep = Game(Path.Combine(root, new string('g', Math.Max(1, 200 - root.Length))));
-            TestAssert.True(HostFolders.GameWarnings(deep).Contains(@"This folder's path is long; the game may not start from it. Move it closer to C:\."),
+            TestAssert.True(HostFolders.GameWarnings(deep).Contains(@"The game may not start from this folder because its path is long. Move it closer to C:\."),
                 string.Join(" | ", HostFolders.GameWarnings(deep)));
             var foreign = Game(Path.Combine(root, "\u4e2d\u6587 \u0e44\u0e17\u0e22"));
             var expectsCodePage = Amberline.AirCompanion.GameFolderReport.Hazards(foreign, Amberline.AirCompanion.GameFolderReport.SystemAnsi())
                 .Contains("not-ansi-representable");
-            TestAssert.Equal(expectsCodePage, HostFolders.GameWarnings(foreign).Any(warning => warning.StartsWith($"This folder's path has letters the {Amberline.AirCompanion.RetailClients.Year} game cannot read", StringComparison.Ordinal)),
+            TestAssert.Equal(expectsCodePage, HostFolders.GameWarnings(foreign).Any(warning => warning.StartsWith($"The game may not start from this folder because its path has letters the {Amberline.AirCompanion.RetailClients.Year} game cannot read", StringComparison.Ordinal)),
                 "the code-page warning follows the companion's own hazard");
 
             foreach (var problem in problems)
@@ -370,7 +370,7 @@ public static class HostFolderChecks
             await HostModeChecks.WaitForStartsAsync(home.Loop, 3, run);
             var gone = await client.GetStringAsync("/setup");
             // Batch 638: the code is small and secondary (its own span), and the error summary at the top names the problem too.
-            TestAssert.True(gone.Contains(Encoded($"The AIR client folder you chose is gone (it was at {air}). Choose it again. ") +
+            TestAssert.True(gone.Contains(Encoded($"The AIR client folder you chose is no longer at {air}. Choose it again. ") +
                 "<span class=code>(A-FILES-05)</span>", StringComparison.Ordinal), gone);
             TestAssert.Equal(2, gone.Split("(A-FILES-05)").Length - 1, "the message shows twice: in the error summary and under its row");
         }

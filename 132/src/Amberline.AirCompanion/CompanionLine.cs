@@ -119,6 +119,23 @@ internal static class CompanionLine
 
     internal const string ManagedLayoutOff = "managed-layout: off (1.0.0.132: the game runs loose from its own folder; rads.dll reads no layout under this line's RADS root)";
 
+    /// <summary>
+    /// NOT RETAIL (batch 923; owner, 20 November 2026: "enforce the user to install the game on the C drive"; both lines since batch 926): a new player
+    /// install is made on the Windows system drive, and its game files must have 8.3 short names. Retail's patcher put the game wherever the player
+    /// chose, and ran it managed. This line's game runs loose (<see cref="PrepareLayout"/>), and its spell index then comes from
+    /// <c>FindFirstFileA("Data\Spells\*.ini")</c>, which matches the <c>.inibin</c> files only through their short names (1.0.0.132 the client
+    /// to the client); Windows gives them by default only on the system drive. So setup refuses other drives and copies a game found elsewhere
+    /// (or whose files have none) onto it (<see cref="PlayerInstall.MakePlan"/>). The 1.0.0.126 line makes its new installs the same way but runs its game
+    /// from the managed layout on any drive.
+    /// </summary>
+    internal static readonly bool SystemDriveInstall = true;
+
+    /// <summary>
+    /// NOT RETAIL (batch 926): on this line the shortcut's start offers to move an install's game that has no 8.3 short names
+    /// (<see cref="PlayerMode.StartAsync"/>). The 1.0.0.126 line keeps it off: its managed layout runs its game from any drive.
+    /// </summary>
+    internal static readonly bool ShortNameStartRepair = true;
+
     internal const string NoShortNamesWarning = "game.folder: WARNING this volume has no 8.3 short names: the loose 1.0.0.132 client builds no spell index without them and stops at hero creation (\"Avatar spell not found!\"). Keep the game on a volume with short names (C: has them).";
 #endif
 }

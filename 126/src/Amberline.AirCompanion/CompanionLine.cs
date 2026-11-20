@@ -18,4 +18,19 @@ internal static class CompanionLine
     /// hides that path from its rads.dll (batch 889).
     /// </summary>
     internal static string GameWorkingDirectory(string folder) => folder;
+
+    /// <summary>
+    /// NOT RETAIL (batch 923, on this line since batch 926; owner, 20 November 2026): a new player install goes on the Windows system drive, its game
+    /// copied in and checked (<see cref="PlayerInstall.OnSystemDrive"/>). Retail's patcher put the game wherever the player chose. This line's game is
+    /// served by <see cref="GameManagedLayout"/> on any drive, so the rule is not needed for it: it is the owner's one rule for both lines. The install
+    /// keeps the game in <c>game\projects\lol_game_client\releases\0.0.0.51</c>, the shape that layout reads. The 1.0.0.132 line has the same value.
+    /// </summary>
+    internal static readonly bool SystemDriveInstall = true;
+
+    /// <summary>
+    /// NOT RETAIL (batch 926): off on this line. The shortcut's start does not offer to move an install's game that has no 8.3 short names
+    /// (<see cref="PlayerMode.StartAsync"/>): this line's managed layout runs its game from any drive, so a working install elsewhere is left alone.
+    /// The 1.0.0.132 line runs its game loose and turns it on.
+    /// </summary>
+    internal static readonly bool ShortNameStartRepair = false;
 }

@@ -29,7 +29,7 @@ public static class HostInvite
     public const string HomeNetworkNote = "Players must be on the same home network as this PC.";
     /// <summary><c>tools/player-file.ps1</c>'s default for a server without a name.</summary>
     internal const string DefaultName = "Amberline";
-    private const string Expired = "The page expired. Please try again.";
+    private const string Expired = "The page expired. Try again.";
 
     // Common words for generated passwords: four of them and two digits (about 39 bits), typed into the League client's login.
     private static readonly string[] Words = ("able acorn actor agent alarm album alley amber angle apple apron arena arrow atlas attic award " +
@@ -134,7 +134,7 @@ public static class HostInvite
             ClearCheats(user.Id);
             // NOT RETAIL: the host page's activity feed names the host's Disable, Enable and Delete (batch 748).
             loop.Activity.Add($"{user.Username} disabled");
-            return HostMode.Page(UsersPage(token, $"{user.Username} can no longer log in, and was logged out. Their games stay.", done: true, unsaved));
+            return HostMode.Page(UsersPage(token, $"{user.Username} can no longer log in and was logged out. Their games stay.", done: true, unsaved));
         }));
         // Enable (Give access again): a new password, shown once, which also ends the removal.
         app.MapPost(UsersPath + "/enable", (HttpContext context, IAntiforgery antiforgery) => ActAsync(context, antiforgery, (user, token) =>
@@ -165,7 +165,7 @@ public static class HostInvite
                         $"<p><a href={UsersPath}>Back to Users</a></p>", StatusCodes.Status409Conflict);
             }
             return HostMode.Page(UsersPage(token, $"{user.Username} is deleted.", done: true,
-                removed.Unsaved.Count == 0 ? null : $"Amberline could not save every change just now: {string.Join(", ", removed.Unsaved)}."));
+                removed.Unsaved.Count == 0 ? null : $"Amberline could not save every change: {string.Join(", ", removed.Unsaved)}."));
         }));
 
         // A row's action: the antiforgery check and the user its form names, then the action, or the page that says why there is none.
@@ -188,7 +188,7 @@ public static class HostInvite
         }
 
         // UserRemoval.LogOut: a revoke that could not be saved is said on the page (the warning), never a failed action.
-        string? LogOut(long id) => removal.LogOut(id) ? null : "Amberline could not save every change just now: their remote sign-in.";
+        string? LogOut(long id) => removal.LogOut(id) ? null : "Amberline could not save every change: their remote sign-in.";
 
         void ClearCheats(long id) => removal.ClearCheats(id);
 
@@ -249,7 +249,7 @@ public static class HostInvite
                 : "<p class=table-search data-needs-script hidden><label for=user-search>Search users</label><input type=search id=user-search autocomplete=off></p>" +
                   "<table><thead><tr><th scope=col>User</th><th scope=col>Status</th><th scope=col>Actions</th></tr></thead>" +
                   $"<tbody id=users>{string.Concat(users.Select(Row))}</tbody></table><p id=users-none class=empty hidden>No users match your search.</p>" +
-                  "<p class=tip>New password and Disable log the user out at once and keep their games. Delete cannot be undone.</p>";
+                  "<p class=tip>New password and Disable log the user out immediately and keep their games. Delete cannot be undone.</p>";
             return $"<h1>Users ({users.Length})</h1>{shown}<div class=\"buttons user-actions\"><a class=button href={AddPath}>Add a user</a>{copy}</div>" +
                 $"{inviteBox}{loginCopy?.Offer(token, setup: false)}{oldShortcuts?.Offer(token)}{list}";
         }
@@ -268,7 +268,7 @@ public static class HostInvite
 
     /// <summary>The host's own login is never changed or deleted on Users: the host plays with it (Advanced sets its password).</summary>
     private static readonly IResult OwnLogin = HostMode.Page(
-        "<h1>This is your own login</h1><p>Amberline keeps it: you play with it. Advanced can set its password.</p>" +
+        "<h1>This is your own login</h1><p>You play with this login, so Amberline keeps it. You can set its password under Advanced.</p>" +
         $"<p><a href={UsersPath}>Back to Users</a></p>", StatusCodes.Status400BadRequest);
 
     /// <summary>The whole seconds of a match so far as mm:ss, as the dashboard's game cards show them.</summary>
@@ -282,8 +282,8 @@ public static class HostInvite
     private static string DeleteConfirm(string token, PlatformAccount user)
     {
         var name = WebUtility.HtmlEncode(user.Username);
-        return $"<h1>Delete {name}?</h1><p>This cannot be undone. The login goes for good, and its username and summoner name " +
-            $"({WebUtility.HtmlEncode(user.Summoner)}) can be taken again. Its past games stay, under that name.</p>" +
+        return $"<h1>Delete {name}?</h1><p>This cannot be undone. The login is deleted, and its username and summoner name " +
+            $"({WebUtility.HtmlEncode(user.Summoner)}) become free for others. Its past games stay, under that name.</p>" +
             $"<form method=post action={UsersPath}/delete>{token}<input type=hidden name=accountId value={user.Id}><div class=buttons>" +
             $"<button type=submit>Delete user</button> <a class=\"button secondary\" href={UsersPath}>Cancel</a></div></form>";
     }
@@ -339,10 +339,10 @@ public static class HostInvite
             <form method=post action={{AddPath}} novalidate>{{token}}
             {{HostPages.Field("username", "Their username", "3 to 24 letters (a to z), digits or _.", At("username"),
                 $"required minlength=3 maxlength=24 autocomplete=off value=\"{WebUtility.HtmlEncode(username)}\"")}}
-            {{HostPages.Field("summoner", "Summoner name", "What other players see. Empty: the username.", At("summoner"),
+            {{HostPages.Field("summoner", "Summoner name", "What other players see. If empty, the username is used.", At("summoner"),
                 $"maxlength={Amberline.Server.MatchRoster.MaxNameLength} autocomplete=off value=\"{WebUtility.HtmlEncode(summoner)}\"", required: false)}}
             {{HostSteps.StartChoice("Start them at", mode, At("mode"))}}
-            {{HostPages.Field("password", "Password", "Empty: Amberline makes one. Or at least 10 characters.", At("password"),
+            {{HostPages.Field("password", "Password", "At least 10 characters. If empty, Amberline makes one.", At("password"),
                 "type=password maxlength=128 autocomplete=new-password", required: false)}}
             <div class=actions><button type=submit>Create their login</button></div></form>
             {{link}}
@@ -362,9 +362,9 @@ public static class HostInvite
     {
         var user = WebUtility.HtmlEncode(username);
         var message = Message($"""
-            Join my game server "{name}"!
+            Join my game server "{name}".
             You need your own {RetailClients.Year} game and AIR client.{(homeOnly ? "\nYour PC must be on the same home network as mine." : "")}
-            Open the invite link I sent and follow its page; it puts "{name}" on your desktop. Then log in with:
+            Open the invite link I sent and follow its page. It puts "{name}" on your desktop. Then log in with:
               username: {username}
               password: {password}
             """);

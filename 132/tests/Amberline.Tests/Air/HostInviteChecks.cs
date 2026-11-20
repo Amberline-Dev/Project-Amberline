@@ -89,8 +89,8 @@ public static class HostInviteChecks
                 ready.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal) &&
                 ready.Contains("The password is shown only now.", StringComparison.Ordinal) && !ready.Contains("onclick", StringComparison.Ordinal), ready);
             var message = Message(ready);
-            TestAssert.True(message.StartsWith("Join my game server \"Test Server\"!\n", StringComparison.Ordinal) &&
-                message.Contains("Open the invite link I sent and follow its page; it puts \"Test Server\" on your desktop. Then log in with:\n  username: friend1\n  password: ", StringComparison.Ordinal), message);
+            TestAssert.True(message.StartsWith("Join my game server \"Test Server\".\n", StringComparison.Ordinal) &&
+                message.Contains("Open the invite link I sent and follow its page. It puts \"Test Server\" on your desktop. Then log in with:\n  username: friend1\n  password: ", StringComparison.Ordinal), message);
             generated = Regex.Match(message, @"password: (\S+)\z").Groups[1].Value;
             TestAssert.True(Generated.IsMatch(generated), "the message holds a generated password: " + message);
             using (var login = JsonDocument.Parse(await LoginAsync(browser, "friend1", generated, HttpStatusCode.OK)))
@@ -364,7 +364,7 @@ public static class HostInviteChecks
 
             // Disable (Remove access): the password no longer works, every way in ends; the account and the other logins stay.
             var removed = await PostAsync(browser, HostInvite.UsersPath + "/disable", token, HttpStatusCode.OK, ("accountId", friend.Id.ToString()));
-            TestAssert.True(removed.Contains("friend1 can no longer log in, and was logged out.", StringComparison.Ordinal) &&
+            TestAssert.True(removed.Contains("friend1 can no longer log in and was logged out.", StringComparison.Ordinal) &&
                 removed.Contains("<b>friend1</b>", StringComparison.Ordinal), "the account stays listed: " + removed);
             await LoginAsync(browser, "friend1", oldPassword, HttpStatusCode.Forbidden);
             TestAssert.True(accounts.Authenticate("friend1", oldPassword) is null, "the tunnel's sign-in refuses the old password too");
@@ -390,7 +390,7 @@ public static class HostInviteChecks
                 !Row(listed, "friend1").Contains("New password", StringComparison.Ordinal) && !Row(listed, "friend1").Contains(">Disable<", StringComparison.Ordinal) &&
                 Row(listed, "friend2").Contains("Disable<span class=vh> friend2</span>", StringComparison.Ordinal) &&
                 !Row(listed, "friend2").Contains("<span class=mark>Disabled</span>", StringComparison.Ordinal) &&
-                listed.Contains("<p class=tip>New password and Disable log the user out at once", StringComparison.Ordinal), "friend1 disabled, friend2 not: " + listed);
+                listed.Contains("<p class=tip>New password and Disable log the user out immediately", StringComparison.Ordinal), "friend1 disabled, friend2 not: " + listed);
 
             // Enable (Give access again) lets friend1 in again, shown once; it ends friend1's ways in again (a parked session too),
             // nobody else's.

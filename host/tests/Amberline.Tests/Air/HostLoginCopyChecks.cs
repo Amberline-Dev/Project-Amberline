@@ -124,9 +124,8 @@ public static class HostLoginCopyChecks
                 var asked = 0;
                 var trusted = false;
                 home.Loop.CopyFrom = new CopyPlaces(Path.Combine(pc, "Elsewhere"), Path.Combine(pc, "C"), _ => { Interlocked.Increment(ref asked); return trusted; });
-                const string Others = "but other people who use this PC can change its files, so Amberline does not copy its logins. " +
-                    "Update your Amberline for 1.0.0.126 to 0.1.26 or later and start it once.";
-                await RefusedAsync(browser, $"Amberline found an Amberline for 1.0.0.126 in {install}, {Others}", "the drive's root, changeable by others");
+                const string Others = "so its logins are not copied. Update it to 0.1.26 or later and start it once.";
+                await RefusedAsync(browser, $"Other people who use this PC can change the files of your Amberline for 1.0.0.126 in {install}, {Others}", "the drive's root, changeable by others");
                 trusted = true;
                 Interlocked.Exchange(ref asked, 0);
                 TestAssert.True((await browser.GetStringAsync("/host/setup/login")).Contains("4 logins found, yours among them.", StringComparison.Ordinal),
@@ -145,7 +144,7 @@ public static class HostLoginCopyChecks
                     var writable = PrivateTo<FileSecurity>(identity.User!);
                     writable.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null), FileSystemRights.Write, AccessControlType.Allow));
                     new FileInfo(Path.Combine(oldData, "accounts.json")).SetAccessControl(writable);
-                    await RefusedAsync(browser, $"Amberline found an Amberline for 1.0.0.126 in {install}, {Others}", "accounts.json writable by Users");
+                    await RefusedAsync(browser, $"Other people who use this PC can change the files of your Amberline for 1.0.0.126 in {install}, {Others}", "accounts.json writable by Users");
                 }
                 // Batch 830 review: never through a link, on any route; here this user's own pointer names an install whose data is a junction.
                 var (name126, marker126) = Home126();
@@ -158,19 +157,19 @@ public static class HostLoginCopyChecks
                 Directory.CreateDirectory(Path.Combine(linked, "Local", name126));
                 File.WriteAllText(Path.Combine(linked, "Local", name126, "install.json"), JsonSerializer.Serialize(new { folder = linkedInstall }));
                 home.Loop.CopyFrom = new CopyPlaces(Path.Combine(linked, "Local"), null, _ => true);
-                await RefusedAsync(browser, $"Amberline found an Amberline for 1.0.0.126 in {linkedInstall}, but a part of it is a link to another place, " +
-                    "so Amberline does not copy its logins.", "a junction data folder");
+                await RefusedAsync(browser, $"Your Amberline for 1.0.0.126 in {linkedInstall} contains a link to another place, " +
+                    "so its logins are not copied.", "a junction data folder");
                 // Batch 857 (design step 5, route (b)): the install this user's own pointer names counts only while it is locked, as the drive's root's;
                 // not locked, the page says what to do. Locked as that line's own start locks it (the same InstallLock), it is offered, and this
                 // line changes none of its permissions.
                 home.Loop.CopyFrom = new CopyPlaces(Path.Combine(pc, "Local"), Path.Combine(pc, "C"), _ => false);
-                await RefusedAsync(browser, $"Amberline found an Amberline for 1.0.0.126 in {install}, {Others}", "the pointer's install, not locked");
+                await RefusedAsync(browser, $"Other people who use this PC can change the files of your Amberline for 1.0.0.126 in {install}, {Others}", "the pointer's install, not locked");
                 if (OperatingSystem.IsWindows())
                 {
                     InstallLockChecks.Hazard(Path.Combine(pc, "C"));
                     Amberline.AirCompanion.InstallLock.Restamp(install, null);
                     home.Loop.CopyFrom = new CopyPlaces(Path.Combine(pc, "Local"), Path.Combine(pc, "C"), CopyPlaces.Private);
-                    await RefusedAsync(browser, $"Amberline found an Amberline for 1.0.0.126 in {install}, {Others}", "the pointer's install, open to the drive's users");
+                    await RefusedAsync(browser, $"Other people who use this PC can change the files of your Amberline for 1.0.0.126 in {install}, {Others}", "the pointer's install, open to the drive's users");
                     TestAssert.Equal(null, Amberline.AirCompanion.InstallLock.Lock(install, top: pc), "the 1.0.0.126 start's own lock");
                     var locked = InstallLockChecks.Sddl(install);
                     TestAssert.True((await browser.GetStringAsync("/host/setup/login")).Contains("4 logins found, yours among them.", StringComparison.Ordinal),

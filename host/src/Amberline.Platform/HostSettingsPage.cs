@@ -197,7 +197,7 @@ public static class HostSettingsPage
         }));
         return $"""
             <section class=folder aria-labelledby=news-title><h2 id=news-title>Launcher news</h2>
-            <p class=tip>The 2011 launcher shows up to {LauncherNews.MaxHeadlines} headlines, each with an optional link, and the server's status when it opens. Use plain letters, digits and punctuation only: no quotation marks and no backslashes. A headline keeps its date while its title and link stay the same; a new or changed one is dated the day you save it. Until you save one, the launcher shows a welcome headline.</p>
+            <p class=tip>When the 2011 launcher opens, it shows the server's status and up to {LauncherNews.MaxHeadlines} headlines, each with an optional link. Use only plain letters, digits and punctuation, without quotation marks or backslashes. A new or changed headline gets the date you save it. Until you save one, the launcher shows a welcome headline.</p>
             <form method=post action={NewsPath} data-news-budget={LauncherNews.MaxBytes}>{token}
             {fields}
             <p class=hint id=news-budget aria-live=polite>{NewsCounter(rows)}</p>
@@ -241,11 +241,11 @@ public static class HostSettingsPage
         var notice = problem is not null ? HostPages.Errors((problem, typed is null ? null : "games")) : saved switch
         {
             "name" => $"<p class=notice role=status>Saved. Send your users the new invite link to show the new name. {InviteLinkLink}</p>",
-            "address" => $"<p class=notice role=status>Saved. Send your users the new invite link: their old one looks at the old address. {InviteLinkLink}</p>",
+            "address" => $"<p class=notice role=status>Saved. Send your users the new invite link. Their old link still uses the old address. {InviteLinkLink}</p>",
             "folders" => "<p class=notice role=status>Saved. Amberline restarted to use the new folders.</p>",
             "register" or "share" or "paid" or "champions" => "<p class=notice role=status>Saved.</p>",
             "news" => "<p class=notice role=status>Saved. The 2011 launcher shows them the next time it opens.</p>",
-            "cheats" => "<p class=notice role=status>Saved. It counts for games that start from now on.</p>",
+            "cheats" => "<p class=notice role=status>Saved. It applies to games that start from now on.</p>",
             HostGamesSetting.Saved => $"<p class=notice role=status>{HostGamesSetting.SavedNotice}</p>",
             _ => "",
         };
@@ -265,7 +265,7 @@ public static class HostSettingsPage
             <section class=folder aria-labelledby=paid-title><h2 id=paid-title>Skins and RP</h2>
             <form method=post action={PaidContentPath}>{token}
             <label class=choice><input type=checkbox name=on value=on{(settings.PaidContentOff ? "" : " checked")}>Offer skins and RP</label>
-            <p class=tip>Off: everyone plays the default looks, and the store shows no skins and no RP. Nothing anyone owns is removed.</p>
+            <p class=tip>When this is off, everyone plays the default looks, and the store shows no skins and no RP. Nothing anyone owns is removed.</p>
             <div class=buttons><button type=submit>Save</button></div></form></section>
             """;
         var roster = controls is null ? null : Roster();
@@ -296,7 +296,7 @@ public static class HostSettingsPage
             <p><a href=/host/updates>Change the update check</a></p></section>
             <section class=folder aria-labelledby=play-title><h2 id=play-title>Invite link</h2>
             <p>{{InviteLinkLink}}</p>
-            <p><a href="{{HostAttention.CertificatePath}}?from=settings">Make a new invite link</a>: every user's old invite link and shortcut stop working.</p></section>
+            <p><a href="{{HostAttention.CertificatePath}}?from=settings">Make a new invite link</a>. Every user's old invite link and shortcut then stop working.</p></section>
             <section class=folder aria-labelledby=register-title><h2 id=register-title>Sign-ups</h2>
             <form method=post action={{RegisterPath}}>{{token}}
             <label class=choice><input type=checkbox name=on value=on{{(signUp.On ? " checked" : "")}}>Let people register themselves</label>
@@ -336,7 +336,7 @@ public static class HostSettingsPage
                 ? Tick("data", data, $"Also delete your logins and settings ({HostUninstall.Size(plan.Size(UninstallKind.Data))}). " +
                     "Users' logins and invite links stop working for good.") : "");
         var firewall = await HostUninstall.FirewallRulesAsync(loop.Network, cancel)
-            ? "<li>its Windows Firewall rules (Windows asks once, for Windows Command Processor: choose Yes)</li>" : "";
+            ? "<li>its Windows Firewall rules. Windows asks once, for Windows Command Processor. Choose Yes.</li>" : "";
         return HostMode.Page($$"""
             {{Heading}}
             {{HostPages.Errors(shown)}}
@@ -360,7 +360,7 @@ public static class HostSettingsPage
             lines.Count == 0 ? "" : $"<h2>{title}</h2><ul>{string.Concat(lines.Select(line => $"<li>{Encode(line)}</li>"))}</ul>";
         return $"""
             <h1>{HostPages.Product} is uninstalled</h1>
-            <p>Amberline has stopped; its window closes by itself.</p>
+            <p>Amberline has stopped. Its window closes by itself.</p>
             {List("Removed", result.Done)}
             {List("Kept", result.Kept)}
             {List("Still to do", result.ByHand)}
