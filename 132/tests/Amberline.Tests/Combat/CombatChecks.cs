@@ -4854,7 +4854,7 @@ public static class CombatChecks
             Position2? ownerPosition = null, Team? alliedTeam = null, string? enemyEffectName = null,
             string? boneName = null, bool persistent = false, uint ownerHeroNetId = 0,
             Func<(Position2 Source, Position2 Target)>? livePositions = null,
-            ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null)
+            ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null, double fowRadius = 0.0)
         {
             if (_allocate is null) throw new NotSupportedException(nameof(CreateEffect));
             if (_navigation is null) throw new NotSupportedException(nameof(CreateEffect));

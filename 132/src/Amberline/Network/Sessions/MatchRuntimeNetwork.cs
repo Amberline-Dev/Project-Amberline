@@ -270,7 +270,7 @@ public sealed class MatchRuntimeNetwork : IDisposable
                     if (@event.Channel == 1 && plain.Length >= 5 && plain[0] == 0x95 &&
                         _runtime.Session.Participant(receivePeer.ConnectionId) is not null)
                     {
-                        // The stock client raises OnLeave itself from this notice (DuelSession.Presence.cs).
+                        // The players hear this leave from the registry removal that Detach sends (DuelSession.Presence.cs); the exit notice is for spectators.
                         Send(_runtime.Session.BuildExitNotice(receivePeer.ConnectionId));
                         Detach(receivePeer.ConnectionId, "client-exit");
                         receivePeer.DisconnectNow();

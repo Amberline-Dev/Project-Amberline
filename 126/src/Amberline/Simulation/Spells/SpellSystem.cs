@@ -417,8 +417,22 @@ public sealed partial class SpellSystem
         }
         OnSpellRequestAccepted(hero);
         StopCastGesture(hero);
-        ExecuteCast(hero, req, now);
+        // Batch 929: a press that replaces a cast walking into range finds that approach as the hero's route, which is not a walk to hand back.
+        ExecuteCastEndingApproach(hero, req, now, queued is not null);
         return true;
+    }
+
+    /// <summary>
+    /// Batch 929: whether the cast running now ends a cast approach (its own, or one it replaces), so the hero's route is that approach and
+    /// not a player's walk (<see cref="PostponedHeroOrders.PostponeForCast"/>, read in <see cref="BeginChampionCast"/>).
+    /// </summary>
+    private bool _castEndsApproach;
+
+    private void ExecuteCastEndingApproach(Entity hero, SpellCastRequest request, double now, bool endsApproach)
+    {
+        _castEndsApproach = endsApproach;
+        try { ExecuteCast(hero, request, now); }
+        finally { _castEndsApproach = false; }
     }
 
     /// <summary>
@@ -521,7 +535,7 @@ public sealed partial class SpellSystem
     // uncancellable windup. The stock client refuses Stop during that windup
     // (the cancel-blocked check), so only a later order cuts the clip;
     // that keeps the hero from sliding in it (playtest #7/#22).
-    private void StopCastGesture(Entity hero)
+    internal void StopCastGesture(Entity hero)
     {
         if (!hero.CastClipActive || SpellWindup.IsWindingUp(hero)) return;
         hero.CastClipActive = false;
@@ -726,7 +740,7 @@ public sealed partial class SpellSystem
         if (check.Allowed)
         {
             hero.PendingCast = null;
-            ExecuteCast(hero, pending.Request, _time);
+            ExecuteCastEndingApproach(hero, pending.Request, _time, endsApproach: true);
             return;
         }
         if (check.Failure != SpellCastFailure.Range)
@@ -954,8 +968,8 @@ public sealed partial class SpellSystem
         }
         if (interruptOrder)
         {
-            // Batch 807: an attack order is postponed for a windup spell and handed back after its cast frame.
-            PostponedHeroOrders.PostponeForCast(this, hero, data, _time);
+            // Batch 807: an attack order is postponed for a windup spell and handed back after its cast frame (batch 929: a walk too).
+            PostponedHeroOrders.PostponeForCast(this, hero, OrderHandBackDelay(hero, slot, data), _time, keepWalk: !_castEndsApproach);
             _combat.InterruptBasicAttack(hero);
             hero.Waypoints.Clear();
             hero.Target = null;
@@ -1025,6 +1039,25 @@ public sealed partial class SpellSystem
         {
             _effects.SendCooldown(hero, slot, hero.SpellCooldowns[slot]);
             _effects.SendStats(hero);
+        }
+    }
+
+    /// <summary>
+    /// Batch 929: the wind-up an order-taking cast holds the hero's order for (<see cref="PostponedHeroOrders.PostponeForCast"/>): the spell's
+    /// cast time, or, for an instacast whose script casts a windup child (Sivir's Q, Ezreal's Q and W, Graves's R: the client's SpellCaster is the
+    /// child's, whose cast packet goes out with the press), the child's; null for an instacast with no such child.
+    /// </summary>
+    private double? OrderHandBackDelay(Entity hero, int slot, SpellData spell)
+    {
+        if (!spell.IsInstant) return spell.CastDelay;
+        try
+        {
+            return _championDispatcher.FindModule(hero.ChampionName)?.CasterChildSpell(hero, slot) is { } child &&
+                   _data.Spell(child) is { IsInstant: false } windup ? windup.CastDelay : null;
+        }
+        catch (InibinException)
+        {
+            return null;
         }
     }
 

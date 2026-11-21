@@ -38,9 +38,15 @@ public sealed partial class Entity
 
     /// <summary>
     /// Batch 807: the attack order a windup cast postponed and the spell-clock time it is handed back (Simulation/Spells/PostponedHeroOrders);
-    /// a fresh player order drops it.
+    /// a fresh player order drops it. Batch 929: a walk too.
     /// </summary>
     public (VayneTumbleOrderIntent Order, double At)? CastPostponedOrder { get; set; }
+
+    /// <summary>
+    /// Batch 929: the gameplay dispatcher holds a click of this hero (an order, not a spell press) behind a wind-up or the hero's own dash, to be
+    /// applied when it ends. It is the newest order, so no postponed order is handed back before it (PostponedHeroOrders.HasNewerOrder).
+    /// </summary>
+    public bool HeldPlayerOrder { get; set; }
 
     private IChampionState? _championState;
 

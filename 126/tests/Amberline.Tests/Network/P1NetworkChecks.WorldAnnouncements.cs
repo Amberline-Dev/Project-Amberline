@@ -128,17 +128,10 @@ public static partial class P1NetworkChecks
         var clientId = session.Participant(1)!.ClientId;
         byte[] Notice(byte opcode) => [opcode, 0, 0, 0, 0, .. BitConverter.GetBytes(clientId)];
 
-        // OnLeave: Exit (0xA0) naming the seat's client id, to every other ready seat only.
+        // The players get no Exit: their leave line is the registry removal (session.departure-announced-once-per-seat).
+        // Spectators still get the exit through the spectator stream.
         var exit = session.BuildExitNotice(1);
-        TestAssert.Equal(new long[] { 2, 3 }, exit.Select(packet => packet.ConnectionId).OrderBy(id => id).ToArray(),
-            "the leaving seat is not told about itself");
-        foreach (var packet in exit)
-        {
-            TestAssert.Equal(Convert.ToHexString(Notice(0xA0)),
-                Convert.ToHexString(packet.Packet.Plaintext.Span), "Exit carries the client id");
-            TestAssert.Equal(LeagueProtocolConstants.VariantChannel, packet.Packet.Channel);
-            TestAssert.Equal(LeaguePacketReliability.Reliable, packet.Packet.Reliability);
-        }
+        TestAssert.Equal(0, exit.Count, "no exit notice reaches the other players");
 
         // OnReconnect: Reconnect (0x10) naming the seat, never to the returning (still loading) client.
         session.Disconnect(1);
@@ -160,6 +153,60 @@ public static partial class P1NetworkChecks
             TestAssert.False(packet.Packet.Plaintext.Span[0] == 0x4A, "no world event for the client-raised ids");
         TestAssert.Equal("PlayerExited", WirePacketDecoder.LogName(0xA0, LeagueProtocolConstants.VariantChannel));
         TestAssert.Equal("ReconnectAck", WirePacketDecoder.LogName(0x10, LeagueProtocolConstants.VariantChannel));
+    }
+
+    [Check("session.departure-announced-once-per-seat")]
+    public static void EachDepartureIsAnnouncedOncePerSeat()
+    {
+        // The packets a departure sends the other seats, in the order MatchRuntimeNetwork sends them: the exit notice (players get none),
+        // then the detach. A leave is one registry removal (channel 0, opcode 1, client id at offset 4). A return is one registry add
+        // (opcode 0) and one reconnect notice. Seats 2 and 3 are the watchers.
+        var exitOpcode = LoadingPackets.PlayerExited(0).Plaintext.Span[0];
+        var reconnectOpcode = LoadingPackets.PlayerReconnected(0).Plaintext.Span[0];
+        static bool EntryNaming(SessionOutboundPacket packet, byte opcode, uint clientId) =>
+            packet.Packet.Channel == 0 && packet.Packet.Plaintext.Span[0] == opcode &&
+            BinaryPrimitives.ReadUInt32LittleEndian(packet.Packet.Plaintext.Span[4..]) == clientId;
+        void AssertOneLeaveEach(IReadOnlyList<SessionOutboundPacket> packets, uint clientId, string label)
+        {
+            foreach (var seat in new long[] { 2, 3 })
+            {
+                var toSeat = packets.Where(packet => packet.ConnectionId == seat).ToArray();
+                TestAssert.Equal(1, toSeat.Count(packet => EntryNaming(packet, 0x01, clientId)),
+                    $"{label}: seat {seat} is told the leave once, by the removal");
+                TestAssert.Equal(0, toSeat.Count(packet => packet.Packet.Plaintext.Span[0] == exitOpcode),
+                    $"{label}: seat {seat} gets no exit notice");
+            }
+        }
+
+        // A mid-game exit (C2S_Exit): the notice, then the detach.
+        var (runtime, session) = StartedThreeSeatMatch();
+        session.RunSchedulers();
+        TestAssert.True(session.Started);
+        var exitId = session.Participant(1)!.ClientId;
+        var exit = session.BuildExitNotice(1);
+        AssertOneLeaveEach([.. exit, .. MatchRuntimeNetwork.DetachSeat(runtime, 1)], exitId, "exit mid-game");
+
+        // A lost connection mid-game: the detach alone, then the seat comes back.
+        var (lostRuntime, lost) = StartedThreeSeatMatch();
+        lost.RunSchedulers();
+        var lostId = lost.Participant(1)!.ClientId;
+        AssertOneLeaveEach(MatchRuntimeNetwork.DetachSeat(lostRuntime, 1), lostId, "lost connection mid-game");
+        var returning = lost.AuthenticateReconnect(7, lost.BuildKeyCheck(1))!;
+        var back = lost.BuildReconnectNotice(returning);
+        foreach (var seat in new long[] { 2, 3 })
+        {
+            var toSeat = back.Where(packet => packet.ConnectionId == seat).ToArray();
+            TestAssert.Equal(1, toSeat.Count(packet => EntryNaming(packet, 0x00, lostId)),
+                $"seat {seat} gets its registry entry back once");
+            TestAssert.Equal(1, toSeat.Count(packet => packet.Packet.Plaintext.Span[0] == reconnectOpcode),
+                $"seat {seat} gets one reconnect notice");
+        }
+
+        // A leave before the start: nothing is sent.
+        var (earlyRuntime, early) = StartedThreeSeatMatch();
+        TestAssert.Equal(0, early.BuildExitNotice(1).Count, "a leave before the start is announced to nobody");
+        TestAssert.Equal(0, MatchRuntimeNetwork.DetachSeat(earlyRuntime, 1).Count,
+            "a lost connection before the start is announced to nobody");
     }
 
     [Check("protocol.presence-notice-layouts")]
@@ -235,13 +282,20 @@ public static partial class P1NetworkChecks
         TestAssert.True(runtime.Session.Start());
         watcherEvents.Clear();
 
-        // C2S_Exit (0x94): the other client is told once; nothing is sent as a 0x4A world event.
+        // C2S_Exit (0x94 on 126): the other client is told the leave once, by the registry removal (channel 0, opcode 1, client id
+        // at offset 4). It gets no exit notice, and no 0x4A world event.
+        bool SawRemoval(LeagueEnetEvent item) => item.Channel == 0 &&
+            DecodeReconnectPayload(runtime.Cipher, item) is { Length: 16 } removal && removal[0] == 0x01 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(removal.AsSpan(4)) == leaver.ClientId;
         leaverPeer.Send(1, new byte[] { 0x94, 0, 0, 0, 0 }, LeagueEnetPacketFlags.Reliable);
         leaverHost.Flush();
-        Wait(() => leaver.ConnectionId is null && Saw(watcherEvents, 0xA0), leaverHost, watcherHost);
-        TestAssert.Equal(1, watcherEvents.Count(item => Saw([item], 0xA0)), "one exit notice");
+        Wait(() => leaver.ConnectionId is null && watcherEvents.Any(SawRemoval), leaverHost, watcherHost);
+        TestAssert.Equal(1, watcherEvents.Count(SawRemoval), "one leave notice");
+        var exitOpcode = LoadingPackets.PlayerExited(0).Plaintext.Span[0];
+        TestAssert.False(watcherEvents.Any(item => HasPlainOpcode(runtime.Cipher, item, exitOpcode)),
+            "no exit notice reaches the other player");
         TestAssert.False(watcherEvents.Any(item => HasPlainOpcode(runtime.Cipher, item, 0x4A)),
-            "OnLeave is raised by the client from 0xA0, not by a world event");
+            "OnQuit is raised by the client from the registry removal, not by a world event");
 
         // The returning client is ready: the watcher sees the return, the returning client does not.
         var returnPeer = returnHost.Connect("127.0.0.1", network.Port, 8);

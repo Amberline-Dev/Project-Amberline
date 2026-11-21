@@ -3,8 +3,8 @@ using Amberline.Data;
 
 namespace Amberline.Simulation.Combat;
 
-/// <summary>Pure combat formulae shared by live combat and deterministic checks.</summary>
-public static class CombatRules
+/// <summary>Pure combat formulae shared by live combat and deterministic checks (the per-line part is CombatRules.Line.cs).</summary>
+public static partial class CombatRules
 {
     public static double ResistanceMultiplier(double resistance)
     {
@@ -35,10 +35,13 @@ public static class CombatRules
     /// <summary>
     /// Shipped class-to-class basic-attack ratio (Map1 Constants.var dr_*).
     /// Only the basic-attack path reads it: the native getters are named
-    /// GetAttackRatioWhenAttacking*, so spells and script damage are exempt.
+    /// GetAttackRatioWhenAttacking*, so spells and script damage are exempt. A camp monster's swing on a champion takes the line's
+    /// <see cref="CampMonsterToHeroRatio"/> instead where the line sets one (1.0.0.132: 1.0, batch 932).
     /// </summary>
     public static double AttackRatio(Entity attacker, Entity target, DamageRatios? ratios = null) =>
-        (ratios ?? GameData.Default.LevelConstants.DamageRatios).Ratio(ClassOf(attacker), ClassOf(target));
+        attacker.Kind == EntityKind.Neutral && target.UnitType == UnitType.Hero && CampMonsterToHeroRatio is { } campRatio
+            ? campRatio
+            : (ratios ?? GameData.Default.LevelConstants.DamageRatios).Ratio(ClassOf(attacker), ClassOf(target));
 
     public static BasicAttackResult BasicAttackDamage(
         Entity attacker,
@@ -54,7 +57,9 @@ public static class CombatRules
         // scalars, turret ramp and mitigation. The cannon minion's script is a compensation
         // built around it (0.5 x 2 is 1.0 against turrets). The jungle monsters' x1.43 is not
         // one against a champion: 2011 footage shows their hits on a champion at AD x 0.7, then
-        // armour, with no x1.43 (batch 758, BbHookRouter.RunHitUnit keeps it off a champion).
+        // armour, with no x1.43 (batch 758, patch 1.0.0.125, BbHookRouter.RunHitUnit keeps it off a
+        // champion); December 2011 footage (1.0.0.131) shows AD x 1.0, then armour (batch 932,
+        // AttackRatio and the 132 CombatRules.Line.cs).
         // Those scalars are the character scripts' own now (batch 159 part 2: CharOnHitUnit of
         // CharScriptGolem and its fourteen jungle siblings, CharOnHitUnit of
         // CharScriptBlue_Minion_MechCannon 0039-0063), so they no longer sit here.

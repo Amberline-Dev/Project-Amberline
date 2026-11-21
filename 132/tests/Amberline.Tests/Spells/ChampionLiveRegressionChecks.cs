@@ -338,8 +338,9 @@ public static partial class ChampionLiveRegressionChecks
             TestAssert.True(lee.PendingCast is null && lee.SummonerCooldowns[1] > 0.0 &&
                 enemy.Buffs.Any(buff => buff.Name == "SummonerDot"), "queued Ignite fires after the landing");
         }
-        // A newer move click during the dash replaces the queued cast, as any
-        // newer order does in retail; the click itself is still dropped.
+        // Batch 929 (restated): a move click during the dash no longer drops the R queued behind it (playtest B3 #10 had the newer click replace
+        // the queued cast and itself be dropped). Batch 663 has the original game cast a spell pressed during a dash at once, and the queue only
+        // waits for Q2's clip lock; so R fires at the landing, and the click, held through the dash, walks Lee once R's cast frame has run.
         using (var match = new Match("LeeSin", Team.Order))
         {
             var runtime = match.Runtime; var lee = match.Hero(0); var enemy = match.Hero(1);
@@ -350,15 +351,17 @@ public static partial class ChampionLiveRegressionChecks
             match.Cast(0, 3, enemy);
             TestAssert.True(lee.PendingCast is not null, "R queues behind Q2");
             var dash = lee.ForcedMove;
-            match.Move(0, new Position2(6400, 7500));
-            TestAssert.True(lee.PendingCast is null && ReferenceEquals(dash, lee.ForcedMove),
-                "the move click cancels the queued R and keeps the dash");
+            var click = new Position2(6400, 7500);
+            match.Move(0, click);
+            TestAssert.True(lee.PendingCast is not null && ReferenceEquals(dash, lee.ForcedMove),
+                "the move click keeps the queued R and the dash");
             match.Clear();
-            for (var tick = 0; tick < 60; tick++) runtime.Tick(1.0 / 30.0);
+            for (var tick = 0; lee.ForcedMove is not null && tick < 60; tick++) runtime.Tick(1.0 / 30.0);
             TestAssert.True(lee.ForcedMove is null, "Q2 lands");
-            TestAssert.False(lee.SpellCooldowns[3] > 0.0 ||
-                match.Captures[0].Packets.Any(packet => Opcode(packet) == 0xBE),
-                "the replaced R never fires after the landing");
+            var landing = lee.Position;
+            for (var tick = 0; tick < 45; tick++) runtime.Tick(1.0 / 30.0);
+            TestAssert.True(match.Captures[0].Packets.Any(packet => Opcode(packet) == 0xBE), "the queued R fires after the landing");
+            TestAssert.True(Distance(lee.Position, click) < Distance(landing, click) - 100.0, "and the held click walks Lee after it");
         }
     }
 

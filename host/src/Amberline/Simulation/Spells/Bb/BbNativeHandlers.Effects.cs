@@ -32,7 +32,8 @@ namespace Amberline.Simulation.Spells.Bb;
 /// belongs to its owner's player, and a unit with no player (a minion, "Nothing") restricts nothing.</item>
 /// </list>
 /// <c>FOWTeam</c> / <c>FOWTeamOverrideVar</c> (else a placemarker cube's team) is also the effect's fog-of-war team, which gets an effect on no current unit out of its sight (batch 473,
-/// <c>ReplicationDelivery.CanRouteEffectCreate</c>). Not modelled: <c>FOWVisibilityRadius</c> and <c>SendIfOnScreenOrDiscard</c>, which the sink has no
+/// <c>ReplicationDelivery.CanRouteEffectCreate</c>). <c>FOWVisibilityRadius</c> is the extent of the effect's point sight for the other teams (batch 931,
+/// <c>VisibilityRules.ProvidersRevealEffect</c>). Not modelled: <c>SendIfOnScreenOrDiscard</c>, which the sink has no
 /// counterpart for.
 /// </summary>
 internal sealed partial class BbNativeHandlers

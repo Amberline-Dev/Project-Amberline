@@ -307,7 +307,8 @@ public interface ISpellEffectSink
         Position2? ownerPosition = null, Team? alliedTeam = null, string? enemyEffectName = null,
         string? boneName = null, bool persistent = false, uint ownerHeroNetId = 0,
         Func<(Position2 Source, Position2 Target)>? livePositions = null,
-        ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null);
+        ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null,
+        double fowRadius = 0.0);
     /// <summary>Batch 582: a default hit pass effect, placed in the world at <paramref name="position"/>, <paramref name="height"/> above the ground,
     /// and not attached to <paramref name="bindNetId"/> (0x8C flags 0x08; <see cref="ProtocolSpellEffectSink.CreateHitEffect"/>).</summary>
     uint CreateHitEffect(string effectName, Position2 position, uint bindNetId, double height) =>

@@ -117,8 +117,8 @@ public static partial class ChampionLiveRegressionChecks
                 "Q2 must not push character fade: stock animation registration is 0xB8");
             var animation = match.Captures[0].Packets.Single(packet => Opcode(packet) == 0xB9).Plaintext.Span;
             TestAssert.Equal(lee.NetId, BinaryPrimitives.ReadUInt32LittleEndian(animation[1..]), "animate the dashing champion");
-            TestAssert.Equal(0xB0u, BinaryPrimitives.ReadUInt32LittleEndian(animation[5..]),
-                "132 AnimationComponent loop/lock/no-blend flags (batch 885)");
+            TestAssert.Equal(0xA1u, BinaryPrimitives.ReadUInt32LittleEndian(animation[5..]),
+                "132 AnimationComponent loop/lock/no-blend flags (batches 885 and 933)");
             TestAssert.Near(0, BinaryPrimitives.ReadSingleLittleEndian(animation[9..]), 0, "native clip speed");
             TestAssert.Equal("Spell1b\0", System.Text.Encoding.ASCII.GetString(animation[13..]), "shipped Q2 flight clip");
             if (ending == "death") runtime.Combat.Kill(lee, enemy.NetId);

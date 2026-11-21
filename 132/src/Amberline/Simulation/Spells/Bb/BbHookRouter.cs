@@ -506,6 +506,13 @@ internal sealed partial class BbHookRouter : IBbHookSink
     /// </summary>
     private void DrawDefaultHitEffects(BbScript script, Entity target, BbHookFrame frame)
     {
+        // Batch 931 (Reconstruction; players, 21 November 2026: the "global sound bug, very problematic on Graves", and batch 930's "Q hits
+        // everyone in the cone immediately"): Buckshot's cast-frame list is its aim cone (TTYPE_Cone, LockConeToPlayer), and GravesClusterShot has no
+        // TargetExecute: the hits are its pellets' (GravesClusterShotAttack.TargetExecute creates Graves_ClusterShot_Tar on the unit each pellet hits).
+        // Its inibin also names Graves_ClusterShot_Tar as HitEffectName, so the pass drew the pellet impact, and the GravesClusterShotAttack/hit sound
+        // that particle carries, on every unit in the 900 cone at the cast frame: 0.23 s before any pellet and on units no pellet reaches, on every
+        // client. Where the stock server ran this pass is server code; the scripts show the impact belongs to the pellet hits.
+        if (frame.MissileNetId == 0 && string.Equals(script.Name, "GravesClusterShot", StringComparison.OrdinalIgnoreCase)) return;
         var data = DefaultEffects(script.Name);
         if (data is null) return;
         // Batch 410 (finding 85): Annie's InfernalGuardian torch in Pantheon's Grand Skyfall inibins is a copy from another champion, so the
@@ -904,7 +911,8 @@ internal sealed partial class BbHookRouter : IBbHookSink
             // its DamageAmount write (the x1.43 of all fifteen 126 jungle CharScripts, their only write; in 1.0.0.132 only the seven Twisted
             // Treeline scripts keep it, batch 781) does not reach a champion. Retail
             // 2011 footage (patch 1.0.0.125; 99 clean hits of seven monster types on a champion, levels 1-12, within 1 %) shows
-            // AD x dr_UnitToHero 0.7 x 100/(100 + armour) and no x1.43. The result is known, the mechanism is not. The rest of the
+            // AD x dr_UnitToHero 0.7 x 100/(100 + armour) and no x1.43. The result is known, the mechanism is not.
+            // In 1.0.0.132 the swing reaches a champion at AD x 1.0, then armour (December 2011 footage, batch 932: CombatRules.Line.cs). The rest of the
             // hook still runs on a champion (the Dragon's Burning, redDragon's splash, the Wraiths' and Ghast's EternalThirst_buf.troy),
             // and a hit on anything else (minions, pets, clones) keeps the x1.43, which the footage cannot show. Every swing of a camp
             // monster reaches its CharOnHitUnit only here (CombatService's ModifyBasicAttackDamage, through the hook fan-out), and only

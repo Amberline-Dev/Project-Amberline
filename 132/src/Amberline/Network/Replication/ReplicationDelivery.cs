@@ -151,8 +151,8 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             var teams = new HashSet<Team>();
             foreach (var team in _observers.Where(observer => observer.Ready)
                          .SelectMany(TeamsOf).Distinct())
-                if (VisibilityRules.ProvidersReveal(Environment,
-                        VisibilityRules.BuildTeamProviders(World, team, Balls, AdditionalProviders), position))
+                if (VisibilityRules.ProvidersRevealEffect(Environment,
+                        VisibilityRules.BuildTeamProviders(World, team, Balls, AdditionalProviders), position, ground.FowRadius))
                     teams.Add(team);
             message = ground with { CreationVisibleTeams = teams };
         }
@@ -403,6 +403,15 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
                             SendAll(observer, Services.BuildWaypointReanchor(actor, observer));
                         _leeDashSent[(observer, actorId)] = followVisible;
                     }
+                    // Batch 931 (Reconstruction; the players' "sounds heard from anywhere"): a swing reaches a client that sees the attacked unit but not
+                    // the attacker (CanRoute: either reference seen), and that client starts the shot, and its launch sounds (OnMissileCast and
+                    // OnMissileLaunch, which play at the missile whatever the fog), from wherever it last held the attacker. The attack reveal comes at the
+                    // server's cast frame, one step after the client's own. Such a client gets BasicAttackPos (0x1D) instead, whose handler first
+                    // puts the attacker at the packet's point (CombatPackets.BasicAttackAt). Which clients retail sent a swing to is server code.
+                    else if (packet.Packet.Plaintext.Span[0] == CombatPackets.BasicAttackOpcode && packet.Packet.Plaintext.Length == 15 &&
+                             packet.Packet.EntityReferences.FirstOrDefault() is { NetId: var attackerId } && !routeVisible.Contains(attackerId) &&
+                             World.Get(attackerId) is { } attacker)
+                        Send(observer, CombatPackets.BasicAttackAt(packet.Packet, attacker.Position));
                     else Send(observer, AsHeldBuffUpdate(observer.View, packet.Packet));
                     MarkCreated(observer.View, packet.Packet);
                 }

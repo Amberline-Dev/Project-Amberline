@@ -30,6 +30,11 @@ namespace Amberline.Tests.Network.Neutral;
 // (CharOnActivate's permanent flat AD and GlobalMonsterBuff's damagePerMinute, see Scripted132). The 2011 footage (patch 1.0.0.125) proved the
 // formula, AD x ratio (x crit) x armour on a champion and nothing more; its numbers are 126 data, so the pins below are that formula on the
 // 132 data at the footage's armours, and every swing is checked against the AD the 132 scripts give the monster when it swings.
+// Batch 932 (players, 21 November 2026: "the jungle feels way too weak"): retail footage of 25 December 2011 (patch 1.0.0.131, the 132 jungle)
+// shows a Nocturne of armour 57 (level 1) and 64 (level 3) hit by every Summoner's Rift camp at the target panel's AD (the 132 values) x 1.0,
+// then armour, less about 2 (his Tough Skin), not x 0.6: a camp monster's swing on a champion takes no class ratio in 132
+// (CombatRules.Line.cs). The footage armours and pins below are that video's (2026-11-21-batch-932-jungle-strength.md); the 1.0.0.125
+// footage stays the 126 line's.
 // The check is Serial: it swaps GameData's default map, as the server does for a match on another map.
 public static class JungleDamageChecks
 {
@@ -39,26 +44,30 @@ public static class JungleDamageChecks
     private const int FightSteps = 140;
     private const int SettleSteps = 50;
 
-    // The champion's armour in the footage while he cleared each camp (HUD stats panel, 11.5 + 3.5 x level): the camp's other members share it.
+    // Batch 932: the champion's armour in the December 2011 footage while he cleared each camp (HUD stats panel 57 at level 1, + 3.5 a
+    // level): wolves and blue at level 1, wraiths at 2, golems and red at 3. The camp's other members share it.
     private static readonly Dictionary<string, double> FootageArmor = new()
     {
-        ["Golem"] = 15.0, ["GiantWolf"] = 18.5, ["AncientGolem"] = 22.0, ["LizardElder"] = 29.0, ["LesserWraith"] = 32.5,
+        ["GiantWolf"] = 57.0, ["AncientGolem"] = 57.0, ["Wraith"] = 60.5, ["LesserWraith"] = 60.5, ["Golem"] = 64.0, ["SmallGolem"] = 64.0,
+        ["LizardElder"] = 64.0,
     };
 
-    // The footage's hits (JUNGLE-REPORT.md, per-monster averages; the HUD shows integers, so each reading is +/- 1) were AD x 0.7 (x crit) x
-    // 100/(100 + armour) at the armour he had, on the 126 records: Golem 39.57, GiantWolf 15.36 (critical x3 46.08), wolf 10.63 (critical x2
-    // 21.27), AncientGolem 63.11, YoungLizard 10.33 and 9.77, LizardElder 59.69, LesserWraith 18.49. Batch 781: the same formula on the 132 data
-    // (AD as the 132 scripts set it, Scripted132, x dr_UnitToHero 0.6). Every landed swing of the monster on a champion of that armour must be
-    // this one. The Ancient Golem, the Lizard Elder and the young lizards grow every minute in 132 (GlobalMonsterBuff's upgradeTimer), so they
-    // have no single number; their swings are held to the AD the scripts give them when they swing (Row).
+    // Batch 932: the December 2011 footage's hits (HUD health at 10 frames a second, each reading +/- 1, the champion's regeneration and
+    // heals in between) were the target panel's AD x 1.0 (x crit) x 100/(100 + armour), less about 2 (his Tough Skin; this check's champion
+    // has no masteries, so the pins are the formula itself). Every landed swing of the monster on a champion of that armour must be this one.
+    // The Ancient Golem (footage 39-40 at armour 57, 10 hits), the Lizard Elder (38-39 at armour 64) and the young lizards (4-5) grow every
+    // minute in 132 (GlobalMonsterBuff's upgradeTimer), so after this check's 20 minutes they have no footage number; their swings are held to
+    // the AD the scripts give them when they swing (Row).
     private static readonly (string Monster, bool Critical, double Armor, double Hit, string Video)[] Pins =
     [
-        ("Golem", false, 15.0, 28.17, "54 x 0.6 x 100/115; footage 39.57: level 1, 18 hits, mean 39.56"),
-        ("GiantWolf", false, 18.5, 12.15, "24 x 0.6 x 100/118.5; footage 15.36: level 2, 1 hit, 16"),
-        ("GiantWolf", true, 18.5, 36.46, "24 x 0.6 x 3 x 100/118.5; footage 46.08: level 2, critical x3, 2 hits, 47 and 46"),
-        ("wolf", false, 18.5, 7.09, "14 x 0.6 x 100/118.5; footage 10.63: level 2, 3 hits, mean 10.33"),
-        ("wolf", true, 18.5, 14.18, "14 x 0.6 x 2 x 100/118.5; footage 21.27: level 2, critical x2, 2 hits, 21 and 22"),
-        ("LesserWraith", false, 32.5, 7.70, "17 x 0.6 x 100/132.5; footage 18.49: level 6, 9 hits, mean 18.33"),
+        ("Golem", false, 64.0, 32.93, "54 x 100/164; footage level 3: 5 hits 31, 28, 31, 31, 27 (ratio 0.6 gives 19.76)"),
+        ("SmallGolem", false, 64.0, 18.29, "30 x 100/164; footage level 3: 5 hits 15, 16, 13, 15, 17 (ratio 0.6 gives 10.98)"),
+        ("GiantWolf", false, 57.0, 15.29, "24 x 100/157; footage level 1: 13 to 16 (ratio 0.6 gives 9.17)"),
+        ("GiantWolf", true, 57.0, 45.86, "24 x 3 x 100/157; footage level 1: critical x3, 1 hit, 43 (ratio 0.6 gives 27.52)"),
+        ("wolf", false, 57.0, 8.92, "14 x 100/157; footage level 1: 6 to 7 (ratio 0.6 gives 5.35)"),
+        ("wolf", true, 57.0, 17.83, "14 x 2 x 100/157; no critical wolf hit read in the footage"),
+        ("Wraith", false, 60.5, 15.58, "25 x 100/160.5; footage level 2: lands with a Lesser Wraith's, 22 together (ratio 0.6 gives 9.35)"),
+        ("LesserWraith", false, 60.5, 10.59, "17 x 100/160.5; footage level 2: 7 to 8 (ratio 0.6 gives 6.36)"),
     ];
 
     /// <summary>
@@ -275,8 +284,10 @@ public static class JungleDamageChecks
                 failures.Add($"map {map} camp {camp.Number}: the champion lost {lost:F2} health, its wire reported {wired:F2}");
             lines.Add($"map {map} camp {camp.Number}: armour {armor} lost {lost:F2} wired {wired:F2}" +
                       (foreign.Count > 0 ? $" foreign {foreign.Count}" : ""));
+            // Batch 932: a camp monster's swing on a champion takes the 132 line's ratio (1.0), not dr_UnitToHero.
             foreach (var member in members)
-                lines.Add(Row(map, camp.Number, member, samples[member.NetId], data, ratio, armor, mitigation, failures, pinned));
+                lines.Add(Row(map, camp.Number, member, samples[member.NetId], data, CombatRules.AttackRatio(member, hero), armor, mitigation,
+                    failures, pinned));
             if (footage is not null) runtime.Buffs.RemoveBuff(hero, footage.Slot);
             TestAssert.Near(ChampionArmor, hero.Armor, 1e-9, $"map {map} camp {camp.Number}: the champion's armour after the camp");
         }

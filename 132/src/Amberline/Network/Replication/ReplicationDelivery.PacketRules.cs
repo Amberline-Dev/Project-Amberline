@@ -101,12 +101,14 @@ public sealed partial class ReplicationDelivery
         // creates ShroomMine.troy at the trap, aimed at the trap (BindObjectVar Nothing, PosVar and TargetObjectVar Owner), with Teemo's team as
         // its fog-of-war team and FOWVisibilityRadius 300: the effect's sight is its point's (retail's server tracked an effect's team visibility,
         // FxOnEnterTeamVisiblity / OnLeaveTeamVisiblity), not the stealthed trap's, so the victim standing on it saw the blast and heard
-        // the sound the particle carries. Reconstruction: FOWVisibilityRadius is not modelled (the point's own sight is tested); an effect aimed
+        // the sound the particle carries. Batch 931 (Reconstruction): the point's sight takes the script's FOWVisibilityRadius (VisibilityRules.
+        // ProvidersRevealEffect: the centre or a point of that circle), so Graves's and Akali's smoke thrown into a wall reach the enemy standing in
+        // it, whose team sees the floor around the centre and never the centre itself (batch 930's W finding). An effect aimed
         // at a unit with no own sight of its point keeps the old rule (batch 690: it does not reach its own team through the target's fog).
         if (actors.Length > 0)
             return pointEffect && message.Position is Position2 point &&
                    (message.CreationVisibleTeams?.Any(observer.Allied) == true ||
-                    VisibilityRules.ProvidersReveal(Environment, teamState.Providers, point));
+                    VisibilityRules.ProvidersRevealEffect(Environment, teamState.Providers, point, message.FowRadius));
         // Batch 473 (Reconstruction): an effect on no current unit reaches its own fog-of-war team (BBSpellEffectCreate's FOWTeam /
         // FOWTeamOverrideVar, else the placemarker cube it was bound to) wherever it stands, as a unit reaches its own team
         // (VisibilityRules.RevealsEntity); other teams need sight of its point. The 0x8C carries no team and the client's
@@ -116,7 +118,7 @@ public sealed partial class ReplicationDelivery
         return message.FowTeam is Team fowTeam && observer.Allied(fowTeam) ||
                message.CreationVisibleTeams?.Any(observer.Allied) == true ||
                message.Position is Position2 position &&
-               VisibilityRules.ProvidersReveal(Environment, teamState.Providers, position);
+               VisibilityRules.ProvidersRevealEffect(Environment, teamState.Providers, position, message.FowRadius);
     }
 
     private bool IsCurrentActor(uint netId) =>

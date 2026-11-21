@@ -78,13 +78,13 @@ public static class DamageRatioChecks
         siege.MinionType = MinionType.Siege;
         TestAssert.Near(20, Raw(siege, turret), 1e-9, "siege ratio before its script x2");
 
-        // Jungle monster: UnitToHero 0.6. The character scripts' own CharOnHitUnit x1.43 (CharScriptGolem and its nine
-        // siblings, 0039-0063) is not this raw formula's business any more (batch 159 part 2): the raw hit is 18 x 0.6
-        // against a champion and 18 against a minion. The script's x1.43 then applies to the minion only: 2011 footage shows a
-        // champion taking 18 x 0.6 (batch 758, BbHookRouter.RunHitUnit).
+        // Jungle monster: no class ratio against a champion in 132 (batch 932, December 2011 footage: AD x 1.0, then armour; 126: UnitToHero
+        // 0.7). The character scripts' own CharOnHitUnit x1.43 (CharScriptGolem and its nine siblings, 0039-0063) is not this raw formula's
+        // business any more (batch 159 part 2): the raw hit is 18 against a champion and 18 against a minion. The script's x1.43 then applies
+        // to the minion only (batch 758, BbHookRouter.RunHitUnit).
         var wolf = Unit(12, EntityKind.Neutral, UnitType.Monster, Team.Neutral, 18);
         wolf.Name = "wolf";
-        TestAssert.Near(18 * 0.6, Raw(wolf, hero), 1e-9, "wolf against a champion");
+        TestAssert.Near(18, Raw(wolf, hero), 1e-9, "wolf against a champion");
         TestAssert.Near(18, Raw(wolf, minion), 1e-9, "wolf against a minion keeps only the shipped ratio");
 
         // Pets are minions (the pet spawn routine calls the minion creator): Unit class.

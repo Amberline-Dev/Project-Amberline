@@ -148,7 +148,8 @@ public static partial class ChampionLiveRegressionChecks
 
     // Batch 393 (owner findings 16, 58): a child cast that launches a missile reaches its caster's own client as the 0x41 missile alone. A cast
     // answer (0xBD) there would build a SpellCaster when the spellbook is empty, and that SpellCaster opens the HUD cast bar; the missile packet
-    // builds the object with no caster (the spell helper's cast routine). The other viewers keep their 0xBD.
+    // builds the object with no caster (the spell helper's cast routine). The other viewers keep their 0xBD, but for a line child cast with
+    // FireWithoutCasting (Call of the Void's portals), which since batch 930 reaches every view as its missile's creation 0x41 alone.
     [Check("spells-b393-malzahar-q-child-missile-skips-the-casters-cast-answer")]
     public static void MalzaharQChildMissileSkipsTheCastersCastAnswer()
     {
@@ -165,7 +166,7 @@ public static partial class ChampionLiveRegressionChecks
             "Malzahar's Call of the Void is accepted");
         runtime.Delivery.Flush();
         RunSpellTenths(match, 30);
-        AssertChildMissileSkipsTheCastersCastAnswer(match, "AlZaharCalloftheVoidMissile");
+        AssertChildMissileSkipsTheCastersCastAnswer(match, "AlZaharCalloftheVoidMissile", otherViewerGetsTheAnswer: false);
     }
 
     [Check("spells-b393-fiddlesticks-dark-wind-bounces-skip-the-casters-cast-answer")]
@@ -291,15 +292,17 @@ public static partial class ChampionLiveRegressionChecks
     private static uint MissileNetId(PlaintextPacket packet) =>
         Decode(packet).GetProperty("cast_info").GetProperty("missile_netid").GetUInt32();
 
-    private static void AssertChildMissileSkipsTheCastersCastAnswer(Match match, string spell)
+    private static void AssertChildMissileSkipsTheCastersCastAnswer(Match match, string spell, bool otherViewerGetsTheAnswer = true)
     {
         var hash = Amberline.Simulation.Spells.SpellSystem.ProtocolHash(spell);
         var owner = match.Captures[0].Packets.Where(packet => Opcode(packet) is 0xBD or 0x41 && ChildSpellHash(packet) == hash).ToArray();
         TestAssert.True(owner.Any(packet => Opcode(packet) == 0x41), $"{spell} still reaches the caster's client as its missile (0x41)");
         TestAssert.Equal(0, owner.Count(packet => Opcode(packet) == 0xBD),
             $"{spell} sends the caster's client no cast answer (0xBD), so its client builds no SpellCaster and opens no cast bar");
-        TestAssert.True(match.Captures[1].Packets.Any(packet => Opcode(packet) == 0xBD && ChildSpellHash(packet) == hash),
-            $"{spell} keeps its cast answer for the other viewer");
+        var other = match.Captures[1].Packets.Where(packet => Opcode(packet) is 0xBD or 0x41 && ChildSpellHash(packet) == hash).ToArray();
+        TestAssert.Equal(otherViewerGetsTheAnswer, other.Any(packet => Opcode(packet) == 0xBD),
+            $"{spell}: the other viewer's cast answer (a FireWithoutCasting line has none, batch 930)");
+        TestAssert.True(other.Length > 0, $"{spell} reaches the other viewer");
     }
 
     // Batch 323: CharScriptNocturne's CharOnSpellCast renames slot 3 to NocturneParanoia2 and restores its cooldown when Paranoia is cast, inside the

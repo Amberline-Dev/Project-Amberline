@@ -1,5 +1,6 @@
 using Amberline.Core;
 using Amberline.Data;
+using Amberline.Simulation.Buffs;
 
 namespace Amberline.Simulation.Spells;
 
@@ -76,20 +77,28 @@ internal static class PostponedHeroOrders
     /// for the cast and executes it again. Reconstruction: the instant is server code; this takes the spell's cast frame plus the settle margin
     /// of an order held behind a wind-up (<see cref="SpellWindup.SettleSeconds"/>), the first moment a 0x0D cannot replace the spell's
     /// SpellCaster before its cast frame on the client (the cast packet's total time is the cast time, so the client's SpellCaster for it
-    /// ends there). A channel the cast opens holds the order until it ends; a newer order, a death or a displacement drops it. An instacast
-    /// whose script casts a windup child (Sivir's Q) has no cast frame of its own to wait for: it drops the order, as before.
+    /// ends there). A channel the cast opens holds the order until it ends; a newer order, a death or a displacement drops it.
+    /// Batch 929 (players, 21 November 2026: "randomly causes him to freeze in place", Graves's Buckshot while kiting): the walk of a move
+    /// order is the current order too, and it was dropped, so a hero cast while walking stood after the cast frame (the cast's stop and the
+    /// client's StopActor at the cast start had ended the walk) until the idle scan attacked. The engine record postpones the current
+    /// order whatever it is (the AI only ever sees AI_TEMP_CASTSPELL), so the walk is handed back too. An instacast whose script casts a
+    /// windup child (Sivir's Q, Ezreal's Q and W, Graves's R) takes the order for the child's wind-up: <paramref name="castDelay"/> is that
+    /// child's cast time; null (an instacast with no windup child) keeps the order with the hero and drops a hand-back, as before.
+    /// Reconstruction: the instant of the hand-back, as above. <paramref name="keepWalk"/> false: the hero's route is a cast approach
+    /// (the cast ends a walk into range, or replaces a cast that was walking into range), not a player's walk, and is not handed back.
     /// </summary>
-    public static void PostponeForCast(SpellSystem system, Entity hero, SpellData spell, double now)
+    public static void PostponeForCast(SpellSystem system, Entity hero, double? castDelay, double now, bool keepWalk = true)
     {
-        if (spell.IsInstant)
+        if (castDelay is not { } delay)
         {
             hero.CastPostponedOrder = null;
             return;
         }
         // A second cast inside the first one's wind-up finds the order already taken and moves its hand-back to its own cast frame.
-        var order = Capture(hero) is { Kind: not VayneTumbleOrderKind.Move } attack ? attack : hero.CastPostponedOrder?.Order;
+        var captured = Capture(hero);
+        var order = (captured is { Kind: VayneTumbleOrderKind.Move } && !keepWalk ? null : captured) ?? hero.CastPostponedOrder?.Order;
         if (order is null) return;
-        var at = now + spell.CastDelay + SpellWindup.SettleSeconds;
+        var at = now + delay + SpellWindup.SettleSeconds;
         hero.CastPostponedOrder = (order, at);
         system.RunAt(at, () => ResumeAfterCast(system, hero, order));
     }
@@ -104,12 +113,22 @@ internal static class PostponedHeroOrders
             return;
         }
         hero.CastPostponedOrder = null;
-        if (hero.Alive && !HasNewerOrder(hero)) Resume(system, hero, order);
+        if (!hero.Alive || HasNewerOrder(hero)) return;
+        // Batch 929: a control that stops the hero's walk (a stun, a root) ends a postponed walk, as the dispatcher refuses a click under it
+        // (a stationary waypoint, nothing held). An attack order comes back as before: its chase and swing have their own gates.
+        if (order.Kind == VayneTumbleOrderKind.Move && !CharacterState.Of(hero).CanMove) return;
+        // The hand-back is the first order after the cast frame, so it stops the cast clip a windup child leaves playing, as a player's click
+        // does (SpellSystem.CancelOrder; owner playtest 25 September 2026, #7 and #22: the hero slid in it).
+        system.StopCastGesture(hero);
+        Resume(system, hero, order);
     }
 
-    /// <summary>A cast queued or an order given during the displacement is the newer order (playtest B3 #10).</summary>
+    /// <summary>
+    /// A cast queued or an order given during the displacement is the newer order (playtest B3 #10); so is an order the dispatcher holds for the
+    /// landing or behind a wind-up (batch 929, <see cref="Entity.HeldPlayerOrder"/>).
+    /// </summary>
     public static bool HasNewerOrder(Entity hero) =>
-        hero.PendingCast is { Request.IsSummoner: false } ||
+        hero.HeldPlayerOrder || hero.PendingCast is { Request.IsSummoner: false } ||
         hero.Target is not null || hero.Waypoints.Count > 0 ||
         hero.AttackTarget is not null || hero.HeroPursuit is not null ||
         hero.AttackMoveGoal is not null;

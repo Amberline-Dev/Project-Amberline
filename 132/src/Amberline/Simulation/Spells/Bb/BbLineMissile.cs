@@ -59,7 +59,8 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     private readonly Position2? _launchFrom;
     private readonly bool _completesCast;
     // SpellData*Flags bit 2 (Instacast): the client runs such a cast through the instant-cast routine, which never
-    // reaches the cast routine, so the cast answer creates no missile object (see Launch).
+    // reaches the cast routine, so the cast answer creates no missile object (see Launch). Batch 930: also a FireWithoutCasting child, which
+    // reaches no view as a cast answer (BbChampionModule.CastChild), so its creation 0x41 is the missile on every client.
     private readonly bool _instant;
     // Batch 713: how far above the terrain the line flies (LaunchHeight); every point the clients and the scripts get from it carries it.
     private readonly double _height;
@@ -72,7 +73,7 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     public BbLineMissile(Action<BbLineMissile> forget, BbSpellHost host, BbScript script, string spellName, Entity caster, int slot, int rank,
         SpellCastInfo castInfo, double delay, Position2 aim, SpellData data, HashSet<string> flags, Entity? tracked = null,
         MissileCasterProjection? projection = null, bool completesCast = false, Position2? launchFrom = null, int itemId = 0,
-        double launchHeight = 0.0)
+        double launchHeight = 0.0, bool createdByMissilePacket = false)
     {
         _launchFrom = launchFrom;
         _height = LaunchHeight(caster, launchFrom is not null, launchHeight);
@@ -99,7 +100,7 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         _maxSpeed = ChampionSpellSupport.RawNumber(data, "SpellData*MissileMaxSpeed");
         _width = ChampionSpellSupport.LineWidth(data, 90.0);
         _flags = flags;
-        _instant = data.IsInstant;
+        _instant = data.IsInstant || createdByMissilePacket;
         _bounces = BbChampionModule.RawCount(data, "SpellData*LineMissileBounces");
         _fromStart = BbChampionModule.RawCount(data, "SpellData*LineMissileCollisionFromStartPoint") != 0;
         _tracked = tracked is not null && Tracks(data) ? tracked : null;

@@ -98,6 +98,29 @@ public static class CombatPackets
         return Packet(stream, LeaguePacketReliability.Unreliable, Hero(attackerNetId), Target(targetNetId));
     }
 
+    public const byte BasicAttackOpcode = 0x0D;
+    public const byte BasicAttackPositionedOpcode = 0x1D;
+
+    /// <summary>
+    /// BasicAttackPos (0x1D on both lines, 23 bytes): the 0x0D's fields, then the attacker's x and z (f32 at 15 and 19). Evidence: the
+    /// handler reads the two floats, sets the attacker's path position to that point
+    ///, moves the unit there when it is more than 400 off, and then runs the 0x0D's
+    /// own routine on the bytes from 5.
+    /// </summary>
+    public static PlaintextPacket BasicAttackAt(PlaintextPacket attack, Position2 attackerPosition)
+    {
+        ArgumentNullException.ThrowIfNull(attack);
+        var bytes = attack.Plaintext.Span;
+        if (bytes.Length != 15 || bytes[0] != BasicAttackOpcode) throw new ArgumentException("not a 0x0D", nameof(attack));
+        using var writer = ProtocolEncoding.Writer(23, out var stream);
+        writer.Write(BasicAttackPositionedOpcode);
+        writer.Write(bytes[1..]);
+        writer.Write(Float32(attackerPosition.X, nameof(attackerPosition)));
+        writer.Write(Float32(attackerPosition.Z, nameof(attackerPosition)));
+        writer.Flush();
+        return Packet(stream, LeaguePacketReliability.Unreliable, attack.EntityReferences.ToArray());
+    }
+
     /// <summary>
     /// NpcInstantStopAttack flags (the stock client's instant stop of an attack): KeepAnimating 0x01, ForceSpellCast 0x02,
     /// ForceStop 0x04, AvatarSpell 0x08, DestroyMissile 0x10. The handler stops the unit's current SpellCaster, then ends the unit's

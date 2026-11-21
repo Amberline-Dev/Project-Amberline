@@ -44,13 +44,13 @@ public static class NeutralChecks
                 TestAssert.Equal(critical ? BasicAttackOutcome.Critical : BasicAttackOutcome.Normal, hit.Outcome,
                     "critical outcome drives basic-attack feedback");
                 // Raw shipped AD (132 records; 126: wolf 18, GiantWolf 26, Golem 65): small wolf 14, GiantWolf 22, Golem 51, and the
-                // SmallGolem 33 the 132 golem camp spawns beside its Golem (batch 771; 126: two Golems); Map1 dr_UnitToHero (0.6 in 132; 0.7
-                // in 126), obj_AI_Minion attacking obj_AI_Hero. The 132 character scripts have no CharOnHitUnit factor (126: x1.43 in
-                // CharScriptGolem and its nine siblings, 0039-0063, applied by the hook, never by this raw formula).
-                var unitToHero = GameData.Default.LevelConstants.DamageRatios.UnitToHero;
+                // SmallGolem 33 the 132 golem camp spawns beside its Golem (batch 771; 126: two Golems). Batch 932: a camp monster's swing
+                // on a champion takes no class ratio in 132 (December 2011 footage; Map1 dr_UnitToHero 0.6 stays the lane minions'; 126: 0.7
+                // for both). The 132 character scripts have no CharOnHitUnit factor (126: x1.43 in CharScriptGolem and its nine siblings,
+                // 0039-0063, applied by the hook, never by this raw formula).
                 var damage = member.Name switch { "wolf" => 14.0, "GiantWolf" => 22.0, "SmallGolem" => 33.0, "Golem" => 51.0,
                     _ => throw new InvalidOperationException($"unexpected camp member {member.Name}") };
-                TestAssert.Near(damage * unitToHero * (critical ? multiplier : 1), hit.Damage, 1e-8);
+                TestAssert.Near(damage * (critical ? multiplier : 1), hit.Damage, 1e-8);
                 member.Entity.AttackCooldown = 0;
                 capture.Packets.Clear();
                 TestAssert.True(runtime.Combat.QueueBasicAttack(member.Entity, target,

@@ -26,7 +26,7 @@ public static partial class ChampionLiveRegressionChecks
             TestAssert.Equal(1, animations.Length, "the ally dash plays one explicit model clip");
             var bytes = animations[0].Plaintext.Span;
             TestAssert.Equal(hero.NetId, BinaryPrimitives.ReadUInt32LittleEndian(bytes[1..]));
-            TestAssert.Equal(0xB0u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[5..]),
+            TestAssert.Equal(0xA1u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[5..]),
                 "Spell2 loops, locks, and disables blending");
             TestAssert.Near(0, BinaryPrimitives.ReadSingleLittleEndian(bytes[9..]), 1e-6,
                 "the shipped animation uses natural playback speed");

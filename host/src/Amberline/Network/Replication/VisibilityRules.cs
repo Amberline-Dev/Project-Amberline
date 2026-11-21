@@ -136,6 +136,31 @@ public static class VisibilityRules
         return providers.Any(provider => Reveals(environment, provider, target, targetInBrush));
     }
 
+    /// <summary>
+    /// Batch 931 (Reconstruction): whether the team sees an effect at <paramref name="point"/> whose script gave it a <c>FOWVisibilityRadius</c> of
+    /// <paramref name="radius"/> (BBSpellEffectCreate). Retail's server tracked an effect's team visibility itself (FxOnEnterTeamVisiblity /
+    /// OnLeaveTeamVisiblity carry no position or radius, so the test is server code); the radius is the effect's own extent for that test, as a
+    /// unit's is. The team sees the effect when it sees the centre or one of eight points on the circle. Graves's Smoke Screen (250) and
+    /// Akali's Twilight Shroud (250) thrown into a wall: the centre is never seen, the floor around it is.
+    /// ponytail: eight samples on the rim; a team that sees only a sliver between two samples of a large circle (500 and up) misses it.
+    /// </summary>
+    public static bool ProvidersRevealEffect(
+        IVisionEnvironment environment,
+        IReadOnlyCollection<VisionProvider> providers,
+        Position2 point,
+        double radius)
+    {
+        if (ProvidersReveal(environment, providers, point)) return true;
+        if (radius <= 0.0) return false;
+        for (var k = 0; k < 8; k++)
+        {
+            var angle = k * Math.PI / 4.0;
+            if (ProvidersReveal(environment, providers, new Position2(point.X + Math.Cos(angle) * radius, point.Z + Math.Sin(angle) * radius)))
+                return true;
+        }
+        return false;
+    }
+
     // The client's sight walk on its own flags (IVisionEnvironment.UnitLineOfSightTest), with both units' brush decided by
     // IsInWallOfGrass at their SelectionRadius. Reconstruction: the range is today's, the 2D distance within the provider's radius
     // (the unit line-of-sight test is server-only; the client's overlay draws each bubble at its radius plus 0.9 of a field cell,

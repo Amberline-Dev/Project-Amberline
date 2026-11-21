@@ -12,9 +12,11 @@ public static class B885PlayAnimationFlagChecks
     /// <summary>
     /// The 1.0.0.132 client hands the 0xB9 flag word to its AnimationComponent: 8 queues the
     /// clip behind the one playing and 4 queues it unless that one loops; with neither the clip plays at once
-    ///, 0x10 marking it looping, 0x20 locking it and 0x80
+    ///, 0x20 locking it and 0x80
     /// cutting the blend. 0x40 skips a clip already playing. The 126 word (8 replace, 2 loop, 0x40 lock, 0x200 no blend) queued every
-    /// scripted clip behind Fizz's looping idle or run.
+    /// scripted clip behind Fizz's looping idle or run. Batch 933: the word is also stored on the clip's controller, whose update
+    /// (AtomicClipController) wraps the clip only on bit 0x1; 0x10 marks only the sequencer entry, so a Loop sent as
+    /// 0x10 played once and fell back to idle (the Dominion capture's Channel_WNDUP and Channel).
     /// </summary>
     [Check("protocol.p132-play-animation-plays-at-once-with-the-132-component-bits")]
     public static void PlayAnimationUsesThe132ComponentBits()
@@ -22,9 +24,10 @@ public static class B885PlayAnimationFlagChecks
         static uint Flags(PlaintextPacket packet) => BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[5..]);
         TestAssert.Equal(0u, Flags(SpellPackets.PlayAnimation(1, "Spell3a")), "a plain play: at once, blended, unlocked, not looped");
         TestAssert.Equal(0x20u, Flags(SpellPackets.PlayAnimation(1, "Spell3c", lockAnimation: true)), "Lock is the component's lock bit 0x20");
-        TestAssert.Equal(0x10u, Flags(SpellPackets.PlayAnimation(1, "Channel", loop: true)), "Loop is the component's loop bit 0x10");
+        TestAssert.Equal(0x1u, Flags(SpellPackets.PlayAnimation(1, "Channel", loop: true)),
+            "Loop is the clip controller's loop bit 0x1");
         TestAssert.Equal(0x80u, Flags(SpellPackets.PlayAnimation(1, "Spell3c", blend: false)), "Blend false is the component's no-blend bit 0x80");
-        TestAssert.Equal(0xB0u, Flags(SpellPackets.PlayAnimation(1, "Spell1b", loop: true, lockAnimation: true, blend: false)), "all three");
+        TestAssert.Equal(0xA1u, Flags(SpellPackets.PlayAnimation(1, "Spell1b", loop: true, lockAnimation: true, blend: false)), "all three");
 
         var (match, own, _) = B885FizzPlayfulTricksterChecks.Arena();
         using var scope = match;

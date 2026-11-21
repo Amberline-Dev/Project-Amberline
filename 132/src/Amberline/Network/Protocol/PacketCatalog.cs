@@ -201,6 +201,7 @@ public sealed class PacketCatalog
 
         // --- Channel 3, combat. 0x0D and 0x69 are the only unreliable rows (CombatPackets) ---
         c.Row(0x0D, "BasicAttack", reliable: false, refs: two);
+        c.Row(0x1D, "BasicAttackPos", reliable: false, refs: two); // batch 931: a 0x0D for a client that does not see the attacker (CombatPackets.BasicAttackAt)
         c.Row(0x69, "ApplyDamage", reliable: false, refs: [1, 6, 10]);
         c.Row(0x39, "InstantStopAttack", refs: one);
         c.Row(0x25, "UnitAddGold", refs: [1, 5, 9]);

@@ -1012,7 +1012,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         EffectCreateTap?.Invoke(new EffectCreateEvent(effect, bound?.NetId ?? 0, targetObject?.NetId ?? 0, position, sourceOperand is BbTable,
             Premature(bound) || Premature(targetObject), known, audience.Allied, audience.OnlyHero, audience.EnemyName is not null,
             bound is { } tapped && IsPlacemarkerCube(tapped), copied));
-        // FOWVisibilityRadius and SendIfOnScreenOrDiscard have no counterpart on the sink; FOWTeam names the own team of the other-team name
+        // SendIfOnScreenOrDiscard has no counterpart on the sink (the server holds no camera); FOWVisibilityRadius goes with the effect (batch 931, the
+        // extent of its point sight, ReplicationDelivery.CanRouteEffectCreate); FOWTeam names the own team of the other-team name
         // (BbNativeHandlers.Effects.cs) and (batch 473) the effect's own fog-of-war team, which gets an effect on no current unit wherever it is
         // (ReplicationDelivery.CanRouteEffectCreate). An effect bound to a placemarker cube is sent unbound (below) and keeps the audience its
         // binding gave it, the cube's team, when the script names no FOWTeam (Rumble's RumbleCarpetBombSoundEnd).
@@ -1090,7 +1091,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
                 livePositions: (placemarker is null || beam is not null || postTarget is not null) && faces && persistent ? () => (PositionOf(sourceOperand) ?? (bound ?? targetObject)!.Position,
                     PositionOf(targetOperand) ?? targetObject!.Position) : null,
                 flags: (ushort)((faces ? 0x0080 : 0) | (barePar ? 0x0100 : 0)), targetBoneName: call.Value("TargetBoneName") as string, unbound: fallback,
-                fowTeam: EffectTeam(call, "FOWTeam", "FOWTeamOverrideVar") ?? placemarker?.Team) : 0u;
+                fowTeam: EffectTeam(call, "FOWTeam", "FOWTeamOverrideVar") ?? placemarker?.Team,
+                fowRadius: call.Value("FOWVisibilityRadius") is double fowRadius ? fowRadius : 0.0) : 0u;
             // Batch 398 (Reconstruction): an unbound placemarker effect the script never removes ends with its cube. The client's bound emitter ends with its
             // unit, and this effect is sent unbound, so BbBuffRuntime.OnUnitDeath kills it when the cube's corpse goes (batch 404).
             // Batch 419 (Reconstruction, batch 418 evidence): a cube that is already dead has had its OnUnitDeath, so its effect ends with its corpse from here.

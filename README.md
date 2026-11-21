@@ -13,7 +13,7 @@ let their players download it from their server ([Game files](HOSTING.md#game-fi
 | Patch | Newest release | Hosting guide |
 |---|---|---|
 | 1.0.0.126 (October 2011) | [Amberline, latest release](https://github.com/Amberline-Dev/Project-Amberline/releases/latest) | [HOSTING.md](HOSTING.md) |
-| 1.0.0.132 (January 2012) | [Amberline 132 0.1.12](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.12) | [132/HOSTING.md](132/HOSTING.md) |
+| 1.0.0.132 (January 2012) | [Amberline 132 0.1.13](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.13) | [132/HOSTING.md](132/HOSTING.md) |
 
 The **Releases** box on the right shows only the 1.0.0.126 line's newest release. The list of
 [all releases](https://github.com/Amberline-Dev/Project-Amberline/releases) has both lines.

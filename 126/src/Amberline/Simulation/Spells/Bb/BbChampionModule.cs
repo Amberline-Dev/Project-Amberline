@@ -916,7 +916,18 @@ public sealed class BbChampionModule : IChampionSpellModule
         // Batch 582 (owner finding 25, Gragas R's second barrel): an Instacast child that launches a missile reaches no view as a cast answer, only as
         // its missile's creation 0x41 (ProtocolSpellEffectSink.SendInstantMissileCast has the client evidence). The answer built a second missile on
         // the client whenever the parent's SpellCaster was still current there. The instacast container's child keeps its answer (above).
-        var instantMissile = data.IsInstant && !(parentOfChild is { IsInstant: true } && !child.FireWithoutCasting);
+        // Batch 930 (players, 21 November 2026, Graves's Buckshot: "no projectile, just hits everyone in the cone immediately", "damage is calculated
+        // half a second after"): a line child cast with FireWithoutCasting takes the same route on every view. Its answer is cast at once only while
+        // The client's spellbook holds a SpellCaster (the client: the extra-slot branch sits under the
+        // spellbook+0x2c test); the parent's caster releases that slot at its end time (the client -> Stop ->
+        // The client), and the answer then builds a SpellCaster whose cast frame, so the missile, comes the child's own cast time
+        // later (GravesClusterShotAttack and Ashe's VolleyAttack 0.5 s, after the server's hits). The children leave at the parent's cast frame, 0.217 to
+        // 0.25 s after its answer, against its 0.25 s, so a few milliseconds of network jitter decided it. The 0x41 builds the missile in either state.
+        // The non-Instacast FireWithoutCasting line children: VolleyAttack, LuxLightBindingMis, LuxPrismaticWaveMissile,
+        // AlZaharCalloftheVoidMissile, CaitlynAceintheHoleMissile, RumbleCarpetBombMissile, TalonShadowAssaultMisOne; 1.0.0.132 also GravesClusterShotAttack, AhriOrbMissile,
+        // AhriOrbReturn and AhriSeduceMissile; and the Instacast ones already here. Reconstruction: what retail's server sent for them is not in the client.
+        var instantMissile = (data.IsInstant || child.FireWithoutCasting && castType == 3) &&
+                             !(parentOfChild is { IsInstant: true } && !child.FireWithoutCasting);
         void SendChildCast(SpellCastInfo cast)
         {
             if (!system.Effects.IsReferenceReady(hero)) return;
@@ -968,7 +979,7 @@ public sealed class BbChampionModule : IChampionSpellModule
             var delay = child.FireWithoutCasting ? 0.0 : parent is not null ? (parent.IsInstant ? data.CastDelay : 0.0) : data.CastTime;
             var line = new BbLineMissile(Forget, host, script, name, hero, parentSlot, rank, info, delay,
                 tracked?.Position ?? lineEnd, data, flags, tracked, projection, completesCast: container, launchFrom: child.CastPosition,
-                launchHeight: child.CastHeight);
+                launchHeight: child.CastHeight, createdByMissilePacket: instantMissile);
             _lines.Add(line);
             system.EnqueueSharedProjectile(line);
             return;

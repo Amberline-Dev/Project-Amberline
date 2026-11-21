@@ -51,6 +51,8 @@ internal sealed class ProductionGameplayDispatcher
     private bool Locked(uint flag) => InputLocks is { } locks && (locks() & flag) != 0;
     // Reconstruction: an order received inside an uncancellable spell windup (SpellWindup), applied when the windup is over.
     private readonly Dictionary<uint, SessionGameplayContext> _windupQueued = new();
+    // Batch 929: the held orders given during the hero's own dash, and whether their landing has been seen (ApplyQueuedWindupOrders).
+    private readonly Dictionary<uint, bool> _heldBehindDash = new();
     private readonly MovementSystem _movement;
     private readonly CombatService _combat;
     private readonly SpellSystem _spells;
@@ -136,7 +138,7 @@ internal sealed class ProductionGameplayDispatcher
         if (_spells.UseSlotCoolingDown(hero)) return false;
         if (!CaptureStartAllowed(hero, used)) return false;
         var range = _spells.Data.Spell(spell).CastRange;
-        _windupQueued.Remove(hero.NetId);
+        ReleaseHeld(hero);
         _pendingCaptures.Remove(hero.NetId);
         _spells.CancelOrder(hero);
         if (InRange(hero.Position, used.Position, range)) return _spells.BeginUseChannel(hero, used, spell);
@@ -284,11 +286,24 @@ internal sealed class ProductionGameplayDispatcher
                 // walk-then-cast.  Champion channels (notably Janna R) are
                 // cancelled by the same typed hook used by spell requests.
                 // Do not replace a dash with an ordinary waypoint on the
-                // predicting client. Its destination stays server-owned. The
-                // newer click still replaces a cast queued during the dash
-                // (playtest B3 #10), as any newer order does in retail.
-                if (context.Hero.ForcedMove is not null)
+                // predicting client. Its destination stays server-owned.
+                // Batch 929 (players, 21 November 2026: Graves "freezes" after Quickdraw and loses Buckshot pressed in it): an order given
+                // during the hero's own dash was dropped, and it dropped a cast queued behind the dash too (playtest B3 #10), so the hero stood
+                // at the landing (or walked on with the order the dash postponed) and the spell never went off. The latest such order is now
+                // held and applied at the landing, after a cast queued behind the same dash: batch 663 has the original game cast a spell pressed
+                // during a dash at once, and the queue only waits for the dash's clip lock, so the click comes after that cast, as it would after
+                // a cast made at once. Reconstruction: the retail server's handling of an order its unit cannot carry out yet is server code
+                // (the engine's order record, IssueOrders' ORDER_STATUS_POSTPONED); the hold is the wind-up hold's (latest order wins). A
+                // displacement under a lock (a foreign knock-up or pull stuns) or a fear wander still drops the order, as before; a foreign
+                // displacement that carries no stun or other lock holds it like the hero's own dash.
+                if (context.Hero.ForcedMove is { } dash)
                 {
+                    if (dash.Effect != "Fear" && !IsActionLocked(context.Hero))
+                    {
+                        Hold(context, click: true, behindDash: true);
+                        context.Hero.CastPostponedOrder = null;
+                        return true;
+                    }
                     context.Hero.PendingCast = null;
                     _pendingCaptures.Remove(context.Hero.NetId);
                     return true;
@@ -303,13 +318,13 @@ internal sealed class ProductionGameplayDispatcher
                 // remaining cast clip, then the route, with no stationary waypoint in between and no cast lost.
                 if (SpellWindup.IsWindingUp(context.Hero))
                 {
-                    _windupQueued[context.Hero.NetId] = context with { Payload = context.Payload.ToArray() };
+                    Hold(context, click: true);
                     // Batch 807: the held order is the newer one; an attack the cast postponed does not come back before it.
                     context.Hero.CastPostponedOrder = null;
                     return true;
                 }
                 // A newer order that is not held replaces a held one (latest order wins).
-                _windupQueued.Remove(context.Hero.NetId);
+                ReleaseHeld(context.Hero);
                 _pendingCaptures.Remove(context.Hero.NetId);
                 _spells.CancelOrder(context.Hero);
                 // Reconstruction: how the retail server answers an order it refuses (a stunned or cast-locked hero) is native and in no
@@ -486,7 +501,8 @@ internal sealed class ProductionGameplayDispatcher
                 // (SettleSeconds later, ApplyQueuedWindupOrders). The client has no order queue and sends the press at once; a
                 // cast packet now would start a second SpellCaster beside the one whose stop the client refuses. The newest command
                 // wins in both directions: a held cast replaces a held click or an earlier held cast, and a later click, Stop or
-                // non-instant cast replaces it (as any newer order replaces a cast queued during a dash, playtest B3 #10). An
+                // non-instant cast replaces it (a cast queued behind a dash is not held here and a later click no longer replaces it,
+                // batch 929, above). An
                 // instacast creates no SpellCaster on the client, so it acts at once and leaves a held cast alone. A champion slot is
                 // held only if the spellbook's CanUseSpell (rank, cooldown, the cast bit, then the unit's OnCanUseSpell:
                 // control state and mana) passes now: the client sends no press its own gate refuses, so a refused one is refused at once
@@ -499,7 +515,7 @@ internal sealed class ProductionGameplayDispatcher
                     if (!request.Value.IsSummoner && request.Value.Slot < SpellSystem.ChampionSlotCount &&
                         !_spells.CanUseSpell(context.Hero, request.Value.Slot, _spells.CurrentTime).Allowed)
                         return false;
-                    _windupQueued[context.Hero.NetId] = context with { Payload = context.Payload.ToArray() };
+                    Hold(context, click: false);
                     return true;
                 }
                 var cast = _spells.HandleCastRequest(context.Hero, payload, _spells.CurrentTime);
@@ -509,7 +525,7 @@ internal sealed class ProductionGameplayDispatcher
                     // The newest command wins: an accepted cast supersedes the order held through a windup (a cast refused leaves it).
                     // A held cast survives an instacast, which is not an order of the same queue.
                     if (queues || !_windupQueued.TryGetValue(context.Hero.NetId, out var held) || held.Payload.Span[0] == 0x76)
-                        _windupQueued.Remove(context.Hero.NetId);
+                        ReleaseHeld(context.Hero);
                 }
                 return cast;
             default:
@@ -531,13 +547,44 @@ internal sealed class ProductionGameplayDispatcher
             var hero = held.Hero;
             if (!hero.Alive || _world.Get(netId) != hero)
             {
-                _windupQueued.Remove(netId);
+                ReleaseHeld(hero);
                 continue;
             }
+            // Batch 929: an order held behind the hero's own dash waits for the landing, and one step more while a cast is queued behind
+            // the same dash: that cast fires on the first spell step after the landing, and the order follows it (after its wind-up, below).
+            if (_heldBehindDash.TryGetValue(netId, out var landed))
+            {
+                if (hero.ForcedMove is not null) continue;
+                if (!landed && hero.PendingCast is not null)
+                {
+                    _heldBehindDash[netId] = true;
+                    continue;
+                }
+            }
             if (SpellWindup.IsWindingUp(hero, settled: true)) continue;
-            _windupQueued.Remove(netId);
+            ReleaseHeld(hero);
             Dispatch(held);
         }
+    }
+
+    /// <summary>
+    /// Holds the hero's latest order (a click, or a press: <paramref name="click"/> false) behind a wind-up or the hero's own dash; it replaces
+    /// one held before. A held click is the newest order, which <see cref="Entity.HeldPlayerOrder"/> tells the order hand-backs
+    /// (<see cref="PostponedHeroOrders.HasNewerOrder"/>); a held press is a cast, which postpones the order again when it goes off.
+    /// </summary>
+    private void Hold(SessionGameplayContext context, bool click, bool behindDash = false)
+    {
+        _windupQueued[context.Hero.NetId] = context with { Payload = context.Payload.ToArray() };
+        if (behindDash) _heldBehindDash[context.Hero.NetId] = false;
+        else _heldBehindDash.Remove(context.Hero.NetId);
+        context.Hero.HeldPlayerOrder = click;
+    }
+
+    private void ReleaseHeld(Entity hero)
+    {
+        _windupQueued.Remove(hero.NetId);
+        _heldBehindDash.Remove(hero.NetId);
+        hero.HeldPlayerOrder = false;
     }
 
     // Batch 689 (community report, 4 November 2026: emotes ended channels): a channelling hero does not emote. The stock client's 0x48

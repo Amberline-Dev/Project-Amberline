@@ -38,6 +38,16 @@ internal static class Cone
     /// is the end minus the reach along the direction. <c>CanFireSpell</c>: the caster within 200 of the start
     /// (the 2D distance test) and the end between 0.7 L and L from the caster, <c>L</c> = reach + 75 (constants
     /// 1.5, 75 and 0.7). The targeter's own refusal of a start in an unwalkable cell (nav flag 0x2) is not ported.
+    /// <para>
+    /// Batch 930 (players, 21 November 2026: Graves's Buckshot "randomly doesn't work about 25% of the time"): <c>SpellData*LockConeToPlayer</c>
+    /// puts the end at the reach whatever the aim's distance, so the start is the caster and the cone always fires
+    /// (the client: <c>if (LockConeToPlayer || distance &lt; reach)</c>, the SpellData byte
+    /// at 0x1978 the loader fills from the key). The client's request already carries that end, at the reach from where the client draws the hero;
+    /// without the flag the server measured it from its own hero, and a hero that client and server placed more than 75 apart along the aim (a
+    /// kite away from the target) walked toward the cone's start before the cast, which a click in that walk dropped. The flag's cone spells:
+    /// Volley, Talon's Rake, Karma's Heavenly Wave, Kassadin's Force Pulse, Pantheon's Heartseeker, Cassiopeia's Petrifying Gaze (both lines),
+    /// Graves's Buckshot and Shyvana's dragon-form Flame Breath (1.0.0.132).
+    /// </para>
     /// </summary>
     public static (Position2 Start, Position2 End, bool CanFire)? Fire(SpellData spell, Position2 caster, Position2 aim)
     {
@@ -50,7 +60,7 @@ internal static class Cone
         var reach = r - Math.Sqrt(Math.Pow(r * Math.Sin(angle), 2) + Math.Pow(r * Math.Cos(angle) - r, 2)) / 1.5;
         var distance = Math.Sqrt(distance2);
         var (ux, uz) = (dx / distance, dz / distance);
-        var end = distance < reach ? new Position2(caster.X + ux * reach, caster.Z + uz * reach) : aim;
+        var end = spell.RawFlag("SpellData*LockConeToPlayer") || distance < reach ? new Position2(caster.X + ux * reach, caster.Z + uz * reach) : aim;
         var start = new Position2(end.X - ux * reach, end.Z - uz * reach);
         var length = reach + 75.0;
         var sx = start.X - caster.X;

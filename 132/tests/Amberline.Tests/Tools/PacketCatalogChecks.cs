@@ -105,6 +105,7 @@ public static class PacketCatalogChecks
         yield return new("VisionPackets.LeaveTeamVisibility", VisionPackets.LeaveTeamVisibility(A, 1));
         // CombatPackets
         yield return new("CombatPackets.BasicAttack", CombatPackets.BasicAttack(A, B, C));
+        yield return new("CombatPackets.BasicAttackAt", CombatPackets.BasicAttackAt(CombatPackets.BasicAttack(A, B, C), new Position2(1000.0, 2000.0)));
         yield return new("CombatPackets.NpcInstantStopAttack", CombatPackets.NpcInstantStopAttack(A, CombatPackets.LandedAttackFlags));
         // The decision behind it: a hero always gets its stop, so the probe has a packet to catalogue.
         yield return new("CombatPackets.StopAttack",

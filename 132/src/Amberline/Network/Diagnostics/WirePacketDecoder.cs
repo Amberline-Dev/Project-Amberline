@@ -31,7 +31,7 @@ public static class WirePacketDecoder
             [0x24] = "NpcDieEventHistory",
             [0xC5] = "DisableHUDForEndOfGame", [0xCE] = "EndOfGameEvent", [0xCF] = "EndGame",
             [0x18] = "UpgradeSpellAns", [0x8D] = "FXCreateGroup", [0x3D] = "FXKill",
-            [0x67] = "CreateNeutral", [0xCC] = "NeutralCampEmpty", [0xE1] = "UnitChangeTeam", [0xE2] = "UnitSetMinimapIcon", [0x0D] = "BasicAttack",
+            [0x67] = "CreateNeutral", [0xCC] = "NeutralCampEmpty", [0xE1] = "UnitChangeTeam", [0xE2] = "UnitSetMinimapIcon", [0x0D] = "BasicAttack", [0x1D] = "BasicAttackPos",
             [0x39] = "InstantStopAttack", [0x26] = "AddUnitPerceptionBubble", [0x75] = "PauseAnimation", [0x5F] = "LevelUpSpell", [0x9F] = "ChangeCharacterVoice", [0x9A] = "ChangePARColorOverride", [0xE5] = "ColorRemapFX", [0xE6] = "MusicCueCommand",
             [0x84] = "ToolTipVars", [0x69] = "ApplyDamage", [0x25] = "AddGold", [0x46] = "LevelUp",
             [0x62] = "Die", [0xA7] = "Die", [0x73] = "BuyItemAns", [0x0B] = "RemoveItemAns",
@@ -57,7 +57,7 @@ public static class WirePacketDecoder
 
     private static readonly HashSet<byte> Decoded =
     [
-        0x0D, 0x39, 0x26, 0x75, 0x69, 0x25, 0x46, 0x62, 0xA7,
+        0x0D, 0x1D, 0x39, 0x26, 0x75, 0x69, 0x25, 0x46, 0x62, 0xA7,
         0x73, 0x0B, 0x45, 0xA8, 0x57, 0x8B, 0x74, 0x35, 0xC0, 0x80, 0x1F, 0x85,
         0x54, 0x37, 0xA0, 0x6B, 0x6F, 0x22, 0x5E, 0x28, 0x6A, 0xBE, 0x41, 0x81,
         0x8D, 0x67, 0xCC, 0xE1, 0xE2, 0x84, 0x3D, 0xCD, 0xC2, 0xC3, 0x65, 0x68, 0x49, 0xAC, 0xAA, 0x0A, 0xF4,
@@ -177,6 +177,11 @@ public static class WirePacketDecoder
         {
             ["attacker_netid"] = U32(d, 1), ["target_netid"] = U32(d, 5),
             ["extra_time_secs"] = (d[9] - 0x80) / 100.0, ["missile_id"] = U32(d, 10), ["slot"] = d[14],
+        }),
+        0x1D => Fixed(p, 23, (d, o) => new()
+        {
+            ["attacker_netid"] = U32(d, 1), ["target_netid"] = U32(d, 5),
+            ["extra_time_secs"] = (d[9] - 0x80) / 100.0, ["missile_id"] = U32(d, 10), ["slot"] = d[14], ["x"] = F32(d, 15), ["z"] = F32(d, 19),
         }),
         0x39 => Fixed(p, 6, (d, o) => new() { ["attacker_netid"] = U32(d, 1), ["flags"] = d[5] }),
         0x26 => Fixed(p, 33, (d, o) => new()
@@ -336,10 +341,10 @@ public static class WirePacketDecoder
     }
 
     // PlayAnimation (0xB9, 126 0xB8; builder SpellPackets.PlayAnimation): [netid u32][flags u32][duration f32][NUL-terminated name at 13].
-    // The flags are the 132 AnimationComponent's bits (SpellPackets.PlayAnimation, batch 885): loop 0x10, lock 0x20, no blending 0x80, queue 8.
+    // The flags are the 132 AnimationComponent's bits (SpellPackets.PlayAnimation, batches 885 and 933): loop 0x1, lock 0x20, no blending 0x80, queue 8.
     private static Dictionary<string, object?> DecodePlayAnimation(byte[] p) => Fixed(p, 14, (d, o) => new()
     {
-        ["netid"] = U32(d, 1), ["flags"] = U32(d, 5), ["loop"] = (U32(d, 5) & 0x10) != 0, ["queue"] = (U32(d, 5) & 8) != 0,
+        ["netid"] = U32(d, 1), ["flags"] = U32(d, 5), ["loop"] = (U32(d, 5) & 0x1) != 0, ["queue"] = (U32(d, 5) & 8) != 0,
         ["lock"] = (U32(d, 5) & 0x20) != 0, ["blend"] = (U32(d, 5) & 0x80) == 0, ["duration"] = F32(d, 9), ["name"] = CString(d, 13, 64),
     });
 

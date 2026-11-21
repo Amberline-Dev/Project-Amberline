@@ -340,13 +340,17 @@ public static class SpellPackets
     // NUL-terminated animation name at +13.
     // Batch 885: the 132 handler passes the whole flag word to the new AnimationComponent, whose bits
     // are not 126's (126: loop 2, replace 8, lock 0x40, no blend 0x200): 8 queues the clip behind the one playing and 4 queues it
-    // unless that one loops; with neither it plays at once, where 0x10 marks the track looping, 0x20 locks it (the
-    // handler's gate the client refuses every play while a track is locked, the stop's the client reads the same bit) and 0x80 cuts the blend
-    // time to 0; 0x40 skips a clip that already plays. The 126 word queued every scripted clip behind the hero's
-    // looping idle or run. Reconstruction: the retail server's BBPlayAnimation body is not in the client (its native, only reads the
-    // parameters); the mapping is the component's reading of each script parameter. Bits 1 and 2, which the client's own plays set (Death: 0x82),
-    // are not sent: their reader is not traced.
-    public const uint PlayLoop = 0x10, PlayLock = 0x20, PlayNoBlend = 0x80;
+    // unless that one loops; with neither it plays at once, where 0x20 locks the track (the handler's gate
+    // The client refuses every play while a track is locked, the stop's the client reads the same bit) and 0x80 cuts the blend time to 0
+    //; 0x40 skips a clip that already plays. The 126 word queued every scripted clip behind the hero's looping idle
+    // or run. Batch 933: the client also stores the word on the clip's controller (+0x14), and the clip's update (AtomicClipController,
+    // The client) wraps the clip at its end only on bit 0x1 (bit 0x2 holds the last pose; with neither the clip ends and the unit falls back to
+    // idle). So the loop bit is 0x1, the bit the client's own loops carry (the client's channel clip: 1; the emotes:
+    // 0x81). The 0x10 sent before only marks the sequencer entry, which the queue paths read (4 and 8, never sent): every scripted loop played
+    // once (the Dominion capture's Channel_WNDUP and Channel, Garen's Judgment, Wukong's Cyclone). Reconstruction: the retail server's
+    // BBPlayAnimation body is not in the client (its native, only reads the parameters); the mapping is the component's reading of each
+    // script parameter.
+    public const uint PlayLoop = 0x01, PlayLock = 0x20, PlayNoBlend = 0x80;
 
     public static PlaintextPacket PlayAnimation(uint netId, string name,
         bool loop = false, bool lockAnimation = false, bool blend = true, float duration = 0)

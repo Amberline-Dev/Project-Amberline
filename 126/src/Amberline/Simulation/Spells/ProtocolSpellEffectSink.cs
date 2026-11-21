@@ -590,9 +590,9 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
         Position2? ownerPosition = null, Team? alliedTeam = null, string? enemyEffectName = null,
         string? boneName = null, bool persistent = false, uint ownerHeroNetId = 0,
         Func<(Position2 Source, Position2 Target)>? livePositions = null,
-        ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null) =>
+        ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null, double fowRadius = 0.0) =>
         CreateEffectAt(effectName, position, target, targetNetId, bindNetId, direction, ownerPosition, alliedTeam, enemyEffectName, boneName,
-            persistent, ownerHeroNetId, livePositions, flags, targetBoneName, unbound, fowTeam, _height);
+            persistent, ownerHeroNetId, livePositions, flags, targetBoneName, unbound, fowTeam, _height, fowRadius);
 
     /// <summary>
     /// Batch 582: the default hit pass's effect as the stock client draws a hit effect itself (the cast routine, for an
@@ -609,7 +609,7 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
         string? boneName = null, bool persistent = false, uint ownerHeroNetId = 0,
         Func<(Position2 Source, Position2 Target)>? livePositions = null,
         ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null,
-        Func<double, double, double>? heightProvider = null)
+        Func<double, double, double>? heightProvider = null, double fowRadius = 0.0)
     {
         var height = heightProvider ?? _height;
         ArgumentException.ThrowIfNullOrWhiteSpace(effectName);
@@ -645,7 +645,7 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
                 alliedTeam, enemyEffectName is null ? null : CreatePacket(enemyEffectName,
                     position, target, targetObjectPosition),
                 persistent, ownerHeroNetId, livePacket, BindNetId: bindNetId,
-                UnboundPacket: unboundPacket, UnboundEnemyPacket: unboundEnemyPacket, FowTeam: fowTeam));
+                UnboundPacket: unboundPacket, UnboundEnemyPacket: unboundEnemyPacket, FowTeam: fowTeam, FowRadius: fowRadius));
             return effect;
         }
         Enqueue(packet);

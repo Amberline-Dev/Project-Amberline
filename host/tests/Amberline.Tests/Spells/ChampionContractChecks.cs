@@ -305,7 +305,7 @@ public static class ChampionContractChecks
             Position2? ownerPosition = null, Team? alliedTeam = null, string? enemyEffectName = null,
             string? boneName = null, bool persistent = false, uint ownerHeroNetId = 0,
             Func<(Position2 Source, Position2 Target)>? livePositions = null,
-            ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null) => 0;
+            ushort flags = 0, string? targetBoneName = null, UnboundEffectFallback? unbound = null, Team? fowTeam = null, double fowRadius = 0.0) => 0;
         public void KillEffect(uint effectNetId) { }
         public void SendBuffDelta(Entity unit, BuffState buff, bool added, int count = 1) { }
         public void SendShieldDelta(Entity unit, double amount) { }

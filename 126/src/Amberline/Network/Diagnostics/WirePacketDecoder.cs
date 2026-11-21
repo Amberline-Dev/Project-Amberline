@@ -31,7 +31,7 @@ public static class WirePacketDecoder
             [0x24] = "NpcDieEventHistory",
             [0xC4] = "DisableHUDForEndOfGame", [0xCD] = "EndOfGameEvent", [0xCE] = "EndGame",
             [0x18] = "UpgradeSpellAns", [0x8C] = "FXCreateGroup", [0x3D] = "FXKill",
-            [0x66] = "Ambiguous_0x66", [0xCB] = "NeutralCampEmpty", [0xE0] = "UnitChangeTeam", [0xE1] = "UnitSetMinimapIcon", [0x0D] = "BasicAttack",
+            [0x66] = "Ambiguous_0x66", [0xCB] = "NeutralCampEmpty", [0xE0] = "UnitChangeTeam", [0xE1] = "UnitSetMinimapIcon", [0x0D] = "BasicAttack", [0x1D] = "BasicAttackPos",
             [0x39] = "InstantStopAttack", [0x26] = "AddUnitPerceptionBubble", [0x74] = "PauseAnimation", [0x5E] = "LevelUpSpell", [0x9E] = "ChangeCharacterVoice", [0x99] = "ChangePARColorOverride", [0xE4] = "ColorRemapFX", [0xE5] = "MusicCueCommand",
             [0x83] = "ToolTipVars", [0x68] = "ApplyDamage", [0x25] = "AddGold", [0x45] = "LevelUp",
             [0x61] = "Die", [0xA6] = "Die", [0x72] = "BuyItemAns", [0x0B] = "RemoveItemAns",
@@ -57,7 +57,7 @@ public static class WirePacketDecoder
 
     private static readonly HashSet<byte> Decoded =
     [
-        0x0D, 0x39, 0x26, 0x74, 0x68, 0x25, 0x45, 0x61, 0xA6,
+        0x0D, 0x1D, 0x39, 0x26, 0x74, 0x68, 0x25, 0x45, 0x61, 0xA6,
         0x72, 0x0B, 0x44, 0xA7, 0x56, 0x8A, 0x73, 0x35, 0xBF, 0x7F, 0x1F, 0x84,
         0x53, 0x37, 0x9F, 0x6A, 0x6E, 0x22, 0x5D, 0x28, 0x69, 0xBD, 0x41, 0x80,
         0x8C, 0x66, 0xCB, 0xE0, 0xE1, 0x83, 0x3D, 0xCC, 0xC1, 0xC2, 0x64, 0x48, 0xAB, 0xA9, 0x0A,
@@ -169,6 +169,11 @@ public static class WirePacketDecoder
         {
             ["attacker_netid"] = U32(d, 1), ["target_netid"] = U32(d, 5),
             ["extra_time_secs"] = (d[9] - 0x80) / 100.0, ["missile_id"] = U32(d, 10), ["slot"] = d[14],
+        }),
+        0x1D => Fixed(p, 23, (d, o) => new()
+        {
+            ["attacker_netid"] = U32(d, 1), ["target_netid"] = U32(d, 5),
+            ["extra_time_secs"] = (d[9] - 0x80) / 100.0, ["missile_id"] = U32(d, 10), ["slot"] = d[14], ["x"] = F32(d, 15), ["z"] = F32(d, 19),
         }),
         0x39 => Fixed(p, 6, (d, o) => new() { ["attacker_netid"] = U32(d, 1), ["flags"] = d[5] }),
         0x26 => Fixed(p, 33, (d, o) => new()

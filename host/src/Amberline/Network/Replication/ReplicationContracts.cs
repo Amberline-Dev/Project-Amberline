@@ -459,7 +459,9 @@ public sealed record TemporaryCasterRetirementMessage(uint NetId)
 /// <summary>Appearance variants share an identity, position and actor references;
 /// routing checks the common dependencies before choosing the observer's packet.
 /// BindNetId and the Unbound packets (batch 419) let the delivery send the unbound variant when the bound unit is dead on the wire.
-/// FowTeam (batch 473) is the effect's own fog-of-war team (<c>FOWTeam</c>), whose observers get an effect that names no current unit wherever it is.</summary>
+/// FowTeam (batch 473) is the effect's own fog-of-war team (<c>FOWTeam</c>), whose observers get an effect that names no current unit wherever it is.
+/// FowRadius (batch 931) is the script's <c>FOWVisibilityRadius</c>: another team that sees a point of that circle sees the effect
+/// (VisibilityRules.ProvidersRevealEffect).</summary>
 public sealed record EffectCreateReplicationMessage(
     PlaintextPacket Packet,
     uint EffectNetId,
@@ -474,7 +476,8 @@ public sealed record EffectCreateReplicationMessage(
     PlaintextPacket? UnboundPacket = null,
     PlaintextPacket? UnboundEnemyPacket = null,
     uint DeadBindNetId = 0,
-    Team? FowTeam = null)
+    Team? FowTeam = null,
+    double FowRadius = 0.0)
     : ReplicationMessage(ReplicationMessageKind.EffectCreate);
 
 /// <summary>Ends an effect or missile on every view that holds it. <paramref name="LateCopiesOnly"/>: every view drops it, and only a view that holds a

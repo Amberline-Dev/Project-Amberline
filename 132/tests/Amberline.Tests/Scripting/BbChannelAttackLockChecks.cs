@@ -67,6 +67,56 @@ public static class BbChannelAttackLockChecks
     }
 
     /// <summary>
+    /// Batch 933 (owner, 21 November 2026: channel animations fall back to idle): the channels whose pose the caster's client plays itself. Its
+    /// SpellCaster plays the spell's channel clip looped at the cast frame, and
+    /// the shipped scripts of these five play no clip of their own; any play (0xB9), stop (0x2B), route (0xC2, 0x65) or stop order (0x39) for the
+    /// caster inside the channel would cut that loop. From the cast answer to the channel's end the caster's client gets none of them.
+    /// </summary>
+    [Check("scripting.bb-client-played-channel-loops-get-no-animation-or-route-packet")]
+    public static void ClientPlayedChannelLoopsGetNoAnimationOrRoutePacket()
+    {
+        var failures = new List<string>();
+        foreach (var (champion, slot, aim) in new[]
+                 {
+                     ("Annie", Amberline.Simulation.Spells.SpellSystem.RecallSlot, "self"), ("Fiddlesticks", 1, "foe"), ("Katarina", 3, "self"),
+                     ("Nunu", 3, "self"), ("MissFortune", 3, "foe"),
+                 })
+        {
+            using var match = new BbM3.Match(champion);
+            match.Learn(3);
+            match.Refill();
+            match.Advance(0.5);
+            match.Foe.Position = new Position2(match.Hero.Position.X + 300.0, match.Hero.Position.Z);
+            match.Foe.MaxHealth = match.Foe.Health = 100000.0;
+            var wire = BbM3.Observe(match, Team.Order, match.Hero);
+            match.Runtime.Delivery.Flush();
+            TestAssert.True(Press(match, slot, aim == "foe" ? match.Foe : null), $"{champion} slot {slot} is accepted");
+            double? end = null;
+            var began = false;
+            for (var step = 0; step < (int)Math.Round(10.0 / BbM3.Step) && end is null; step++)
+            {
+                match.Foe.Health = match.Foe.MaxHealth;
+                match.Runtime.Tick(BbM3.Step);
+                var running = match.Module.Channels!.Of(match.Hero) is not null || match.Runtime.Spells.RecallRemaining(match.Hero) > 0.0;
+                if (running) began = true;
+                else if (began) end = match.Now;
+            }
+            var own = wire.Packets.Select(entry => (entry.At, Bytes: entry.Packet.Plaintext.ToArray()))
+                .Where(entry => entry.Bytes.Length >= 5 && BinaryPrimitives.ReadUInt32LittleEndian(entry.Bytes.AsSpan(1)) == match.Hero.NetId).ToList();
+            var cast = own.LastOrDefault(entry => entry.Bytes[0] == SpellPackets.CastSpellAnswerOpcode).At;
+            if (end is null || cast <= 0.0 || end.Value - cast < 1.5)
+            {
+                failures.Add($"{champion} slot {slot}: no channel of at least 1.5 s (cast answer {cast:0.###}, end {end:0.###})");
+                continue;
+            }
+            var cuts = own.Where(entry => entry.At > cast + 1e-6 && entry.At < end.Value - 1e-6 && entry.Bytes[0] is 0xB9 or 0x2B or 0xC2 or 0x65 or 0x39)
+                .Select(entry => $"0x{entry.Bytes[0]:X2} at +{entry.At - cast:0.###}").ToList();
+            if (cuts.Count != 0) failures.Add($"{champion} slot {slot}: {string.Join(", ", cuts)}");
+        }
+        TestAssert.True(failures.Count == 0, string.Join("; ", failures));
+    }
+
+    /// <summary>
     /// Batch 406 follow-up (orchestrator, 27 October 2026): the held attack flow. The hero is attacking the foe (a 0x75 attack order; the hero
     /// walks into reach or swings), then Drain is cast on the same foe with no further packet. The held attack must not end the channel, and
     /// the hero makes no swing inside it; the channel runs its ChannelDuration. Red on master where the held attack walks the hero during the
