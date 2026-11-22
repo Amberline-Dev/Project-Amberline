@@ -162,31 +162,85 @@ public static partial class ChampionLiveRegressionChecks
     }
 
     // Batch 554 (owner finding 93): each buff Riven's Q adds or removes on her pushes her stat block, and each push carried her whole spellbook
-    // tooltip table (0x83, selectors 60 and up), so one flush sent the same table six or seven times. A copy identical to the observer's last
-    // table of the unit in the flush is no longer sent (ReplicationDelivery.IsRepeatedSpellTooltips); the table itself still goes out.
+    // tooltip table (0x84, selectors 60 and up), so one flush sent the same table six or seven times. Batch 936 restates it: a table identical
+    // to the last one the observer got for the unit, in this flush or an earlier one, is not sent (ReplicationDelivery.IsRepeatedSpellTooltips),
+    // and each observer holds Riven's current table.
     [Check("replication.riven-q-sends-the-spell-tooltip-table-once")]
     public static void RivenQSendsTheSpellTooltipTableOnce()
     {
         using var match = new Match("Riven", Team.Order);
-        var riven = match.Hero(0).NetId;
-        // The first strike's script writes the table's rows (Entity.ScriptSpellTooltips); the second strike's flush is the one measured.
-        match.CastGround(0, match.Hero(1).Position, slot: 0);
-        FlushWindow(match, 1.0);
+        var riven = match.Hero(0);
+        // The first strike's script writes the table's rows (Entity.ScriptSpellTooltips); both strikes and the second after each are measured.
         var steps = AfterCast(match, () => match.CastGround(0, match.Hero(1).Position, slot: 0), 1.0);
-        bool IsTable(FlushedPacket step)
-        {
-            var span = step.Packet.Plaintext.Span;
-            if (step.Opcode != 0x84 || span.Length < 24 || span.Length != 7 + 17 * BinaryPrimitives.ReadUInt16LittleEndian(span[5..])) return false;
-            for (var entry = 7; entry < span.Length; entry += 17)
-                if (BinaryPrimitives.ReadUInt32LittleEndian(span[entry..]) != riven || span[entry + 4] < 60) return false;
-            return true;
-        }
-        var tables = steps.Where(IsTable).ToList();
-        var repeats = tables.GroupBy(step => (step.Step, step.Observer))
+        steps.AddRange(AfterCast(match, () => match.CastGround(0, match.Hero(1).Position, slot: 0), 1.0));
+        var tables = steps.Where(step => SpellTooltipTableUnit(step.Packet) == riven.NetId).ToList();
+        var repeats = tables.GroupBy(step => step.Observer)
             .Sum(group => group.Zip(group.Skip(1)).Count(pair => pair.First.Packet.Plaintext.Span.SequenceEqual(pair.Second.Packet.Plaintext.Span)));
-        TestAssert.True(tables.Any(step => step.Step == -1), "the cast's flush sends Riven's spellbook tooltip table");
-        TestAssert.Equal(0, repeats, "no observer gets the same tooltip table twice in a row in one flush");
+        TestAssert.True(riven.ScriptSpellTooltips.Count > 0, "Riven's script wrote her tooltip rows");
+        for (var observer = 0; observer < match.Captures.Count; observer++)
+            TestAssert.True(HoldsCurrentTable(match, observer, riven), $"observer {observer} holds Riven's current tooltip table");
+        TestAssert.Equal(0, repeats, "no observer gets the same tooltip table twice in a row");
     }
+
+    // Batch 936: every full hero stat push (the one-second block, each buff add or remove on the hero) carried the hero's whole spellbook tooltip
+    // table, and since batch 841 every 132 hero holds its summoner rows, so each client got each hero's unchanged table once a second. The client
+    // keeps the rows between packets, so a
+    // table now goes to a client only when it differs from the last one that client got for the hero. Blitzcrank's script writes his R row on both
+    // lines; on 132 both heroes also hold their summoner rows. The failure message counts what an idle minute sent.
+    [Check("replication.b936-an-idle-minute-sends-no-spell-tooltip-table")]
+    public static void AnIdleMinuteSendsNoSpellTooltipTable()
+    {
+        using var match = new Match("Blitzcrank", Team.Order);
+        FlushWindow(match, 2.0);
+        var holders = new[] { match.Hero(0), match.Hero(1) }.Where(hero => hero.ScriptSpellTooltips.Count > 0).ToList();
+        TestAssert.True(holders.Any(hero => hero.ChampionName == "Blitzcrank"), "Blitzcrank's script wrote his tooltip rows");
+        // First sight: each client holds the current table of every hero that has rows.
+        foreach (var hero in holders)
+            for (var observer = 0; observer < match.Captures.Count; observer++)
+                TestAssert.True(HoldsCurrentTable(match, observer, hero), $"observer {observer} holds {hero.ChampionName}'s current tooltip table");
+        var held = match.Captures.Select(capture => new Dictionary<uint, PlaintextPacket>(capture.Tables)).ToList();
+        var tables = FlushWindow(match, 60.0).Where(step => SpellTooltipTableUnit(step.Packet) is not null).ToList();
+        var unchanged = 0;
+        foreach (var step in tables)
+        {
+            var unit = SpellTooltipTableUnit(step.Packet)!.Value;
+            if (held[step.Observer].TryGetValue(unit, out var last) && last.Plaintext.Span.SequenceEqual(step.Packet.Plaintext.Span)) unchanged++;
+            held[step.Observer][unit] = step.Packet;
+        }
+        TestAssert.Equal(0, tables.Count, $"an idle minute sends no spellbook tooltip table ({tables.Count} sent to {match.Captures.Count} clients " +
+            $"for {holders.Count} heroes, {unchanged} of them the same as that client's previous table)");
+    }
+
+    // Batch 936: a table goes only to the clients that see the hero (ReplicationDelivery.CanRoute). A hero who comes back into an enemy client's
+    // sight is revealed with his whole inventory (ProtocolReplicationServices.BuildReveal: a SetItem or RemoveItem per slot), and those item
+    // packets start the table memory over, so after a fog trip that client is sent his table again with his next stat push.
+    [Check("replication.b936-a-fog-trip-sends-the-spell-tooltip-table-again")]
+    public static void AFogTripSendsTheSpellTooltipTableAgain()
+    {
+        using var match = new Match("Blitzcrank", Team.Order);
+        var blitzcrank = match.Hero(0);
+        FlushWindow(match, 2.0);
+        TestAssert.True(HoldsCurrentTable(match, 1, blitzcrank), "the enemy client holds Blitzcrank's table");
+        var home = blitzcrank.Position;
+        blitzcrank.Position = new Position2(1500, 1500);   // the Order side, far out of the enemy's sight
+        var away = FlushWindow(match, 1.5);
+        TestAssert.False(away.Any(step => step.Observer == 1 && SpellTooltipTableUnit(step.Packet) == blitzcrank.NetId),
+            "the enemy client gets no table while it does not see him");
+        blitzcrank.Position = home;
+        var back = FlushWindow(match, 1.5);
+        var reveal = back.FindIndex(step => step.Observer == 1 && step.Opcode == 0x0B && HashAt(step.Packet, 1) == blitzcrank.NetId);
+        var table = back.FindLastIndex(step => step.Observer == 1 && SpellTooltipTableUnit(step.Packet) == blitzcrank.NetId);
+        TestAssert.True(reveal >= 0, "the fog re-entry replays his inventory");
+        TestAssert.True(table > reveal, "his table follows the reveal");
+        TestAssert.True(HoldsCurrentTable(match, 1, blitzcrank), "the enemy client holds his current table again");
+    }
+
+    // Batch 936: the last spellbook tooltip table the observer was sent for the hero is the one the hero's rows build now.
+    private static bool HoldsCurrentTable(Match match, int observer, Entity hero) =>
+        match.Captures[observer].Tables.TryGetValue(hero.NetId, out var held) &&
+        held.Plaintext.Span.SequenceEqual(SpellPackets.SpellTooltipVariables(match.Runtime.HeroStats.BuildItemTooltipEntries(hero)
+            .Select(entry => new SpellTooltipEntry(checked((byte)entry.Slot), (float)entry.First, (float)entry.Second, (float)entry.Third))
+            .ToArray(), hero.NetId).Plaintext.Span);
 
     // Batch 389 (BUF-FLUSH): Shaco's box adds Stealth and removes it in the same run once a unit is in range (the sweep's Shaco W row). The
     // client never held that Stealth, so it must see neither the add nor the remove. The shipped box script decides the add and the remove;

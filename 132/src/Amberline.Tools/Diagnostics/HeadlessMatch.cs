@@ -822,6 +822,8 @@ public static class HeadlessMatch
         public IReadOnlyDictionary<string, long> PacketTotals => _checker.TotalsByKind;
         private readonly Dictionary<string, (long Count, long Bytes)> _opcodeCounts = new(StringComparer.Ordinal);
         public IReadOnlyDictionary<string, (long Count, long Bytes)> OpcodeCounts => _opcodeCounts;
+        // DIAGNOSTICS (batch 936): the last spellbook tooltip table (0x84, every entry one unit's selector 60 and up) each peer got for each unit.
+        private readonly Dictionary<(int Peer, uint Unit), byte[]> _lastTooltipTables = new();
         // Turret shots, to compare two builds of one seed: a swing's 0x0D goes to every peer that
         // can see it, so one shot is one distinct (attacker, missile) pair. The opcode totals
         // cannot say which attacker fired; this can.
@@ -1078,6 +1080,16 @@ public static class HeadlessMatch
                 if (_peerOf.TryGetValue(output.ConnectionId, out var peer)) Deliver(peer, output.Packet);
         }
 
+        /// <summary>DIAGNOSTICS (batch 936): the unit of a spellbook tooltip table (an 0x84 whose entries all name it with a selector of 60 or more).</summary>
+        private static uint? TooltipTableUnit(ReadOnlySpan<byte> bytes)
+        {
+            if (bytes.Length < 24 || bytes[0] != 0x84 || bytes.Length != 7 + 17 * BinaryPrimitives.ReadUInt16LittleEndian(bytes[5..])) return null;
+            var unit = BinaryPrimitives.ReadUInt32LittleEndian(bytes[7..]);
+            for (var entry = 7; entry < bytes.Length; entry += 17)
+                if (BinaryPrimitives.ReadUInt32LittleEndian(bytes[entry..]) != unit || bytes[entry + 4] < 60) return null;
+            return unit;
+        }
+
         /// <summary>One server-to-peer packet, as ENet would carry it: counted, checked and, for two opcodes, traced.</summary>
         internal void Deliver(int peer, PlaintextPacket packet)
         {
@@ -1100,6 +1112,19 @@ public static class HeadlessMatch
             var kind = plaintext.Length == 0 ? $"ch{packet.Channel}/empty" : $"ch{packet.Channel}/0x{plaintext[0]:X2}";
             var counted = _opcodeCounts.GetValueOrDefault(kind);
             _opcodeCounts[kind] = (counted.Count + 1, counted.Bytes + plaintext.Length);
+            // DIAGNOSTICS (batch 936): the spellbook tooltip tables the peers got ("tooltip-tables") and those byte-identical to the last one the
+            // peer got for the unit ("tooltip-tables-unchanged": they change nothing on the client), as two more rows of this tally.
+            if (TooltipTableUnit(plaintext) is { } tableUnit)
+            {
+                var unchanged = _lastTooltipTables.TryGetValue((peer, tableUnit), out var last) && plaintext.SequenceEqual(last);
+                _lastTooltipTables[(peer, tableUnit)] = plaintext.ToArray();
+                string[] rows = unchanged ? ["tooltip-tables", "tooltip-tables-unchanged"] : ["tooltip-tables"];
+                foreach (var row in rows)
+                {
+                    var tally = _opcodeCounts.GetValueOrDefault(row);
+                    _opcodeCounts[row] = (tally.Count + 1, tally.Bytes + plaintext.Length);
+                }
+            }
             // 0x0D: attacker at 1..5 and the swing's missile id at 10..14 (CombatPackets.BasicAttack).
             if (plaintext.Length >= 15 && plaintext[0] == 0x0D)
             {

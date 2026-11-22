@@ -178,6 +178,11 @@ public sealed class ReplicationView
     /// leaves the view is forgotten, so its next entry sends both bits again.
     /// </summary>
     public Dictionary<uint, byte> TeamMasks { get; } = new();
+    /// <summary>
+    /// Batch 936: the last spellbook tooltip table (0x83 on 126, 0x84 on 132) this client was sent for each unit, the rows it holds
+    /// (<c>ReplicationDelivery.IsRepeatedSpellTooltips</c>). A restarted client holds none, so <see cref="Reset"/> forgets them.
+    /// </summary>
+    public Dictionary<uint, byte[]> SpellTooltips { get; } = new();
     public bool TerrainBootstrapped { get; set; }
 
     /// <summary>
@@ -236,6 +241,7 @@ public sealed class ReplicationView
         StaleDashes.Clear();
         Store.Clear();
         TeamMasks.Clear();
+        SpellTooltips.Clear();
         TerrainBootstrapped = false;
         VisibilityRefreshSuppressed = false;
     }

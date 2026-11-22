@@ -104,9 +104,10 @@ public static partial class ChampionLiveRegressionChecks
             // BuffLifecycle's PeriodElapsed bookkeeping (the engine ticker no longer runs a DoT the script schedules
             // itself). GetTime advances in SpellSystem.Tick before the unit's buffs are ticked
             // (ProductionMatchComposition.Tick); a bare TickBuffs leaves it where it was. The add is TickRate 1, so
-            // its BuffOnUpdateActions only runs once a second, and that first run only seeds LastTimeExecuted: the
-            // first damage is two seconds after the hit (the second run) and every second after that. The red burn
-            // keeps the engine clock and its own split ticks.
+            // its BuffOnUpdateActions runs once a second after its first run. Batch 937: that first run is the buff's
+            // first update after the hit (it only seeds LastTimeExecuted), so the first damage is one second after it
+            // (Entropy's "80 True Damage over 2.5 seconds": two pulses of 40). Before, the first run was one second
+            // after the hit and the first damage two. The red burn keeps the engine clock and its own split ticks.
             void Step(double dt)
             {
                 runtime.Spells.Tick(dt);
@@ -121,7 +122,9 @@ public static partial class ChampionLiveRegressionChecks
             TestAssert.True(original.Payload.SourceIsPeriodic && original.Payload.ScriptSchedulesPeriodic,
                 $"{team} {name}: the script schedules its own pulses");
             var beforeQuiet = target.Health;
-            Step(0.6);
+            // Batch 937: the first update seeds the clock at 0.1 s; nothing is due until 1.1 s.
+            Step(0.1);
+            Step(0.5);
             TestAssert.Near(beforeQuiet, target.Health, 1e-9,
                 $"{team} {name}: no update is due before the script's own one-second tick");
             TestAssert.True(runtime.Combat.ApplyHit(second.NetId, target.NetId, 1.0,
@@ -138,16 +141,12 @@ public static partial class ChampionLiveRegressionChecks
                 // The renewal keeps the instance's variables, its own LastTimeExecuted with them (batch
                 // 896), so the phase the first script update seeds survives it. One pulse at the boundary
                 // that seeding set, and none at the one a restarted clock would have moved it to.
-                var beforeSeed = target.Health;
-                Step(0.4);
-                TestAssert.Near(beforeSeed, target.Health, 1e-9,
-                    $"{team} {name}: the first script update only seeds the clock");
                 var beforeGap = target.Health;
-                Step(0.6);
+                Step(0.4);
                 TestAssert.Near(beforeGap, target.Health, 1e-9,
                     $"{team} {name}: the script's own update is not due again yet");
                 var beforePulse = target.Health;
-                Step(0.4);
+                Step(0.1);
                 TestAssert.Near(beforePulse - tickDamage, target.Health, 1e-7,
                     $"{team} {name}: burn ticks on the boundary its own clock seeded");
             }
@@ -155,16 +154,12 @@ public static partial class ChampionLiveRegressionChecks
             {
                 // The red burn keeps the clock the renewal did not move (BUFF_RENEW_EXISTING keeps the instance's vars,
                 // batch 896, so the live instance's LastTimeExecuted survives), the same shape as the entropy branch.
-                var beforeSeed = target.Health;
-                Step(0.4);
-                TestAssert.Near(beforeSeed, target.Health, 1e-9,
-                    $"{team} {name}: the first script update only seeds the clock");
                 var beforeGap = target.Health;
-                Step(0.6);
+                Step(0.4);
                 TestAssert.Near(beforeGap, target.Health, 1e-9,
                     $"{team} {name}: the script's own update is not due again yet");
                 var beforePulse = target.Health;
-                Step(0.4);
+                Step(0.1);
                 TestAssert.Near(beforePulse - tickDamage, target.Health, 1e-7,
                     $"{team} {name}: burn ticks on the boundary its own clock seeded");
             }

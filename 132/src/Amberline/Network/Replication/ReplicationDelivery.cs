@@ -50,8 +50,6 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
     private readonly Dictionary<(ReplicationObserver Observer, uint NetId),
         (ForcedMoveState Move, Position2 Position, Position2 Destination, bool TargetVisible)> _leeFollowDashes = new();
     private readonly Dictionary<(ReplicationObserver Observer, uint NetId), bool> _leeDashSent = new();
-    // The last spellbook tooltip packet (0x83) each observer was sent for a unit in this flush (IsRepeatedSpellTooltips).
-    private readonly Dictionary<(ReplicationObserver Observer, uint NetId), byte[]> _spellTooltipsSent = new();
 
     public ReplicationDelivery(
         WorldState world,
@@ -173,7 +171,6 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         _forcedMoveReanchors.Clear();
         _revealedMinionRoutes.Clear();
         _leeDashSent.Clear();
-        _spellTooltipsSent.Clear();
         _springRevealed.Clear();
         foreach (var packet in _pending.OfType<PacketReplicationMessage>())
         {
@@ -334,7 +331,6 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         _freshReplication.Clear();
         _freshTargetability.Clear();
         _preparedShrines.Clear();
-        _spellTooltipsSent.Clear();
         // The spring is one flush's news: a trap sprung in this step is shown by this flush only (RefreshObserver), and its flag ends with it.
         foreach (var entity in World.Entities.Values) entity.SprungThisFlush = false;
         _springRevealed.Clear();
@@ -507,10 +503,13 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             case ChainMissileSyncReplicationMessage chain:
                 {
                     // The client's missile registers for packets from its own net ID, so only a view that was told of the missile
-                    // (the cast or the missile replication, TrackMissile) can use the list. A hop this view never learned of would end
-                    // the chain at that slot (the client maps net IDs to object ids; an unknown one becomes empty), so the list is cut
-                    // to the units the view knows. Reconstruction: how the retail server filters its hop list per client is not in the
-                    // client.
+                    // (the cast or the missile replication, TrackMissile) can use the list. Batch 938: a hop this view never learned of keeps
+                    // its slot as 0. The client's handler (byte-identical) maps each net ID through its
+                    // net-ID map, which answers 0 for an unknown one, so 0 is the client's own "no unit". The list used to be compacted
+                    // instead, which moved every later hop one slot up, so that view drew the orb onto the wrong units. A 0 slot ends that
+                    // view's drawing there (the missile's update ends at an empty slot). The server's own trailing 0s (a chain replanned
+                    // shorter, BbSpellProjectile) clear the client's stale slots the same way. Reconstruction: how the retail server filters its
+                    // hop list per client is not in the client.
                     // A chain attack's missile came with the 0x0D (CanRoute's rule: the attacker and the attacked unit known, one seen).
                     var holdsMissile = chain.Attack
                         ? chain.Targets.Count > 0 && observer.View.Known.Contains(chain.OwnerNetId) &&
@@ -518,8 +517,8 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
                           (routeVisible.Contains(chain.OwnerNetId) || routeVisible.Contains(chain.Targets[0]))
                         : observer.View.Effects.Contains(chain.MissileNetId);
                     if (!holdsMissile) break;
-                    var hops = chain.Targets.Where(observer.View.Known.Contains).ToArray();
-                    if (hops.Length == 0) break;
+                    var hops = chain.Targets.Select(id => observer.View.Known.Contains(id) ? id : 0u).ToArray();
+                    if (hops.All(id => id == 0)) break;
                     Send(observer, SpellPackets.ChainMissileSync(chain.MissileNetId, chain.OwnerNetId, hops));
                     break;
                 }

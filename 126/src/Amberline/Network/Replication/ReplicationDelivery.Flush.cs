@@ -147,17 +147,21 @@ public sealed partial class ReplicationDelivery
     // times in one flush (S-riven seed 1, tick 1044). The client's 0x83 handler (the case 0x83 of its packet handler) stores a
     // spellbook entry's floats in the slot's SpellDataInst (the float fields and the flag byte). SetSpellData (which
     // the slot rename 0x35 reaches through the change-spell routine, and a character push through the spellbook's init) and the record reset
-    // routine leave those fields alone. So a spellbook 0x83 byte-identical to the last one this observer got for the unit in this flush
-    // changes nothing on the client and is not sent. Another spellbook 0x83 for the unit, an item packet of the hero (an item slot's record) or a
-    // character push or pop (0x9F, 0x6A: the table keeps following a rebuilt book, as RefreshSpellbookStats orders it) in between starts over.
-    // Buff selectors (below 60, the BuffManager's) are never dropped. Reconstruction: retail's 0x83 cadence is not in the shipped files; the
-    // client ends the flush with the same values.
-    private bool IsRepeatedSpellTooltips(ReplicationObserver observer, ReadOnlySpan<byte> bytes)
+    // routine leave those fields alone: the client keeps its rows between packets. So a spellbook 0x83 byte-identical to the last one this
+    // client got for the unit changes nothing on the client and is not sent. Batch 936: the memory is the client's view
+    // (ReplicationView.SpellTooltips), kept across flushes (batch 554 kept it for one flush, so the one-second block still repeated the table of
+    // every hero with script rows); a restarted client's view starts empty (ReplicationView.Reset), and a table the client was not sent (it
+    // routes by sight, CanRoute) is not remembered, so a client that sees the hero again gets the next one that differs. An item packet of the
+    // hero (an item slot's record), a character push or pop (0x9F, 0x6A: the table keeps following a rebuilt book, as RefreshSpellbookStats
+    // orders it) or a mixed table starts over. Buff selectors (below 60, the BuffManager's) are never dropped. Reconstruction: retail's 0x83
+    // cadence is not in the shipped files; the client holds the same values.
+    private static bool IsRepeatedSpellTooltips(ReplicationObserver observer, ReadOnlySpan<byte> bytes)
     {
+        var held = observer.View.SpellTooltips;
         if (bytes.Length >= 5 && bytes[0] is 0x0B or 0x44 or 0x56 or 0x72 or 0xA7 or 0x9F or 0x6A)
         {
             // ItemsPackets (remove, swap, set, buy, use) and the character data push and pops name the unit at byte 1.
-            _spellTooltipsSent.Remove((observer, BinaryPrimitives.ReadUInt32LittleEndian(bytes[1..])));
+            held.Remove(BinaryPrimitives.ReadUInt32LittleEndian(bytes[1..]));
             return false;
         }
         if (bytes.Length < 24 || bytes[0] != 0x83 || bytes.Length != 7 + 17 * BinaryPrimitives.ReadUInt16LittleEndian(bytes[5..])) return false;
@@ -169,11 +173,11 @@ public sealed partial class ReplicationDelivery
         {
             for (var entry = 7; entry < bytes.Length; entry += 17)
                 if (bytes[entry + 4] >= SpellPackets.MaxBuffTooltipSlots)
-                    _spellTooltipsSent.Remove((observer, BinaryPrimitives.ReadUInt32LittleEndian(bytes[entry..])));
+                    held.Remove(BinaryPrimitives.ReadUInt32LittleEndian(bytes[entry..]));
             return false;
         }
-        if (_spellTooltipsSent.TryGetValue((observer, unit), out var sent) && bytes.SequenceEqual(sent)) return true;
-        _spellTooltipsSent[(observer, unit)] = bytes.ToArray();
+        if (held.TryGetValue(unit, out var last) && bytes.SequenceEqual(last)) return true;
+        held[unit] = bytes.ToArray();
         return false;
     }
 }

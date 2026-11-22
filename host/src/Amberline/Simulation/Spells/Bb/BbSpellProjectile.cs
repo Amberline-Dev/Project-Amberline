@@ -26,11 +26,14 @@ internal sealed class BbSpellProjectile : ISharedSpellProjectile, ILaunchAnnounc
     private readonly bool _homing;
     // Batch 481b: the height the missile leaves from above its ground point (a unit's bone, see BbSpellProjectile.HeightAt); 0 otherwise.
     private readonly double _launchHeight;
-    // The hops of a chain: planned at the cast, replaced in flight by AdvanceChainHop when a planned unit is dead.
-    private readonly List<uint>? _chain;
+    // The hops of a chain: planned at the cast, replanned in flight by AdvanceChainHop when a planned unit is dead. Batch 938: the caller's own
+    // array, which the cast's BbChainSync copies send too, so a copy that leaves after a replan sends the list the flight follows; 0 = no hop.
+    private readonly uint[]? _chain;
     private int _hop;
     // A chain bounces off a dead unit only once, and only one it was flying to when it died (AdvanceChainHop).
     private bool _corpseBounced;
+    // Batch 938: the chain ended while the client's list still named hops, so its missile is destroyed, not left to fly on (RetireMissile).
+    private bool _chainCut;
     // The creation of an Instacast flight with no client-side cast was sent (AnnounceLaunch or the cast frame): once per flight.
     private bool _instantAnnounced;
     private readonly HashSet<string>? _targetFlags;
@@ -58,11 +61,11 @@ internal sealed class BbSpellProjectile : ISharedSpellProjectile, ILaunchAnnounc
         ChampionCastContext cast, SpellCastInfo castInfo, uint targetNetId, uint missileNetId,
         Position2 origin = default, Position2 direction = default, Position3 aim = default,
         Func<SpellSystem, IReadOnlyList<Entity>>? windupTargets = null, HashSet<string>? targetFlags = null,
-        Action? atWindupEnd = null, IReadOnlyList<uint>? chain = null, double? castTime = null, bool child = false,
+        Action? atWindupEnd = null, uint[]? chain = null, double? castTime = null, bool child = false,
         Position2? launchFrom = null, bool announcedByMissilePacket = false, int itemId = 0, double launchHeight = 0.0)
     {
         _launchHeight = launchHeight;
-        _chain = chain is null ? null : new List<uint>(chain);
+        _chain = chain;
         _child = child;
         _announcedByMissilePacket = announcedByMissilePacket;
         _atWindupEnd = atWindupEnd;
@@ -116,7 +119,7 @@ internal sealed class BbSpellProjectile : ISharedSpellProjectile, ILaunchAnnounc
     /// <summary>Ends the client's missile object the way this flight had it announced (see the constructor's flag).</summary>
     private void RetireMissile(SpellSystem system)
     {
-        if (_announcedByMissilePacket) system.Effects.SendDestroyMissile(_missileNetId);
+        if (_announcedByMissilePacket || _chainCut) system.Effects.SendDestroyMissile(_missileNetId);
         else system.Effects.RetireCastMissile(_missileNetId);
     }
 
@@ -331,20 +334,22 @@ internal sealed class BbSpellProjectile : ISharedSpellProjectile, ILaunchAnnounc
     /// 2026: "E keeps bouncing off a dead target. It should only bounce off a dead target once, and only if the ability is already in flight
     /// to that target. Otherwise it should not bounce off dead targets. If there is no living target nearby, the ability should be deleted").
     /// The planned hop is kept while its unit lives. A unit that died while the missile flew to it is reached as a corpse once: the arrival
-    /// itself is that bounce (<paramref name="arrivedDead"/>). A planned hop that is dead when the missile would start toward it is replaced
-    /// by the nearest living unit from here (<see cref="BbChainParameters.NextHop"/>), and the client, which follows the list it was sent, is
-    /// sent the new list. When no living unit qualifies the chain ends and the missile is retired.
+    /// itself is that bounce (<paramref name="arrivedDead"/>: dead when the missile arrived, not killed by its hit, batch 938). A planned hop that
+    /// is dead when the missile would start toward it is replanned with the rest of the list from here (<see cref="BbChainParameters.Extend"/>),
+    /// and the client, which follows the list it was sent, is sent the new list. When no living unit qualifies the chain ends.
+    /// Batch 938: a chain that ends while the client's list still names hops destroys the client's missile (<see cref="RetireMissile"/>); the
+    /// client otherwise flew on down its list, bouncing to units that took no damage.
     /// </summary>
     private bool AdvanceChainHop(SpellSystem system, Position2 from, bool arrivedDead)
     {
         if (_chain is null) return false;
+        // MaximumHits bounds the list: an exhausted chain ends here, as the client's does.
+        if (_hop + 1 >= _chain.Length) return false;
         if (arrivedDead)
         {
-            if (_corpseBounced) return false;
+            if (_corpseBounced) return Cut();
             _corpseBounced = true;
         }
-        // MaximumHits bounds the list: an exhausted chain ends here, as before, and a replacement only takes a planned hop's place.
-        if (_hop + 1 >= _chain.Count) return false;
         if (system.World.Get(_chain[_hop + 1]) is { Alive: true })
         {
             _hop++;
@@ -354,12 +359,20 @@ internal sealed class BbSpellProjectile : ISharedSpellProjectile, ILaunchAnnounc
         var passed = new List<Entity>();
         for (var i = 0; i <= _hop; i++)
             if (system.World.Get(_chain[i]) is { } unit) passed.Add(unit);
-        var replacement = BbChainParameters.Read(_script)?.NextHop(system, Caster, from, passed, _cast.Data, flags);
-        if (replacement is null) return false;
-        _chain[_hop + 1] = replacement.NetId;
+        var kept = passed.Count;
+        var plan = BbChainParameters.Read(_script)?.Extend(system, Caster, passed, from, _cast.Data, flags, kept + _chain.Length - _hop - 1);
+        if (plan is null || plan.Count == kept) return Cut();
+        for (var i = _hop + 1; i < _chain.Length; i++)
+            _chain[i] = i - _hop - 1 + kept < plan.Count ? plan[i - _hop - 1 + kept].NetId : 0u;
         _hop++;
         if (_missileNetId != 0) system.Effects.SendChainMissileSync(Caster, _missileNetId, _chain);
         return true;
+    }
+
+    private bool Cut()
+    {
+        _chainCut = true;
+        return false;
     }
 
     /// <summary>The arrival itself: the hit, the retirement of the missile and the flight's end hooks.</summary>
@@ -373,12 +386,14 @@ internal sealed class BbSpellProjectile : ISharedSpellProjectile, ILaunchAnnounc
         // opens with CO_IS_NOT_DEAD on its target before any damage, so a corpse gives no AP. CH1ConcussionGrenade's burst needs it at the
         // placemarker its ExpirationTimer killed in flight. The corpse takes no damage (CombatService.ApplyHit refuses a dead target) and no
         // hostile control or non-persistent hero buff (BbBuffRuntime); the rest of the hit is the script's (Disintegrate still stacks
-        // Pyromania). For a chain the arrival still counts as a hop (the client counts every hop of its list).
+        // Pyromania). For a chain the arrival still counts as a hop (the client counts every hop of its list). Batch 938: whether the missile
+        // arrived at a corpse is read before the hit; a unit this hit kills was a living hop, not the chain's one corpse bounce.
+        var arrivedDead = !target.Alive;
         _host.Router.RunTargetExecute(_script, Caster, _slot, _rank, _cast.ManaCost, Ground(system, target.Position),
             Ground(system, target.Position), target, targetsHit: _hop, missileNetId: _missileNetId, itemId: _itemId);
         // A script that destroyed the missile in its hit ends the flight here, a chain's remaining hops included.
         var destroyedByScript = _flight is { Destroyed: true };
-        if (_chain is not null && !destroyedByScript && AdvanceChainHop(system, _position, arrivedDead: !target.Alive)) return true;
+        if (_chain is not null && !destroyedByScript && AdvanceChainHop(system, _position, arrivedDead)) return true;
         if (_missileNetId != 0 && !destroyedByScript) RetireMissile(system);
         _flight?.End(_position, target);
         _forget(this);

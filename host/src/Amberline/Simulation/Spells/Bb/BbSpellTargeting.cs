@@ -288,29 +288,41 @@ internal sealed record BbChainParameters(IReadOnlyList<double> MaximumHits, bool
 
     /// <summary>
     /// Reconstruction (M3): the stock server's hop choice is not in the shipped client (the client only follows the list it is
-    /// given), so the rule is the one the parameters name. From the unit the missile is on, the next hop is the nearest unit the
-    /// spell's flags admit within BounceRadius that the parameters allow (the unit just hit is skipped unless
-    /// CanHitSameTargetConsecutively, any earlier hop unless CanHitSameTarget); the caster is the last resort and only
-    /// when CanHitCaster. The chain ends when nothing qualifies or MaximumHits is reached.
+    /// given), so the rule is the one the parameters name (<see cref="NextHop"/>). The chain ends when nothing qualifies or MaximumHits is reached.
     /// </summary>
-    public IReadOnlyList<Entity> Build(SpellSystem system, Entity caster, Entity first, SpellData spell, int rank, HashSet<string> flags)
+    public IReadOnlyList<Entity> Build(SpellSystem system, Entity caster, Entity first, SpellData spell, int rank, HashSet<string> flags) =>
+        Extend(system, caster, [first], first.Position, spell, flags, Hits(rank));
+
+    /// <summary>
+    /// Batch 938: <paramref name="chain"/> (the units hit so far, the missile on the last at <paramref name="from"/>) continued hop by hop up to
+    /// <paramref name="limit"/> units. A flight replans the rest of its list with it when a planned unit is dead, so the replacement obeys the
+    /// same rules as the plan (one unit in a dead one's place could also stand later in the list: Bouncing Blades then hit it twice).
+    /// </summary>
+    public List<Entity> Extend(SpellSystem system, Entity caster, List<Entity> chain, Position2 from, SpellData spell, HashSet<string> flags,
+        int limit)
     {
-        var chain = new List<Entity> { first };
-        var limit = Hits(rank);
-        while (chain.Count < limit)
+        while (chain.Count < limit && NextHop(system, caster, from, chain, spell, flags) is { } next)
         {
-            var next = NextHop(system, caster, chain[^1].Position, chain, spell, flags);
-            if (next is null) break;
             chain.Add(next);
+            from = next.Position;
         }
         return chain;
     }
 
     /// <summary>
-    /// The hop after the unit the missile is on at <paramref name="from"/> (the last of <paramref name="chain"/>): the nearest living unit the
-    /// spell's flags admit within BounceRadius that the parameters allow, the caster as the last resort when CanHitCaster, or null when there
-    /// is none, which ends the chain. Batch 177 part 4 (the owner, 24 October 2026: "E keeps bouncing off a dead target"): a bounce goes only to
-    /// a living unit, so a dead one is never chosen here; a corpse a missile was already flying to is the caller's rule.
+    /// The hop after the unit the missile is on at <paramref name="from"/> (the last of <paramref name="chain"/>), among the living units the
+    /// spell's flags admit within BounceRadius that the parameters allow (the unit just hit is skipped unless CanHitSameTargetConsecutively, any
+    /// earlier hop unless CanHitSameTarget), or null when there is none, which ends the chain. Batch 177 part 4 (the owner, 24 October 2026:
+    /// "E keeps bouncing off a dead target"): a bounce goes only to a living unit; a corpse a missile was already flying to is the caller's rule.
+    /// <para>
+    /// Reconstruction (batch 938): the nearest unit this chain has not hit yet, then the caster (CanHitCaster), then the nearest unit it has hit.
+    /// The nearest allowed unit alone (the rule before) is, with CanHitSameTarget, almost always the unit the missile just came from, so Spell Flux
+    /// went A, B, A, B, A whatever stood around ("hits only 2 enemies in most cases", community report 22 November 2026). The caster's place: the
+    /// shipped tip (fontconfig <c>game_character_tips_Ryze</c>: "Ryze can use himself as a conduit for his Spell Flux ability if there are no
+    /// additional enemies to bounce the spell off of") puts him after new units, and V1.0.0.139's "New Effect: Prioritizes enemy champions over
+    /// Ryze" (wiki patch history) says that before it, in 1.0.0.126 and 132, he was not behind enemy champions, so he comes before a repeat. With
+    /// CanHitSameTarget 0 and CanHitCaster 0 (Bouncing Blades, Ricochet, Alpha Strike, Hate Spike) the order is the nearest new unit, as before.
+    /// </para>
     /// </summary>
     public Entity? NextHop(SpellSystem system, Entity caster, Position2 from, IReadOnlyList<Entity> chain, SpellData spell, HashSet<string> flags)
     {
@@ -318,11 +330,11 @@ internal sealed record BbChainParameters(IReadOnlyList<double> MaximumHits, bool
         var radius = BounceRadius(spell);
         bool Allowed(Entity unit) => (CanHitSameTargetConsecutively || !ReferenceEquals(unit, current)) &&
                                      (CanHitSameTarget || !chain.Contains(unit));
-        var next = BbSpellTargeting.Area(system, caster, from, radius, flags)
+        var units = BbSpellTargeting.Area(system, caster, from, radius, flags)
             .Where(unit => !ReferenceEquals(unit, caster) && unit.Alive && Allowed(unit))
-            .OrderBy(unit => BbSpellHost.Distance(unit.Position, from)).ThenBy(unit => unit.NetId).FirstOrDefault();
-        if (next is null && CanHitCaster && caster.Alive && Allowed(caster) && BbSpellHost.Distance(caster.Position, from) <= radius)
-            next = caster;
-        return next;
+            .OrderBy(unit => BbSpellHost.Distance(unit.Position, from)).ThenBy(unit => unit.NetId).ToList();
+        return units.FirstOrDefault(unit => !chain.Contains(unit))
+               ?? (CanHitCaster && caster.Alive && Allowed(caster) && BbSpellHost.Distance(caster.Position, from) <= radius ? caster : null)
+               ?? units.FirstOrDefault();
     }
 }

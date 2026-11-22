@@ -60,7 +60,8 @@ internal sealed class BbBuffInstance
     /// shorter than the interval (<c>FrostArrowApplicator</c> and <c>ToxicShotApplicator</c> 0.1 s, Renekton's unlock animations 0.01 s)
     /// and their hook is the whole buff — it removes itself or releases the slot it sealed. One run only: that run stands for the pass,
     /// so the next may only come a whole line after it, past the buff's end, and a short-lived buff cannot spin. A renewal keeps the
-    /// flag the way it keeps <see cref="ActionsNextAt"/>.
+    /// flag the way it keeps <see cref="ActionsNextAt"/>. Batch 937: a hook with a <c>TickRate</c> that carries a periodic
+    /// (<see cref="ActionsCarriesPeriodic"/>) takes its first run at the buff's first update by this flag, then one per TickRate.
     /// </summary>
     public bool ActionsFirstLinePending { get; set; }
     /// <summary>

@@ -230,7 +230,13 @@ public static partial class ChampionLiveRegressionChecks
         var participant = runtime.Session.Participant(orderConnection)
             ?? throw new InvalidOperationException("order participant missing");
         var hero = participant.Hero!;
+        // Batch 936: the other hero holds item rows too, so the returning client must get its table again after the reconnect.
+        var other = runtime.Session.Participant(chaosConnection)!.Hero!;
+        // In each other's sight: a hero's table goes to the clients that see the hero (ReplicationDelivery.CanRoute, as before batch 936).
+        hero.Position = new Position2(7000, 7000);
+        other.Position = new Position2(7200, 7000);
         hero.Inventory = [new InventorySlot(3027), null, null, null, null, null];
+        other.Inventory = [new InventorySlot(3027), null, null, null, null, null];
         // Batch 149 step 5: Rod of Ages' tooltip rows are Items/3027.luaobj's own BBSetSpellToolTipVar writes from
         // its InstanceVars.BonusHealth / BonusMana / BonusAbilityPower (UpdateSelfBuffStats), so the copy has to
         // bind and then be sampled before there is a row to republish on the reconnect.
@@ -239,9 +245,19 @@ public static partial class ChampionLiveRegressionChecks
         rodOfAges.InstanceVars["BonusHealth"] = 72.0;
         rodOfAges.InstanceVars["BonusMana"] = 80.0;
         rodOfAges.InstanceVars["BonusAbilityPower"] = 8.0;
+        var otherRod = runtime.Spells.ItemScripts!.LoadoutOf(other)!.Item(0)!;
+        otherRod.InstanceVars["BonusHealth"] = 54.0;
+        otherRod.InstanceVars["BonusMana"] = 60.0;
+        otherRod.InstanceVars["BonusAbilityPower"] = 6.0;
         // Batch 246: one quarter-second step always crosses the hero's next self-buff line (BbSelfUpdate), where the bare stat hook samples.
         runtime.Spells.Tick(.25);
         runtime.HeroStats.Refresh(hero);
+        // The leaving client is sent both heroes' rows before it goes (its tooltip memory then holds the other hero's table).
+        network.FlushDelivery();
+        var beforeLeaving = new List<LeagueEnetEvent>();
+        PumpNative(network, [clientA, clientB], () => beforeLeaving.Any(item => NativeOpcode(item, runtime.Cipher) == 0x84 &&
+                TooltipContains(item, runtime.Cipher, other.NetId, 64, 54.0, 60.0, 6.0)),
+            orderClient == clientA ? beforeLeaving : null, orderClient == clientB ? beforeLeaving : null);
 
         orderPeer.Send(1, new byte[] { 0x95, 0, 0, 0, 0 }, LeagueEnetPacketFlags.Reliable);
         orderClient.Flush();
@@ -286,6 +302,24 @@ public static partial class ChampionLiveRegressionChecks
         TestAssert.True(setItemIndex >= 0, "ready reconnect restores the dynamic item slot");
         TestAssert.True(tooltipIndex > setItemIndex,
             "ready reconnect publishes item tooltip after SetItem creates the item spell record");
+
+        // Batch 936: the burst carries the returning hero's own table only. The restarted client holds no other hero's rows, and the reconnect
+        // cleared what the server remembers sending it (ReplicationView.Reset), so the other hero's next stat push (the one-second block) sends
+        // its table again although nothing in it changed.
+        var after = new List<LeagueEnetEvent>();
+        bool Again(List<LeagueEnetEvent> events) => events.Any(item =>
+            NativeOpcode(item, runtime.Cipher) == 0x84 && TooltipContains(item, runtime.Cipher, other.NetId, 64, 54.0, 60.0, 6.0));
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        for (var step = 0; !Again(after) && DateTime.UtcNow < deadline; step++)
+        {
+            if (step < 45) network.Tick(1.0 / 30.0);   // past the next one-second block
+            network.Pump(1, 32);
+            DrainNative(clientC, after);
+            DrainNative(chaosClient, null);
+        }
+        TestAssert.True(Again(after), "the reconnected client is sent the other hero's table again (its rows: " +
+            string.Join(",", other.ScriptSpellTooltips.Keys) + "; in the ready burst: " + Again(ready) + "; tables after it: " +
+            string.Join(",", after.Where(item => NativeOpcode(item, runtime.Cipher) == 0x84).Select(item => NativeU32(item, runtime.Cipher, 7))) + ")");
     }
 
     private static void PumpNative(MatchRuntimeNetwork network,

@@ -993,6 +993,23 @@ public static partial class ChampionLiveRegressionChecks
     private sealed class Capture : IReplicationTransport
     {
         public List<PlaintextPacket> Packets { get; } = [];
-        public void Send(PlaintextPacket packet) => Packets.Add(packet);
+        /// <summary>Batch 936: the last spellbook tooltip table this client was sent for each unit, the rows it holds (kept across Clear).</summary>
+        public Dictionary<uint, PlaintextPacket> Tables { get; } = new();
+        public void Send(PlaintextPacket packet)
+        {
+            Packets.Add(packet);
+            if (SpellTooltipTableUnit(packet) is { } unit) Tables[unit] = packet;
+        }
+    }
+
+    /// <summary>The unit of a spellbook tooltip table: an 0x83 whose entries all name it with a selector of 60 or more (SpellTooltipVariables).</summary>
+    private static uint? SpellTooltipTableUnit(PlaintextPacket packet)
+    {
+        var span = packet.Plaintext.Span;
+        if (span.Length < 24 || span[0] != 0x83 || span.Length != 7 + 17 * BinaryPrimitives.ReadUInt16LittleEndian(span[5..])) return null;
+        var unit = BinaryPrimitives.ReadUInt32LittleEndian(span[7..]);
+        for (var entry = 7; entry < span.Length; entry += 17)
+            if (BinaryPrimitives.ReadUInt32LittleEndian(span[entry..]) != unit || span[entry + 4] < 60) return null;
+        return unit;
     }
 }

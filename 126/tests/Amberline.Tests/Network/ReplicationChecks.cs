@@ -1136,6 +1136,52 @@ public static class ReplicationChecks
     /// lists, for each, the hops it knows: the client turns each net ID into an object id and a unit it never learned of would end
     /// the chain at that slot.
     /// </summary>
+    /// <summary>
+    /// Batch 938: a player whose client was never told of bounce target 2 of 4 still gets targets 3 and 4 in slots 3 and 4. The client maps an
+    /// unknown net ID to no unit (its handler's net-ID lookup answers 0), so slot 2 is sent as 0. The compacted list of before put target 3 in
+    /// slot 2 and target 4 in slot 3, so that player's orb was drawn onto the wrong units. A client that knows every target gets the list as it is.
+    /// </summary>
+    [Check("replication.b938-a-chain-hop-a-view-does-not-know-keeps-its-slot")]
+    public static void ChainHopUnknownToAViewKeepsItsSlot()
+    {
+        var world = new WorldState();
+        var caster = new Entity(1, EntityKind.Hero, UnitType.Hero, Team.Order, new(1000, 1000)) { Name = "Ryze", ChampionName = "Ryze", MaxHealth = 500.0, Health = 500.0 };
+        var targets = Enumerable.Range(0, 4).Select(index => new Entity((uint)(10 + index), EntityKind.Minion, UnitType.Minion, Team.Chaos,
+            new(1200 + 100 * index, 1000)) { Name = "T" + (index + 1), MaxHealth = 500.0, Health = 500.0 }).ToArray();
+        world.Register(caster);
+        foreach (var target in targets) world.Register(target);
+        var delivery = new ReplicationDelivery(world, Services(), new OpenVisionEnvironment(), _ => Array.Empty<VisionProvider>(), (_, _) => false);
+        var partial = new CaptureReplicationTransport();
+        var full = new CaptureReplicationTransport();
+        var partialObserver = new ReplicationObserver(1, Team.Order, caster.NetId, partial);
+        var fullObserver = new ReplicationObserver(2, Team.Order, caster.NetId, full);
+        delivery.AddObserver(partialObserver);
+        delivery.AddObserver(fullObserver);
+        delivery.Flush();
+        const uint missile = 0x4002_0003;
+        var info = new SpellCastInfo(SpellSystem.ProtocolHash("SpellFlux"), caster.NetId, 1, caster.NetId, missile,
+            new(1200, 0, 1000), new(1200, 0, 1000), [new(targets[0].NetId, new(1200, 0, 1000), 0)], 0, 0, 2, new(1000, 0, 1000));
+        fullObserver.View.Known.UnionWith(new[] { caster.NetId }.Concat(targets.Select(target => target.NetId)));
+        partialObserver.View.Known.UnionWith(new[] { caster.NetId }.Concat(targets.Select(target => target.NetId)));
+        delivery.EnqueueCast(new SpellCastReplicationMessage(caster.NetId, info));
+        delivery.Flush();
+        partial.Clear(); full.Clear();
+        // The partial view was never told of target 2 (it stood in fog for that client).
+        partialObserver.View.Known.Remove(targets[1].NetId);
+        delivery.EnqueueChainMissileSync(new ChainMissileSyncReplicationMessage(missile, caster.NetId,
+            targets.Select(target => target.NetId).ToArray()));
+        delivery.Flush();
+        uint[] Slots(CaptureReplicationTransport capture)
+        {
+            var sync = capture.Packets.Single(packet => packet.Plaintext.Span[0] == 0x6F).Plaintext.ToArray();
+            return Enumerable.Range(0, BinaryPrimitives.ReadInt32LittleEndian(sync[5..]))
+                .Select(index => BinaryPrimitives.ReadUInt32LittleEndian(sync[(13 + 4 * index)..])).ToArray();
+        }
+        TestAssert.Equal(new[] { targets[0].NetId, 0u, targets[2].NetId, targets[3].NetId }, Slots(partial),
+            "targets 3 and 4 stay in slots 3 and 4; the unknown target 2 is the client's no-unit 0");
+        TestAssert.Equal(targets.Select(target => target.NetId).ToArray(), Slots(full), "a view that knows every target gets the whole list");
+    }
+
     [Check("replication.chain-missile-sync-reaches-the-views-that-hold-the-missile-with-the-hops-they-know")]
     public static void ChainMissileSyncRoutesByMissileAndFiltersHops()
     {
@@ -1164,7 +1210,8 @@ public static class ReplicationChecks
             "both views were told of the missile by the cast; the second one is made a stranger below");
         strangerObserver.View.Effects.Clear();
         holder.Clear(); stranger.Clear();
-        // A hop nobody told this client about (id 99) would end its chain there: the list is cut to what the view knows.
+        // A hop nobody told this client about (id 99) keeps its slot as 0, the client's "no unit" (batch 938; it was cut out, which moved the
+        // later hops one slot up).
         delivery.EnqueueChainMissileSync(new ChainMissileSyncReplicationMessage(missile, caster.NetId,
             new uint[] { foe.NetId, 99, other.NetId, foe.NetId }));
         delivery.Flush();
@@ -1173,11 +1220,12 @@ public static class ReplicationChecks
         var sync = holder.Packets.Single(packet => packet.Plaintext.Span[0] == 0x6F).Plaintext.ToArray();
         TestAssert.Equal(141, sync.Length, "sizeof(ChainMissileSync)");
         TestAssert.Equal(missile, BinaryPrimitives.ReadUInt32LittleEndian(sync[1..]), "FromID is the missile");
-        TestAssert.Equal(3, BinaryPrimitives.ReadInt32LittleEndian(sync[5..]), "the unknown hop is cut out");
+        TestAssert.Equal(4, BinaryPrimitives.ReadInt32LittleEndian(sync[5..]), "every hop keeps its slot");
         TestAssert.Equal(caster.NetId, BinaryPrimitives.ReadUInt32LittleEndian(sync[9..]), "owner is the caster");
-        TestAssert.Equal(new uint[] { foe.NetId, other.NetId, foe.NetId },
-            Enumerable.Range(0, 3).Select(index => BinaryPrimitives.ReadUInt32LittleEndian(sync[(13 + 4 * index)..])).ToArray(), "hops in order");
-        TestAssert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(sync[25..]), "unused slots are zero");
+        TestAssert.Equal(new uint[] { foe.NetId, 0u, other.NetId, foe.NetId },
+            Enumerable.Range(0, 4).Select(index => BinaryPrimitives.ReadUInt32LittleEndian(sync[(13 + 4 * index)..])).ToArray(),
+            "hops in order, the unknown one as 0");
+        TestAssert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(sync[29..]), "unused slots are zero");
 
         // A chain attack's missile came with the basic-attack packet, so the views that got that packet (attacker and attacked unit
         // known, one of them seen) are the holders; the missile ledger does not list attack missiles.

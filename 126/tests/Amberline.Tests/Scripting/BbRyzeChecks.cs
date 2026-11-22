@@ -243,14 +243,14 @@ public static class BbRyzeChecks
         TestAssert.Equal("Foe", Chain(match.Foe), "no unit within the bounce radius ends the chain");
         match.Hero.Position = new Position2(7000, 7000);
 
-        // Two enemies: the orb alternates between them (the same unit twice in a row is not allowed, an earlier one again is);
-        // Ryze is only the last resort.
+        // Two enemies: the orb takes the new one, then (the same unit twice in a row is not allowed, an earlier one again is) Ryze, within reach of
+        // the Foe, before an enemy is hit a second time (batch 938: a new unit, then the caster, then a repeat).
         Enemy(match, "Minion", new Position2(7500, 7000));
-        TestAssert.Equal("Foe,Minion,Foe,Minion,Foe", Chain(match.Foe), "two enemies alternate and Ryze is skipped");
+        TestAssert.Equal("Foe,Minion,Foe,Ryze,Foe", Chain(match.Foe), "two enemies, then Ryze before a second repeat");
         // Friends and enemies beyond the radius are not hops.
         match.Ally.Position = new Position2(7350, 7000);
         Enemy(match, "FarMinion", new Position2(7300, 7600));
-        TestAssert.Equal("Foe,Minion,Foe,Minion,Foe", Chain(match.Foe), "an ally and a unit beyond 375 are not hops");
+        TestAssert.Equal("Foe,Minion,Foe,Ryze,Foe", Chain(match.Foe), "an ally and a unit beyond 375 are not hops");
         // A dead unit is not a hop (Ryze steps up so that he is the only unit left within reach of the minion).
         match.Foe.Health = 0.0;
         match.Foe.Alive = false;
@@ -527,11 +527,13 @@ public static class BbRyzeChecks
         match.Refill();
         TestAssert.True(match.Cast(2, match.Foe), "E cast");
         TestAssert.Equal(1, match.Log.Casts[^1].Targets.Count, "the cast names the first unit only");
-        match.Advance(1.2);
-        TestAssert.Equal([match.Foe.NetId, minion.NetId, match.Foe.NetId, minion.NetId, match.Foe.NetId],
-            match.Log.ChainSyncs[^1].Targets, "Foe, Minion, Foe, Minion, Foe");
+        // Batch 938: the legs to Ryze and back are 300 each (the old Foe, Minion alternation flew 200), so the last hit lands later.
+        match.Advance(1.7);
+        // Batch 938: Ryze, 300 from the Foe, takes the fourth hop (a new unit, then the caster, then a repeat); his own hop deals nothing.
+        TestAssert.Equal([match.Foe.NetId, minion.NetId, match.Foe.NetId, match.Hero.NetId, match.Foe.NetId],
+            match.Log.ChainSyncs[^1].Targets, "Foe, Minion, Foe, Ryze, Foe");
         TestAssert.Equal(3, HitsOn(match, "Foe").Count, "the Foe is hit three times");
-        TestAssert.Equal(2, HitsOn(match, "Minion").Count, "the minion twice");
+        TestAssert.Equal(1, HitsOn(match, "Minion").Count, "the minion once");
         TestAssert.Equal(0, HitsOn(match, "Ryze").Count, "Ryze never");
 
         // A unit that dies on the way: the orb skips it and goes on to the next hop (the client follows the server's list).
@@ -543,7 +545,7 @@ public static class BbRyzeChecks
         match.Advance(0.2);
         minion.Health = 0.0;
         minion.Alive = false;
-        match.Advance(1.5);
+        match.Advance(2.0);
         TestAssert.Equal(before, HitsOn(match, "Minion").Count, "a dead unit takes no hit");
         TestAssert.Equal(3 + 3, HitsOn(match, "Foe").Count, "the later hops on the Foe still land");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
@@ -627,7 +629,8 @@ public static class BbRyzeChecks
         NearF32(0.5 * (60.0 + 0.05 * maxMana) + 0.3 * ap, splash.Raw, "the splash is half of it + 0.3 AP");
         TestAssert.True(Buff(match.Hero, "DesperatePower") is not null, "still on");
 
-        // Spell Flux: Foe, Minion, Foe, Minion, Foe, each hop splashing the other unit (half of the 50 + 0.175 AP).
+        // Spell Flux: Foe, Minion, Foe, Ryze, Foe (batch 938), each enemy hop splashing the other unit (half of the 50 + 0.175 AP); Ryze's own hop
+        // runs nothing (TargetExecute opens with Target != Owner).
         match.Refill();
         match.Hero.SpellCooldowns[3] = 99.0;
         var foeBefore = HitsOn(match, "Foe").Count;
@@ -636,10 +639,10 @@ public static class BbRyzeChecks
         match.Advance(1.3);
         var foe = HitsOn(match, "Foe").Skip(foeBefore).ToList();
         var other = HitsOn(match, "Minion").Skip(minionBefore).ToList();
-        TestAssert.Equal(3 + 2, foe.Count, "the Foe: three hops and two splashes from the Minion's hops");
-        TestAssert.Equal(2 + 3, other.Count, "the Minion: two hops and three splashes from the Foe's hops");
-        TestAssert.Equal(2, foe.Count(hit => hit.Kind == "SpellAoe" && Math.Abs(hit.Raw - (0.5 * 50.0 + 0.175 * ap)) < 1e-6),
-            "the splashes are half of the 50 + 0.175 AP");
+        TestAssert.Equal(3 + 1, foe.Count, "the Foe: three hops and one splash from the Minion's hop");
+        TestAssert.Equal(1 + 3, other.Count, "the Minion: one hop and three splashes from the Foe's hops");
+        TestAssert.Equal(1, foe.Count(hit => hit.Kind == "SpellAoe" && Math.Abs(hit.Raw - (0.5 * 50.0 + 0.175 * ap)) < 1e-6),
+            "the splash is half of the 50 + 0.175 AP");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
     }
 

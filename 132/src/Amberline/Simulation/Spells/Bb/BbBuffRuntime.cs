@@ -2070,7 +2070,22 @@ internal sealed class BbBuffRuntime
             // buff tick, and the shipped scripts are written to a quarter second of it). It replaced "every buff update", which
             // was the simulation step: Twisted Fate's shuffle turned a card every other step (66 ms, owner finding 20).
             var due = true;
-            if (instance.TickRate > 0.0)
+            if (instance.TickRate > 0.0 && instance.ActionsCarriesPeriodic && instance.ActionsFirstLinePending)
+            {
+                // Batch 937 (players, 22 November 2026: Pantheon's E strikes twice at the channel's end). Reconstruction: a TickRate hook that
+                // carries a BBExecutePeriodically runs at the buff's first update, then once per TickRate, so the periodic seeds its
+                // LastTimeExecuted on the line the later runs keep (TickElapsed starts after this run). The evidence is the shipped tooltip
+                // alone: Entropy is "80 True Damage over 2.5 seconds" from EntropyBurning (TickRate 1, Duration 2.5, 40 a pulse, ExecuteImmediately
+                // false), two pulses only when the seed is at the add. (The native's zeroed mLastTickTimeUpdateActions is not evidence for it:
+                // the bare TickRate hooks below keep their first run one TickRate after the add, which their shipped numbers require: Death
+                // Lotus throws 10 daggers (wiki V1.0.0.75 "Daggers increased to 10 from 9"; at the add it would be 11), Explosive Shot deals
+                // Effect3 110 = 5 x 22 over 5 s (6 ticks at the add), and Time Bomb counts 3, 2, 1 at 1, 2, 3 s before its blast at 4 s.)
+                // Seeded one TickRate late, at the first 30 Hz step past the line (0.267 s for 0.25), the periodic's due missed the next run on
+                // the line by part of a step and waited a whole TickRate: Pantheon_Heartseeker's second strike came at 0.733 s beside the Expired
+                // one of OnBuffDeactivate.
+                instance.ActionsFirstLinePending = false;
+            }
+            else if (instance.TickRate > 0.0)
             {
                 instance.TickElapsed += dt;
                 due = instance.TickElapsed + 1e-9 >= instance.TickRate;

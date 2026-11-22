@@ -332,19 +332,25 @@ public static partial class ChampionLiveRegressionChecks
                 AssertTooltip(entries, 64, 77, 0, 0, "existing item slot coexists");
             }
 
+            // Batch 936: a stat push sends the table only to a client whose last table of the hero differs (ReplicationDelivery.
+            // IsRepeatedSpellTooltips), so what is asserted is the table each client holds (Capture.Tables) after the push.
             void Publish(IReadOnlyList<ItemTooltipEntry> expected, string label)
             {
                 match.Clear();
                 runtime.HeroStats.Push(hero);
                 runtime.Delivery.Flush();
-                AssertValues(match.Captures[0].Packets, expected, label);
-                AssertValues(match.Captures[1].Packets, expected, label + " visible observer");
-                // Exercise the other live adapter as well as HeroStats.Push.
+                AssertValues(Held(0), expected, label);
+                AssertValues(Held(1), expected, label + " visible observer");
+                // Exercise the other live adapter as well as HeroStats.Push: it repeats nothing the client holds.
                 match.Clear();
                 runtime.CombatTransport.SendHeroStats(hero);
                 runtime.Delivery.Flush();
-                AssertValues(match.Captures[0].Packets, expected, label + " combat transport");
+                AssertValues(Held(0), expected, label + " combat transport");
+                TestAssert.False(match.Captures[0].Packets.Any(IsHeroTooltip), row.Champion + ": " + label + ": the second push repeats no table");
             }
+
+            IEnumerable<PlaintextPacket> Held(int seat) => match.Captures[seat].Tables.TryGetValue(hero.NetId, out var held)
+                ? new[] { held } : Array.Empty<PlaintextPacket>();
 
             void Restore(IReadOnlyList<ItemTooltipEntry> expected, string label)
             {
