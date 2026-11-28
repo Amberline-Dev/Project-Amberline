@@ -330,9 +330,14 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         if (type == BbDamageType.MAGIC_DAMAGE && (spellSource || sourceNumber is (int)BbDamageSource.DAMAGESOURCE_PROC
                 or (int)BbDamageSource.DAMAGESOURCE_ATTACK))
             amount += Sum(call, "SpellDamageRatio") * attacker.AbilityPower;
-        else if (spellSource && type == BbDamageType.PHYSICAL_DAMAGE)
+        else if ((spellSource || sourceNumber == (int)BbDamageSource.DAMAGESOURCE_ATTACK) && type == BbDamageType.PHYSICAL_DAMAGE)
             // Reconstruction: the physical coefficient scales bonus attack damage (Vayne Condemn 0.5); the shipped
-            // call sites that scale AD explicitly set the field to 0.
+            // call sites that scale AD explicitly set the field to 0. Batch 953 (community report, 28 November 2026: Renekton's W "doesn't
+            // scale with AD"): an attack hit's coefficient counts too, as the primary hit of an attack override above already reads it. Every
+            // shipped physical DAMAGESOURCE_ATTACK call that deals GetBaseAttackDamage passes one (1; RenektonExecute 0.75, its BonusPercent, so a
+            // strike is BonusDamage + 0.75 x total attack damage, the tooltip's "10 + 150%" over two), and every one that adds the total itself
+            // passes 0 (Fizz, Xin Zhao, Ezreal, Vayne, Volibear). Without it Ruthless Predator, Parley, Bladesurge and the second hits of Twin
+            // Bite and Double Strike left the bonus attack damage out.
             amount += Sum(call, "PhysicalDamageRatio") * _host.BonusAttackDamage(attacker);
         amount *= percent;
         var ignoreCrit = Flag(call, "IgnoreDamageCrit", false);

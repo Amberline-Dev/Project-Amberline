@@ -375,22 +375,26 @@ internal sealed class ProductionServices
                 // The time left as the live packets carry it (ProtocolSpellEffectSink.WireDuration): a periodically re-added buff's copy
                 // keeps its margin, or it lapses before the next re-add, which then goes out as a second add (batch 726).
                 var duration = Float(Math.Max(0.0, buff.ExpiresAt + buff.Payload.WireDurationMargin));
-                // A fog re-entry must not re-add a buff this client still
-                // holds: 0xBF renews it and replays its activation sound
-                // (playtest B2 YV8). First sight, reconnect and adds missed in
+                // A fog re-entry sends nothing for a buff this client still
+                // holds unchanged (playtest B2 YV8: every add replays its
+                // activation sound). First sight, reconnect and adds missed in
                 // fog are absent from the ledger and still send one add. A
-                // renewal missed in fog moves the end time (the ledger's
-                // delivery time + duration) and is re-sent once; 0.1 s covers
-                // the one 1/30 s step a queued add can lag the countdown. The
+                // stack or a renewal missed in fog (the count, or the end time
+                // = the ledger's delivery time + duration, differs; 0.1 s covers
+                // the one 1/30 s step a queued add can lag the countdown) is
+                // re-sent once, and the delivery turns this add of a held copy
+                // into the silent count update or renewal (batch 952,
+                // ReplicationDelivery.AsHeldBuffUpdate), with the running time
+                // the live add carries (ProtocolSpellEffectSink.WireRunning). The
                 // tooltip below carries no activation and is always refreshed.
                 // ponytail: a server-side ExpiresAt refresh that sends no 0xBF
-                // (VayneHunted, Vayne's Hunt speed part) also re-adds on re-entry.
+                // (VayneHunted, Vayne's Hunt speed part) also re-sends on re-entry.
                 if (!observer.View.Buffs.TryGetValue((entity.NetId, slot), out var held) ||
                     held.Hash != hash || held.Count != count ||
                     Math.Abs(held.EndsAt - (Delivery.SimulationTime() + duration)) > 0.1)
                     packets.Add(SpellPackets.AddBuff(new BuffAdd(
                         entity.NetId, slot, (byte)buff.Type, hash, duration, buff.CasterNetId, count,
-                        IsHidden: buff.HiddenOnClientByte)));
+                        IsHidden: buff.HiddenOnClientByte, RunningTime: Float(Math.Max(0.0, buff.TimerSpan - buff.ExpiresAt)))));
                 if (buff.Slot is >= 0 and < SpellPackets.MaxBuffTooltipSlots &&
                     BuffEffectService.TryGetBuffTooltipValues(buff,
                         out var value0, out var value1, out var value2))

@@ -73,22 +73,23 @@ public static class BbGangplankChecks
     // Parley (Q)
     // ------------------------------------------------------------------------------------------------------------
 
-    [Check("scripting.bb-gangplank-parley-hits-for-base-damage-plus-base-attack-damage")]
-    public static void ParleyHitsForTheRankPlusBaseAttackDamage()
+    [Check("scripting.bb-gangplank-parley-hits-for-base-damage-plus-total-attack-damage")]
+    public static void ParleyHitsForTheRankPlusTotalAttackDamage()
     {
         using var match = new Match("Gangplank");
         match.Learn(1);
         match.Refill();
         match.Foe.Armor = 0.0;
         match.Advance(0.5);
-        var baseAttackDamage = match.Hero.AttackDamage;
+        var attackDamage = match.Hero.AttackDamage;
         TestAssert.True(match.Cast(0, match.Foe), "Parley on the Foe");
         match.Advance(1.0);
-        // The base attack damage of the script's GetBaseAttackDamage leaves out the bonus attack damage, and the passive's 8 is a bonus.
-        var expected = 20.0 + baseAttackDamage - 8.0;
+        // Batch 953 (restated; was 20 + base attack damage): the script deals ParBaseDamage + GetBaseAttackDamage with PhysicalDamageRatio 1, so the
+        // bonus attack damage (the passive's 8) counts too: 20 plus the total attack damage, the tooltip's "(+@f1@)".
+        var expected = 20.0 + attackDamage;
         var raws = string.Join(",", HitsOn(match, "Foe").Select(hit => hit.Raw.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)));
         var shot = HitsOn(match, "Foe").Where(hit => Math.Abs(hit.Raw - expected) < 1e-6).ToList();
-        TestAssert.Equal(1, shot.Count, $"one shot of Parley: rank one is 20 plus the base attack damage ({expected}), raws {raws}");
+        TestAssert.Equal(1, shot.Count, $"one shot of Parley: rank one is 20 plus the total attack damage ({expected}), raws {raws}");
         // Parley is an attack-type hit, so the passive's on-hit bleed starts too: its first tick (4, one stack) lands in the same second.
         TestAssert.True(HitsOn(match, "Foe").Any(hit => Math.Abs(hit.Raw - 4.0) < 1e-6), "the on-hit bleed of the passive follows the shot");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));

@@ -222,7 +222,11 @@ public sealed partial class ReplicationDelivery
                 SendAll(observer, reveal);
                 if (!Services.StatsBeforeReveal(entity))
                     SendFreshReplication(observer, Services.BuildEntityStats(entity, observer));
-                SendAll(observer, Services.BuildBuffSnapshot(entity, observer));
+                // Batch 952: a snapshot add of a buff this client still holds (a stack or a renewal it missed in fog) goes out as the live path
+                // sends it, a count update (0x1F) or a renewal (0x32): every add replays the buff's OnBuffActivate sound and voice on the stock
+                // client, and the two silent forms change the held copy. A buff the client does not hold
+                // (gained in fog, first sight, reconnect) is still added: no other packet creates one, so its activation plays at the reveal.
+                SendAll(observer, Services.BuildBuffSnapshot(entity, observer).Select(packet => AsHeldBuffUpdate(observer.View, packet)).ToArray());
                 // A queued original-start dash or fear waypoint would rewind the forced move the reveal carried.
                 // Reconstruction: a lane minion's reveal carries its live route, so the route queued at its
                 // spawn (or by an AI decision earlier in this tick), made while this observer could not see the

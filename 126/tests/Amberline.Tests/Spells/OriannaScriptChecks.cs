@@ -636,4 +636,112 @@ public static partial class ChampionLiveRegressionChecks
         TestAssert.True(enemy.Buffs.Any(buff => buff.Name == "MoveAwayCollision"), "and the pull");
         TestAssert.True(enemy.Buffs.Any(buff => buff.Payload.ActionDisabled || buff.Type == BuffType.Stun), "the target cannot act");
     }
+
+    // Batch 951 (community report, 28 November 2026: "Orianna turns backward when she casts W or R while walking"): W and R are OffsetAOE
+    // (TargettingType 9). The stock client sends such a cast at the press with its own position of her as both points and no target
+    //; that point trails the server's walking hero. No client turns the
+    // caster for it: the client is false for Self, SelfAOE and OffsetAOE and
+    // gates each turn of a cast (InitSpell toward the cast info's TargetPos, PlayAnimation, ExecuteCastFrame), and W, an instacast, goes to
+    // TryCastInstaSpell, which turns nothing. Neither script turns her or reads her facing. The server turned her toward the trailing point and
+    // sent a face packet, so she turned backward on every client.
+    [Check("scripting.bb-orianna-w-and-r-keep-her-facing-and-send-no-face-packet")]
+    public static void OriannaCommandsKeepHerFacing()
+    {
+        // The data: the two commands are the line's only OffsetAOE spells, and neither script turns her: R's BBFaceDirection turns the units it
+        // pulls, and its one BBGetPointByUnitFacingOffset of her has Distance 0 (her own position, whatever her facing).
+        var key = InibinReader.KeyHash("SpellData*TargettingType");
+        TestAssert.Equal(["OrianaDetonateCommand", "OrianaDissonanceCommand"],
+            Directory.EnumerateFiles(GameData.Default.Paths.Data("Spells"), "*.inibin")
+                .Where(path => InibinReader.Load(path).TryGetValue(key, out var type) && type.AsClientInt() == 9)
+                .Select(path => Path.GetFileNameWithoutExtension(path)).Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            "Orianna's W and R are the line's OffsetAOE spells");
+        foreach (var name in new[] { "OrianaDissonanceCommand", "OrianaDetonateCommand" })
+            TestAssert.False(BbM3.Script(name).Walk().Any(item =>
+                    item.Block.Function == "BBFaceDirection" && item.Block.Text("TargetVar") == "Owner" ||
+                    item.Block.Function == "BBGetPointByUnitFacingOffset" && item.Block.Text("UnitVar") == "Owner" &&
+                    item.Block.Param("Distance") is not BbValue.Number { Value: 0.0 }),
+                name + " neither turns her nor reads her facing");
+
+        using var match = new BbM3.Match("Orianna", foeChampion: "Annie");
+        match.Learn(3);
+        var hero = match.Hero;
+        match.Foe.Position = new Position2(9000, 9000);
+        match.Ally.Position = new Position2(9000, 6000);   // off her walks: a body on the route turns her around it
+        var wire = BbM3.Observe(match, Team.Order, hero);
+        var faceOpcode = SpellPackets.FaceDirection(0, default).Plaintext.Span[0];
+        int Faces() => wire.Packets.Count(item => item.Packet.Plaintext.Span[0] == faceOpcode &&
+            BinaryPrimitives.ReadUInt32LittleEndian(item.Packet.Plaintext.Span[1..]) == hero.NetId);
+        // The TargetPosition of her last cast answer (cast info at 9, its TargetPosition at +23: X at 32, Z at 40).
+        Position2 Announced()
+        {
+            var span = wire.Packets.Last(item => item.Packet.Plaintext.Span[0] == SpellPackets.CastSpellAnswerOpcode &&
+                BinaryPrimitives.ReadUInt32LittleEndian(item.Packet.Plaintext.Span[1..]) == hero.NetId).Packet.Plaintext.Span;
+            return new Position2(BinaryPrimitives.ReadSingleLittleEndian(span[32..]), BinaryPrimitives.ReadSingleLittleEndian(span[40..]));
+        }
+        // The stock client's request (the 0xA2/0xA3 payload, floats as on the wire): slot, its own position of her twice, no target.
+        bool Press(int slot, Position2 at)
+        {
+            var payload = new byte[34];
+            BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(1), hero.NetId);
+            payload[5] = (byte)(slot << 1);
+            for (var offset = 6; offset < 30; offset += 12)
+            {
+                BinaryPrimitives.WriteSingleLittleEndian(payload.AsSpan(offset), (float)at.X);
+                BinaryPrimitives.WriteSingleLittleEndian(payload.AsSpan(offset + 8), (float)at.Z);
+            }
+            return match.Runtime.Spells.HandleCastRequest(hero, payload, match.Now);
+        }
+
+        // W while walking west, the ball on her: her client shows her 20 behind the server (east).
+        match.Refill();
+        match.Runtime.Movement.SetMoveOrder(hero.NetId, new Position2(6400, 7000));
+        match.Advance(0.3);
+        TestAssert.True(hero.Facing.X < -0.99, "the walk faces her west");
+        var faces = Faces();
+        var trail = new Position2(hero.Position.X + 20, hero.Position.Z);
+        TestAssert.True(Press(1, trail), "W pressed while walking");
+        TestAssert.True(hero.Facing.X < -0.99, $"W keeps the walk's facing: {hero.Facing}");
+        match.Advance(0.1);
+        TestAssert.Equal(faces, Faces(), "W sends no face packet");
+        // The cast answer keeps the request's point (Reconstruction: the retail server's choice is server code); no client turn reads it for type 9.
+        TestAssert.Near((float)trail.X, Announced().X, 1e-3, "W's cast answer names the point the client sent, not her server position");
+        TestAssert.Near((float)trail.Z, Announced().Z, 1e-3, "on both axes");
+
+        // W standing, the ball on her: the point is her seat as the float wire carries it.
+        match.Advance(2.0);
+        match.Refill();
+        TestAssert.True(Press(1, hero.Position), "W pressed standing");
+        TestAssert.True(hero.Facing.X < -0.99, $"a standing W keeps her facing: {hero.Facing}");
+        match.Advance(0.3);
+        TestAssert.Equal(faces, Faces(), "and sends no face packet");
+
+        // R while walking east, the ball away from her (a Q to the north puts it there; a Q is a real aim and turns her).
+        match.Refill();
+        TestAssert.True(match.Cast(0, at: new Position2(hero.Position.X, hero.Position.Z + 500)), "Q puts the ball down");
+        match.Advance(1.0);
+        var ball = match.Runtime.World.Entities.Values.Single(unit => unit.ChampionName == "OriannaBall" && unit.Alive && unit.Team == Team.Order);
+        TestAssert.True(OriannaGap(ball.Position, hero.Position) > 300.0, "the ball lies away from her");
+        match.Foe.Position = ball.Position + new Position2(100, 0);
+        match.Refill();
+        match.Runtime.Movement.SetMoveOrder(hero.NetId, new Position2(7200, 7000));
+        match.Advance(0.3);
+        TestAssert.True(hero.Facing.X > 0.99, "the walk faces her east");
+        faces = Faces();
+        TestAssert.True(Press(3, new Position2(hero.Position.X - 20, hero.Position.Z)), "R pressed while walking");
+        TestAssert.True(hero.Facing.X > 0.99, $"R keeps the walk's facing: {hero.Facing}");
+        match.Advance(1.0);
+        TestAssert.Equal(faces, Faces(), "R sends no face packet");
+        TestAssert.True(hero.Facing.X > 0.99, $"and she still faces east: {hero.Facing}");
+        TestAssert.True(BbM3.HitsOn(match, "Foe").Count > 0, "the shockwave strikes around the ball");
+
+        // R standing, the ball away from her.
+        match.Advance(2.0);
+        match.Refill();
+        var standing = hero.Facing;
+        TestAssert.True(Press(3, hero.Position), "R pressed standing");
+        match.Advance(1.0);
+        TestAssert.True(hero.Facing.X * standing.X + hero.Facing.Z * standing.Z > 0.999, $"a standing R keeps her facing: {standing} -> {hero.Facing}");
+        TestAssert.Equal(faces, Faces(), "and sends no face packet");
+        TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
+    }
 }

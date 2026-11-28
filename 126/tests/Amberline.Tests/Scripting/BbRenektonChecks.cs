@@ -157,13 +157,13 @@ public static class BbRenektonChecks
             if (match.Foe.AnyBuffOrStatus(buff => buff.DisablesActions)) stunned++;
             match.Advance(0.1);
         }
-        // RenektonExecute's TargetExecute (batch 309): each strike is BonusDamage (5 at rank one) plus 0.75 of the base attack damage (no items here, so
-        // all of it), PercentOfAttack 1; two strikes on an AI target. The tooltip's "10 plus 150 percent" is the two strikes together.
+        // RenektonExecute's TargetExecute (batch 309): each strike is BonusDamage (5 at rank one) plus 0.75 of the attack damage (no items here, so
+        // all of it is base; batch 953 checks the bonus part), PercentOfAttack 1; two strikes on an AI target. The tooltip's "10 plus 150 percent" is the two strikes together.
         var perHit = 5.0 + 0.75 * match.Hero.AttackDamage;
         var strikes = HitsOn(match, "Foe");
         TestAssert.Equal(2, strikes.Count, "two strikes land through a queued swing (batch 250 saw one; the attack-override fix of batch 273 made it two)");
         TestAssert.True(strikes.All(hit => Math.Abs(hit.Raw - perHit) < 0.01 && Math.Abs(hit.Dealt - Mitigated(perHit, armour)) < 0.01),
-            $"each strike is 5 plus 0.75 of his base attack damage ({perHit:0.##}), less the foe's armour");
+            $"each strike is 5 plus 0.75 of his attack damage ({perHit:0.##}), less the foe's armour");
         TestAssert.Near(2.0 * Mitigated(perHit, armour), strikes.Sum(hit => hit.Dealt), 0.05, "the two strikes deal their sum (the health bar also regenerates over the stun)");
         TestAssert.True(stunned * 0.1 > 0.55 && stunned * 0.1 < 0.95, $"the stun lasts 0.75 seconds (sampled {stunned * 0.1:0.0} s)");
         TestAssert.True(attack, "the swing was accepted");
@@ -190,13 +190,13 @@ public static class BbRenektonChecks
             if (match.Foe.AnyBuffOrStatus(buff => buff.DisablesActions)) stunned++;
             match.Advance(0.1);
         }
-        // RenektonSuperExecute: the same strike (5 plus 0.75 base attack damage at rank one) three times, the 1.5 s stun, and the fifty spent (the fury
+        // RenektonSuperExecute: the same strike (5 plus 0.75 attack damage at rank one) three times, the 1.5 s stun, and the fifty spent (the fury
         // the strikes' own hits add is taken back through FuryCost).
         var perHit = 5.0 + 0.75 * match.Hero.AttackDamage;
         var strikes = HitsOn(match, "Foe");
         TestAssert.Equal(3, strikes.Count, "three strikes at fifty fury");
         TestAssert.Near(3.0 * Mitigated(perHit, armour), strikes.Sum(hit => hit.Dealt), 0.05,
-            $"three strikes of 5 plus 0.75 of his base attack damage ({perHit:0.##}), less the foe's armour");
+            $"three strikes of 5 plus 0.75 of his attack damage ({perHit:0.##}), less the foe's armour");
         TestAssert.True(stunned * 0.1 > 1.35 && stunned * 0.1 < 1.65, $"the stun lasts 1.5 seconds (sampled {stunned * 0.1:0.0} s)");
         TestAssert.Near(0.0, match.Hero.Mana, 0.01, "the fifty fury is spent");
     }

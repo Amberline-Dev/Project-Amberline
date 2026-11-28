@@ -254,9 +254,9 @@ public static partial class ChampionLiveRegressionChecks
         TestAssert.True(observer.View.CharacterFades.Count(layer => layer.Actor == vayne.NetId) == 2,
             "the observer holds the activation layer and the restoring one, as the visible observers do");
 
-        // An R recast out of sight replaces the held buff: its 0x7F reaches
-        // the known hidden observer, the new 0xBF does not, so the next
-        // re-entry sends exactly that one missed add.
+        // An R recast out of sight renews the held buff (VayneInquisition.TargetExecute: BUFF_RENEW_EXISTING); the renewal does not reach
+        // the known hidden observer, so the next re-entry sends that one missed renewal, as the silent form (batch 952: an add would replay
+        // the activation).
         vayne.SpellCooldowns[3] = 0.0;
         vayne.Mana = vayne.MaxMana;
         match.Cast(0, 3, vayne);
@@ -265,14 +265,17 @@ public static partial class ChampionLiveRegressionChecks
         enemy.Position = vayne.Position + new Position2(350, 0);
         runtime.Delivery.Flush();
         TestAssert.True(observer.View.Visible.Contains(vayne.NetId), "Vayne re-enters sight");
-        TestAssert.Equal(1, BuffAdds("VayneInquisition"), "the R missed in fog is added once");
+        TestAssert.Equal(0, BuffAdds("VayneInquisition"), "the R renewed in fog is not re-added");
+        TestAssert.Equal(1, SilentRenewals("VayneInquisition"), "the R renewed in fog is re-sent once, as a silent renewal");
         TestAssert.Equal(0, BuffAdds("VayneSilveredBolts"), "held Silver Bolts is not re-added");
         TestAssert.Equal(0, BuffAdds("VayneTumbleBonus"), "held Tumble bonus is not re-added");
 
         // A same-count renewal in fog: the observer misses its 0xBF, so its
         // client keeps the older timer. The ledger's end time differs from the
-        // renewed one and re-entry re-sends that add once; the unchanged
-        // Silver Bolts, counted down through the same fog, stays held.
+        // renewed one and re-entry re-sends it once, as the silent renewal
+        // (0x32) of the held copy (batch 952: an add would replay its
+        // activation); the unchanged Silver Bolts, counted down through the
+        // same fog, stays held.
         enemy.Position = new Position2(12000, 2000);
         runtime.Delivery.Flush();
         TestAssert.False(observer.View.Visible.Contains(vayne.NetId), "Vayne hides for the renewal");
@@ -287,8 +290,15 @@ public static partial class ChampionLiveRegressionChecks
         enemy.Position = vayne.Position + new Position2(350, 0);
         runtime.Delivery.Flush();
         TestAssert.True(observer.View.Visible.Contains(vayne.NetId), "Vayne re-enters after the renewal");
-        TestAssert.Equal(1, BuffAdds("VayneInquisition"), "the renewal missed in fog is re-sent once");
+        TestAssert.Equal(0, BuffAdds("VayneInquisition"), "the renewal missed in fog is not re-added");
+        TestAssert.Equal(1, SilentRenewals("VayneInquisition"), "the renewal missed in fog is re-sent once, as a silent renewal");
         TestAssert.Equal(0, BuffAdds("VayneSilveredBolts"), "the unchanged Silver Bolts is not re-added");
+
+        // The silent form AsHeldBuffUpdate picks for a held copy: 0x32, or 0x1F for a buff that paints its own activation particle.
+        int SilentRenewals(string name) => capture.Packets.Count(packet => packet.Plaintext.Length >= 6 &&
+            packet.Plaintext.Span[0] is SpellPackets.BuffReplaceOpcode or SpellPackets.BuffUpdateCountOpcode &&
+            BinaryPrimitives.ReadUInt32LittleEndian(packet.Plaintext.Span[1..]) == vayne.NetId &&
+            packet.Plaintext.Span[5] == vayne.Buffs.Single(buff => buff.Name == name).Slot);
 
         int FadeCount(byte opcode) => capture.Packets.Count(packet => packet.Plaintext.Length >= 5 &&
             packet.Plaintext.Span[0] == opcode &&

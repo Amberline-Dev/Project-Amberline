@@ -815,7 +815,8 @@ public sealed class BbChampionModule : IChampionSpellModule
     }
 
     /// <summary>
-    /// A cast at a ground point (Spiral Blade): the hero turns to the point, the cast is announced and <c>SelfExecute</c> runs at the cast frame.
+    /// A cast at a ground point (Spiral Blade): the hero turns to the point (not for an OffsetAOE cast, which names no aim: Orianna's W and R),
+    /// the cast is announced and <c>SelfExecute</c> runs at the cast frame.
     /// Reconstruction (M3): the spell's whole effect is what that hook casts (the extra-slot child), so there is no windup flight of
     /// its own; the child starts when the parent's windup ends (<see cref="CastChild"/>). Two more kinds share the flow:
     /// <list type="bullet">
@@ -834,14 +835,21 @@ public sealed class BbChampionModule : IChampionSpellModule
         // A drag cast (SpellTargetingDragLine) carries the start of the drag as its position and the end of it as its end position; every other
         // ground kind has one point. The announced end position and SelfExecute's end are the drag's end; GetCastSpellTargetPos stays the start.
         var end = type == DragDirection ? Ground(system, new Position2(request.EndPosition.X, request.EndPosition.Z)) : at;
-        var facing = Geometry.FaceTowards(hero, point);
+        // Batch 951 (community report, 28 November 2026: Orianna turned backward casting W or R while walking): an OffsetAOE cast carries no
+        // aim. The stock client sends it at the press with its own position of the caster as the point (see AreaDirection), which trails the
+        // server's walking hero, and no client turns the caster for it: the client (the clientx4cd5f0, 1.0.0.132
+        //) is false for Self, SelfAOE and OffsetAOE and gates each turn of a cast (InitSpell toward the cast info's TargetPos,
+        // PlayAnimation, ExecuteCastFrame). So she keeps her facing and no face packet goes out; the cast info keeps the request's point, which
+        // no client turn reads for this kind (Reconstruction: the retail server's cast code is not shipped). Every aimed kind turns to its point.
+        var aimed = type != OffsetAOE;
+        var facing = aimed ? Geometry.FaceTowards(hero, point) : hero.Facing;
         var line = IsLineSkillshot(spell, type);
         var missileId = line ? system.World.Allocate(UnitType.Missile) : 0u;
         var castInfo = system.BuildChampionCastInfo(hero, cast, slot, at, Array.Empty<SpellCastTarget>(), missileId, end);
         castInfo = Channelled(script, castInfo);
         if (system.Effects.IsReferenceReady(hero))
         {
-            system.Effects.SendFaceDirection(hero, new Position3(facing.X, 0.0, facing.Z));
+            if (aimed) system.Effects.SendFaceDirection(hero, new Position3(facing.X, 0.0, facing.Z));
             system.Effects.SendCast(hero, castInfo);
         }
         IReadOnlyList<Entity> Units(SpellSystem sys) => type == BbTargetType.TTYPE_Area
