@@ -42,6 +42,8 @@ p{max-width:65ch;margin:0 0 14px}
 .btn{display:flex;align-items:center;justify-content:center;width:100%;min-height:44px;margin:0 0 12px;padding:8px 18px;border:1px solid var(--gold);border-radius:2px;background:linear-gradient(180deg,#1d2e45,#0a1322);color:var(--gold-hi);font:inherit;font-weight:600;letter-spacing:.12em;line-height:1.3;text-align:center;text-transform:uppercase;text-decoration:none;overflow-wrap:anywhere;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 3px 0 #3b2c13}
 .btn:hover{color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 3px 0 #3b2c13,0 0 16px rgba(201,171,111,.5)}
 .btn.secondary{background:transparent}
+.tag{display:inline-block;margin:0 6px 0 0;padding:1px 8px;border:1px solid var(--gold-dim);border-radius:2px;color:var(--gold-hi);font-size:.8125rem;letter-spacing:.12em;text-transform:uppercase}
+.cmd{display:block;margin:0 0 12px;padding:10px 12px;border:1px solid var(--gold-dim);background:var(--field);color:var(--gold-hi);font:.9375rem/1.4 ui-monospace,Consolas,monospace;text-align:left;overflow-wrap:anywhere}
 @media (forced-colors:active){.btn{border-color:ButtonText}.problem{border-color:CanvasText}.wordmark{background:none;-webkit-text-fill-color:CanvasText;filter:none}}
 </style>
 </head>
@@ -67,6 +69,26 @@ p{max-width:65ch;margin:0 0 14px}
       </li>
     </ol>
   </section>
+  <section id="linux" hidden>
+    <p><span class="tag">Test</span> These Linux steps are new. They have been tried on only a few setups. If something goes wrong, tell the person who invited you.</p>
+    <p class="muted">The player runs Windows programs with Wine. <a href="https://github.com/Amberline-Dev/Project-Amberline/blob/main/LINUX.md">LINUX.md</a> lists what it needs and what it downloads.</p>
+    <ol class="steps">
+      <li>
+        <a id="linux-download" class="btn">Download Amberline Player for Linux</a>
+      </li>
+      <li>
+        <p>Open a terminal and run this command. It installs the player for your user only. No administrator password is needed.</p>
+        <code id="linux-command" class="cmd"></code>
+        <button id="linux-copy" class="btn secondary" type="button">Copy command</button>
+        <p id="linux-copied" class="muted" role="status"></p>
+        <p class="muted">The first run downloads about 1.3 GB. This takes several minutes.</p>
+      </li>
+      <li>
+        <a id="linux-join" class="btn">Join</a>
+        <p class="muted">If nothing happens, run the command from step 2 again, then choose Join.</p>
+      </li>
+    </ol>
+  </section>
 </main>
 <script>
 /* Amberline join page: one file that asks for nothing. It reads the invite after the # of its own address, checks it, and
@@ -74,9 +96,10 @@ p{max-width:65ch;margin:0 0 14px}
 const RELEASES = "https://github.com/Amberline-Dev/Project-Amberline/releases/download/";
 const DAMAGED = "This invite link is damaged. Ask the host to copy it again.";
 const NEWER = "This invite needs a newer Amberline Player. Download it from the invite page.";
+const OLD_LINUX = "This invite is from an Amberline version without Linux steps. Ask the host to update, then send you a new invite link.";
 const LINES = {
-  "126": { scheme: "amberline-player", tag: /^v(\d+\.\d+\.\d+)$/, asset: "Amberline-Player-", app: "Amberline Player", button: "Download Amberline Player", mark: "AMBERLINE" },
-  "132": { scheme: "amberline-132-player", tag: /^p132-v(\d+\.\d+\.\d+)$/, asset: "Amberline-132-Player-", app: "Amberline 132 Player", button: "Download Amberline 132 Player", mark: "AMBERLINE 132" }
+  "126": { scheme: "amberline-player", tag: /^v(\d+\.\d+\.\d+)$/, asset: "Amberline-Player-", app: "Amberline Player", button: "Download Amberline Player", mark: "AMBERLINE", linuxFirst: "0.1.35" },
+  "132": { scheme: "amberline-132-player", tag: /^p132-v(\d+\.\d+\.\d+)$/, asset: "Amberline-132-Player-", app: "Amberline 132 Player", button: "Download Amberline 132 Player", mark: "AMBERLINE 132", linuxFirst: "0.1.15" }
 };
 
 /* The bare base64url invite: what follows #, without a scheme, surrounding spaces and quotes. */
@@ -142,6 +165,27 @@ function joinUrl(invite, encoded) {
   return LINES[invite.line].scheme + ":" + encoded;
 }
 
+/* Numeric x.y.z comparison: -1, 0 or 1. */
+function compareVersions(a, b) {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+  return 0;
+}
+
+/* The Linux file of the invite's tag ({ name, url }), or null when that release predates the line's first Linux file. */
+function linuxFile(invite) {
+  const line = LINES[invite.line];
+  const version = line.tag.exec(invite.tag)[1];
+  if (compareVersions(version, line.linuxFirst) < 0) return null;
+  const name = line.asset + version + "-linux.sh";
+  return { name: name, url: RELEASES + invite.tag + "/" + name };
+}
+
+function isLinux(agent) {
+  return /Linux|X11/.test(agent) && !/Android/.test(agent);
+}
+
 /* The line's own labels: its download button and its wordmark. Without a valid invite the wordmark stays AMBERLINE. */
 function downloadLabel(invite) {
   return LINES[invite.line].button;
@@ -149,6 +193,26 @@ function downloadLabel(invite) {
 
 function brandMark(invite) {
   return invite && LINES[invite.line] ? LINES[invite.line].mark : "AMBERLINE";
+}
+
+/* The Linux steps: the same invite, the line's Linux file, and a command that runs it. */
+function wireLinux(invite, encoded, serverName, show) {
+  const $ = (id) => document.getElementById(id);
+  const file = linuxFile(invite);
+  if (!file) return show(OLD_LINUX);
+  const command = "sh ~/Downloads/" + file.name;
+  $("linux-download").href = file.url;
+  $("linux-download").textContent = LINES[invite.line].button + " for Linux";
+  $("linux-command").textContent = command;
+  $("linux-join").href = joinUrl(invite, encoded);
+  $("linux-join").textContent = "Join " + serverName;
+  $("linux").hidden = false;
+  $("linux-copy").addEventListener("click", () => {
+    Promise.resolve()
+      .then(() => navigator.clipboard.writeText(command))
+      .then(() => { $("linux-copied").textContent = "Copied. Paste it into a terminal."; },
+            () => { $("linux-copied").textContent = "Could not copy. Select the command and copy it instead."; });
+  });
 }
 
 function wire() {
@@ -163,7 +227,10 @@ function wire() {
   document.title = "Join " + serverName;
   $("heading").textContent = "Join " + serverName;
   $("mark").textContent = brandMark(result.invite);
-  if (!/Windows/.test(navigator.userAgent)) return show("Open this link on your Windows PC.");
+  if (!/Windows/.test(navigator.userAgent)) {
+    if (!isLinux(navigator.userAgent)) return show("Open this link on a Windows or Linux PC.");
+    return wireLinux(result.invite, result.encoded, serverName, show);
+  }
   $("download").href = downloadUrl(result.invite);
   $("download").textContent = downloadLabel(result.invite);
   $("join").href = joinUrl(result.invite, result.encoded);

@@ -123,6 +123,9 @@ public static class AirRemoteChecks
     [Check("server.air-remote-cached-token-skips-sign-in")]
     public static void ACachedBearerSkipsTheSignInThroughTheLoginQueue() => CachedTokenSkipsSignInAsync().GetAwaiter().GetResult();
 
+    [Check("server.air-remote-cached-start-after-logout")]
+    public static void AStartWithTheCachedBearerAfterAirsExitIsAnswered() => CachedStartAfterLogoutAsync().GetAwaiter().GetResult();
+
     [Check("server.air-remote-password-never-persisted")]
     public static void TheLoginPasswordStaysOutOfTheCacheAndTheConsole() => PasswordNeverPersistedAsync().GetAwaiter().GetResult();
 
@@ -387,6 +390,50 @@ public static class AirRemoteChecks
             await TunnelCarriesBytesAsync(restarted.RtmpPort, rtmpBackend, stop.Token);
             TestAssert.Equal(platform.Friend, platform.LastTunnelAccount, "and its tunnels carry friend_login's bearer");
         }
+    }
+
+    /// <summary>
+    /// Batch 942 (the Linux spike's hang, batch 941): AIR signs in through the login queue, logs out as its Exit does (Flex's Logout over
+    /// RTMP) and the tool ends; the next start reuses the cached bearer, and AIR's RTMP connect, sent with C2 in one write through the proxy
+    /// and the tunnel to the platform's RTMP host, gets its <c>_result</c> every time. Both starts are measured, so a miss names its path.
+    /// </summary>
+    private static async Task CachedStartAfterLogoutAsync()
+    {
+        const int attempts = 20;
+        using var certificate = CreateCertificate();
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var root = NewLoginRoot();
+        await using var rtmp = new AirRtmpHost(new IPEndPoint(IPAddress.Loopback, 0), (_, _, _, _) => null, (_, _, _) => true, _ => null,
+            _ => { }, TextWriter.Null);
+        await rtmp.StartAsync(stop.Token);
+        using var xmppBackend = new TcpListener(IPAddress.Loopback, 0);
+        xmppBackend.Start();
+        await using var platform = await LoginPlatform.StartAsync(root, certificate, rtmp.BoundEndPoint.Port,
+            ((IPEndPoint)xmppBackend.LocalEndpoint).Port, stop.Token);
+        var connections = Path.Combine(root, "connections");
+        var invitation = PinnedInvitation(certificate, platform.RemotePort);
+        var misses = new List<string>();
+        await using (var first = await AirRemoteProxy.StartWithPortsAsync(invitation, FreePort(), FreePort(), FreePort(), stop.Token, connections))
+        {
+            TestAssert.Equal(HttpStatusCode.OK, (await PostLoginAsync(first.HttpPort, "friend_login", "correct-horse-1")).Status, "the first login succeeds");
+            for (var attempt = 1; attempt <= attempts; attempt++)
+                if (await AirRtmpConnectChecks.ConnectAsync(first.RtmpPort, "") is (false, var bytes)) misses.Add($"signed-in start {attempt}: {bytes} bytes");
+            var air = new RtmpSharp.Net.RtmpClient(new Uri($"rtmp://127.0.0.1:{first.RtmpPort}"), new RtmpSharp.IO.SerializationContext(),
+                RtmpSharp.IO.ObjectEncoding.Amf3);
+            await air.ConnectAsync();
+            await air.LoginAsync("friend_login", new string('a', 64));
+            await air.LogoutAsync();
+            air.Close();
+        }
+        TestAssert.Equal(1, platform.SignIns, "the first start signs in once");
+        var cached = await RemoteSignIn.TryCachedTokenAsync(invitation, connections, stop.Token);
+        TestAssert.True(cached is not null, "after AIR's Exit the platform still accepts the cached bearer");
+        await using var second = await AirRemoteProxy.StartWithPortsAsync(cached!, FreePort(), FreePort(), FreePort(), stop.Token, connections);
+        TestAssert.Equal(HttpStatusCode.OK, (await PostLoginAsync(second.HttpPort, "friend_login", "correct-horse-1")).Status, "the cached start's login succeeds");
+        TestAssert.Equal(1, platform.SignIns, "the cached start skips the sign-in");
+        for (var attempt = 1; attempt <= attempts; attempt++)
+            if (await AirRtmpConnectChecks.ConnectAsync(second.RtmpPort, "") is (false, var bytes)) misses.Add($"cached start {attempt}: {bytes} bytes");
+        TestAssert.True(misses.Count == 0, $"{misses.Count} of {2 * attempts} RTMP connects through the tunnel got no _result: {string.Join("; ", misses)}");
     }
 
     private static async Task PasswordNeverPersistedAsync()

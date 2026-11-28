@@ -268,7 +268,7 @@ if ($PartsFrom) {
     Copy-Item -Path (Join-Path $PartsFrom 'platform/*') -Destination (Join-Path $app 'platform') -Recurse
 } else {
     & dotnet publish (Join-Path $repository 'src/Amberline.Platform/Amberline.Platform.csproj') -c Release -r $Runtime --self-contained true `
-        --artifacts-path (Join-Path $work 'Amberline.Platform') -o (Join-Path $app 'platform') "-p:InformationalVersion=$identity"
+        --artifacts-path (Join-Path $work 'Amberline.Platform') -o (Join-Path $app 'platform') "-p:InformationalVersion=$identity" "-p:AmberlineRuntime=$Runtime"
     if ($LASTEXITCODE -ne 0) { throw 'Amberline.Platform publish failed.' }
 }
 
@@ -605,6 +605,29 @@ if ($Layout -eq 'Home') {
     Move-Item -LiteralPath $playerApp -Destination $playerPath
     $playerSha = (Get-FileHash -LiteralPath $playerPath -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText("$playerPath.sha256", "$playerSha  $playerName`n", [Text.Encoding]::ASCII)
+    # The Linux player script (host/src/Amberline.AirCompanion/player/linux.sh, shared by both lines): this line's names, this release's
+    # player app and its SHA-256, beside the app with its .sha256. The seam file gives the line's invite scheme (InviteLink.Line.cs).
+    $schemeSeam = Get-Content -LiteralPath (Join-Path $repository 'src/Amberline.AirCompanion/InviteLink.Line.cs') -Raw
+    $linuxScheme = [regex]::Match($schemeSeam, 'Scheme\s*=\s*"([^"]+)"').Groups[1].Value
+    if (-not $linuxScheme) { throw 'The line''s invite scheme (InviteLink.Line.cs) was not found.' }
+    $linuxTag = [string]$facts.releaseTagPrefix + $Version
+    $linuxName = "$releaseFile-Player-$Version-linux.sh"
+    $linuxPath = Join-Path $destination $linuxName
+    $linuxTokens = [ordered]@{ LINE = $Patch; NAME = "$releaseName Player"; SCHEME = $linuxScheme; INSTALL = $releaseName; PLAYERDIR = "$releaseName Player";
+        VERSION = $Version; TAG = $linuxTag; APPFILE = $playerName; APPURL = "https://github.com/Amberline-Dev/Project-Amberline/releases/download/$linuxTag/$playerName";
+        APPSHA256 = $playerSha.ToLowerInvariant() }
+    $linux = [IO.File]::ReadAllText((Join-Path $emu 'host/src/Amberline.AirCompanion/player/linux.sh')).Replace("`r`n", "`n")
+    foreach ($token in $linuxTokens.Keys) { $linux = $linux.Replace("@$token@", [string]$linuxTokens[$token]) }
+    if ($linux -cmatch '@[A-Z]+@') { throw "The Linux player script has an unrendered token: $($Matches[0])." }
+    # The script goes to friends: none of this build machine's names or paths may be in it (the release zip scan's rule).
+    foreach ($private in @($env:USERNAME, $env:COMPUTERNAME, $emu, $env:USERPROFILE) | Where-Object { $_ }) {
+        foreach ($form in @($private, $private.Replace('\', '/')) | Select-Object -Unique) {
+            if ($linux.IndexOf($form, [StringComparison]::OrdinalIgnoreCase) -ge 0) { throw 'The Linux player script holds a name or path of this build machine.' }
+        }
+    }
+    [IO.File]::WriteAllText($linuxPath, $linux, [Text.UTF8Encoding]::new($false))
+    $linuxSha = (Get-FileHash -LiteralPath $linuxPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText("$linuxPath.sha256", "$linuxSha  $linuxName`n", [Text.Encoding]::ASCII)
     # The notes stub for the release page: the owner writes the changes; the warnings and the hash are already in it.
     $notesPath = Join-Path $destination "$releaseFile-$Version-release-notes.md"
     $notes = @'
@@ -638,11 +661,11 @@ if ($previous) {
     Write-Output "The previous build is now $aside; delete it when it is no longer needed."
 }
 if ($Layout -eq 'Home') {
-    Write-Output "Built the Amberline release: $zipPath ($size MB; the .sha256, the players' app $playerName with its .sha256 and the release-notes stub are beside it)."
+    Write-Output "Built the Amberline release: $zipPath ($size MB; the .sha256, the players' app $playerName with its .sha256, the Linux player script $linuxName with its .sha256 and the release-notes stub are beside it)."
     Write-Output 'The script does not publish. When you have checked the zip and the notes, publish it yourself with:'
     # The line's tag (patch.json releaseTagPrefix: v on 126, the latest release; p132-v on 132, never the latest; owner, 16 November 2026).
     $latest = if ($facts.releaseTagPrefix -eq 'v') { '' } else { ' --latest=false' }
-    Write-Output "  gh release create $($facts.releaseTagPrefix)$Version `"$zipPath`" `"$zipPath.sha256`" `"$playerPath`" `"$playerPath.sha256`" --notes-file `"$notesPath`"$latest"
+    Write-Output "  gh release create $($facts.releaseTagPrefix)$Version `"$zipPath`" `"$zipPath.sha256`" `"$playerPath`" `"$playerPath.sha256`" `"$linuxPath`" `"$linuxPath.sha256`" --notes-file `"$notesPath`"$latest"
 } else {
     Write-Output "Built $Runtime server package: $([IO.Path]::GetRelativePath($repository, $destination)) ($($outputFiles.Count) files, $size MB, identity $identity)"
     Write-Output "Send each player this invite link (also in $(Join-Path $destination 'INVITE-LINK.txt')); it pins the certificate SHA-256 $($pin):"

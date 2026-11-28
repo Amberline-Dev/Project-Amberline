@@ -20,7 +20,7 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
     // first of the two in queue order (see PairBuffDeltas). Rebuilt before each routing pass, cleared with the queue.
     private readonly Dictionary<PacketReplicationMessage, (PacketReplicationMessage Partner, bool First)> _buffPartners =
         new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<uint, EffectCreateReplicationMessage> _persistentEffects = new();
+    private readonly Dictionary<uint, (EffectCreateReplicationMessage Effect, double CreatedAt)> _persistentEffects = new();
     private readonly Dictionary<(uint Actor, uint Change), CharacterDataReplicationMessage> _characterData = new();
     // A shrine is a pre-placed turret whose team-visibility bit is managed by
     // the source's pre-combat turret-vision phase.  Keep this per team and
@@ -127,7 +127,7 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
     {
         ArgumentNullException.ThrowIfNull(message);
         if (message is EffectCreateReplicationMessage { Persistent: true, EffectNetId: not 0 } effect)
-            _persistentEffects[effect.EffectNetId] = effect;
+            _persistentEffects[effect.EffectNetId] = (effect, SimulationTime());
         else if (message is EffectDestroyReplicationMessage destroy)
             _persistentEffects.Remove(destroy.EffectNetId);
         else if (message is CharacterDataReplicationMessage model)
@@ -263,8 +263,14 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         // and retirement were queued in the same frame. A copy this replay
         // creates is a late copy: the view missed the creation, which the
         // step's own routing above gives every view that sees it.
-        foreach (var effect in _persistentEffects.Values)
+        // Batch 947 (Reconstruction; community report, 28 November 2026: enemy spells cast in fog replay when you come into vision): the stock
+        // client starts every 0x8D from its beginning (the packet's last float is the instance's lifetime scale, the client,
+        // not a time already spent), so a late copy plays the effect as if cast now. A system of single particles with no e-life has shown all it
+        // will show by its ShownSeconds (Garen's garen_command_cas, 1.5 s, kept by his buff for its whole length); after that a late copy only
+        // plays a finished cast again, so the replay stops there. How retail's server served late observers is not recovered.
+        foreach (var (effect, createdAt) in _persistentEffects.Values)
         {
+            if (effect.ShownSeconds is { } shown && SimulationTime() - createdAt >= shown) continue;
             var routed = OnWire(effect);
             foreach (var observer in active)
                 if (!observer.View.Effects.Contains(effect.EffectNetId))

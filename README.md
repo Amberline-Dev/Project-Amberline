@@ -13,7 +13,7 @@ let their players download it from their server ([Game files](HOSTING.md#game-fi
 | Patch | Newest release | Hosting guide |
 |---|---|---|
 | 1.0.0.126 (October 2011) | [Amberline, latest release](https://github.com/Amberline-Dev/Project-Amberline/releases/latest) | [HOSTING.md](HOSTING.md) |
-| 1.0.0.132 (January 2012) | [Amberline 132 0.1.14](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.14) | [132/HOSTING.md](132/HOSTING.md) |
+| 1.0.0.132 (January 2012) | [Amberline 132 0.1.15](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.15) | [132/HOSTING.md](132/HOSTING.md) |
 
 The **Releases** box on the right shows only the 1.0.0.126 line's newest release. The list of
 [all releases](https://github.com/Amberline-Dev/Project-Amberline/releases) has both lines.
@@ -43,6 +43,8 @@ instead. That line's releases are tagged `p132-v` and are never the latest relea
    game, **Use the client zip…** to select the client zip (`patch-1.0.0.126-client-bundle.zip`), or **Install** if setup found
    the game on your PC. The other options, such as your own folders and the install folder, are under **Advanced**.
 4. **Open the new desktop icon**, named after your host's server, and log in with your username and password.
+
+**On Linux**, the steps are a test and differ from these. Read [LINUX.md](LINUX.md) first.
 
 **Optional: the original 2011 launcher.** If you have that launcher's folder, choose it during setup, under **Advanced** in the
 **2011 launcher (optional)** row. You can also open the invite link again on an install that does not have it yet. The game then

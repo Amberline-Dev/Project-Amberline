@@ -156,10 +156,12 @@ public sealed partial class BuffLifecycle
         // the begin hook (taunted, a new route) within 10 ms. The renewed taunt skips both hooks; its end and begin run when the taunt truly ends or begins.
         // Scope: minions only (the owner's finding). A hero's or a monster's taunt renewal keeps its hooks as before (map 1 and 2 packets).
         var renewsTaunt = existing is { Type: BuffType.Taunt } && existing.CasterNetId == casterNetId && unit.UnitType == UnitType.Minion;
+        // Batch 948: the hero stat refresh the replaced instance's removal leaves to this add (RemoveReplaced).
+        var refreshOwed = false;
         if (existing is not null)
         {
             _renewingTaunt = renewsTaunt;
-            try { RemoveBuff(unit, existing.Slot, emitRemovalPacket: false); }
+            try { refreshOwed = RemoveReplaced(unit, existing); }
             finally { _renewingTaunt = false; }
             if (renewsTaunt) _tauntRenewals.Add(unit.NetId);
         }
@@ -175,7 +177,7 @@ public sealed partial class BuffLifecycle
                 // one (BbNativeHandlers.SpellBuffAdd), removed and re-added the buff in one flush on every add (Cassiopeia's Miasma Slow).
                 var victim = live.OrderBy(buff => buff.ExpiresAt).First();
                 replacedSlot = victim.Slot;
-                RemoveBuff(unit, victim.Slot, emitRemovalPacket: false);
+                refreshOwed |= RemoveReplaced(unit, victim);
             }
         }
         // The replacement takes the slot of the instance it replaces: its client copy is still standing there (no removal
@@ -202,6 +204,7 @@ public sealed partial class BuffLifecycle
         if (slot < 0)
         {
             _tauntRenewals.Remove(unit.NetId); // the renewal found no slot: a later taunt is a true begin
+            if (refreshOwed) _heroStats.Refresh(unit);
             return null;
         }
 
@@ -293,7 +296,7 @@ public sealed partial class BuffLifecycle
         // projectiles continue.
         if (!wasHardControlled && IsHardControlled(unit)) StopAttackForHardControl(unit);
         if (unit.UnitType == UnitType.Hero &&
-            (BuffNeedsFullRefresh(payload) || itemSlowPenaltyChanged)) _heroStats.Refresh(unit);
+            (BuffNeedsFullRefresh(payload) || itemSlowPenaltyChanged || refreshOwed)) _heroStats.Refresh(unit);
 
         if (_services.Effects.SendBuffAdd(unit, buff, 1))
         {
@@ -337,6 +340,33 @@ public sealed partial class BuffLifecycle
 
     // Batch 478: set while AddBuff withdraws a taunt that the same-caster add replaces; RemoveBuffNow then raises no end hook.
     private bool _renewingTaunt;
+
+    // Batch 948: the instance a replacing add is removing (RemoveReplaced), and whether its removal skipped the hero stat refresh.
+    private BuffState? _replaced;
+    private bool _replacedRefreshOwed;
+
+    /// <summary>
+    /// Batch 948 (community report, 28 November 2026: "While Sion E is toggled on, he heals himself whenever he kills a unit, on top of
+    /// gaining max health"): removes the instance a replacing add supersedes and leaves the hero stat refresh of that removal to the add,
+    /// so the replace is one stat transition. The healing pool raises current health by its growth (HeroStatsService.Refresh), and a refresh
+    /// between the removal and the add shrank the pool without lowering health, then grew it back: every re-add of a live pool buff healed the
+    /// whole pool again. Enrage.luaobj's BuffOnKill re-adds EnrageMaxHP (BUFF_REPLACE_EXISTING) on every kill, and that buff's row is all of
+    /// CharVars.HPGain so far, so the n-th kill healed 3 x n at rank five where only the kill's own 3 grows the pool. Returns whether a refresh is
+    /// owed. Reconstruction: retail's buff manager is server code the client does not hold; the client gets a replace as one event
+    /// (NpcBuffReplace), and no shipped script or patch note gives Sion health beyond the pool's growth. A non-hero's pool moves in
+    /// ApplyNpcMaxHealth and is not covered here.
+    /// </summary>
+    private bool RemoveReplaced(Entity unit, BuffState old)
+    {
+        var (outer, outerOwed) = (_replaced, _replacedRefreshOwed);
+        (_replaced, _replacedRefreshOwed) = (old, false);
+        try
+        {
+            RemoveBuff(unit, old.Slot, emitRemovalPacket: false);
+            return _replacedRefreshOwed;
+        }
+        finally { (_replaced, _replacedRefreshOwed) = (outer, outerOwed); }
+    }
 
     // A script clear whose removal packet waits for the end of the hook run that made it (RemoveBuffForRenewal). The slot of each one stays
     // reserved until its packet goes out or a re-add takes the slot.
@@ -424,8 +454,11 @@ public sealed partial class BuffLifecycle
         }
         // An item-family transition rewrites the penalty the ItemSlow marker carries (SyncItemSlow above)
         // without an incremental Apply/Reverse pair, so it needs the same full rebuild a stat payload does.
-        if (unit.UnitType == UnitType.Hero &&
-            (BuffNeedsFullRefresh(buff.Payload) || itemSlowContribution)) _heroStats.Refresh(unit);
+        if (unit.UnitType == UnitType.Hero && (BuffNeedsFullRefresh(buff.Payload) || itemSlowContribution))
+        {
+            if (ReferenceEquals(buff, _replaced)) _replacedRefreshOwed = true;
+            else _heroStats.Refresh(unit);
+        }
 
         var sent = emitWire && emitRemovalPacket && _services.Effects.SendBuffRemove(unit, buff);
         if (sent)

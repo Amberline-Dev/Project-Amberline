@@ -725,11 +725,12 @@ public sealed class BbChampionModule : IChampionSpellModule
     {
         var launch = Ground(system, hero.Position);
         var aim = launch;
-        if (ReadsFacing(script) && AreaDirection(hero, request) is { } direction)
+        if (ReadsFacing(script) && AreaDirection(request) is { } direction)
         {
             // Reconstruction (playtest 23 September 2026, Nidalee's Swipe): the area is self-centred but the script keeps the units in front of the
-            // caster (CO_IS_TARGET_IN_FRONT_OF_ME reads her facing), so she turns to the aim first. The direction is the one the request's own
-            // two points give, projected from her current position: a caster that has walked past a short endpoint does not face backward.
+            // caster (CO_IS_TARGET_IN_FRONT_OF_ME reads her facing), so a request whose two points differ turns her along them first, projected
+            // from her current position. Batch 949: the stock client never sends two (see AreaDirection), so in play Swipe strikes along the
+            // facing she has, as Swipe.luaobj's TargetExecute alone decides.
             var reach = spell.CastRangeAt(rank);
             hero.Facing = direction;
             aim = Ground(system, new Position2(hero.Position.X + direction.X * reach, hero.Position.Z + direction.Z * reach));
@@ -1195,20 +1196,16 @@ public sealed class BbChampionModule : IChampionSpellModule
         script.Walk().Any(item => item.Block.Param("CompareOp") is BbValue.Reference { Name: "CO_IS_TARGET_IN_FRONT_OF_ME" });
 
     /// <summary>
-    /// The unit direction a self-centred area cast is aimed along: from the request's point to its end point, else from the caster to the
-    /// point; null when both are the caster's own position.
+    /// The unit direction a self-centred area cast is aimed along: from the request's point to its end point; null when they coincide.
+    /// Batch 949 (community report, 28 November 2026: Swipe went behind her): the stock client sends a Self, SelfAOE or OffsetAOE cast at the
+    /// press with its own position of the caster as both points,
+    /// so its request names no direction. The caster-to-point line this also took was none either: that point trails the server's walking
+    /// hero, so it ran backward.
     /// </summary>
-    private static Position2? AreaDirection(Entity hero, SpellCastRequest request)
+    private static Position2? AreaDirection(SpellCastRequest request)
     {
-        var from = new Position2(request.Position.X, request.Position.Z);
-        var to = new Position2(request.EndPosition.X, request.EndPosition.Z);
-        var delta = new Position2(to.X - from.X, to.Z - from.Z);
+        var delta = new Position2(request.EndPosition.X - request.Position.X, request.EndPosition.Z - request.Position.Z);
         var length = Math.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
-        if (length <= 1e-9)
-        {
-            delta = new Position2(from.X - hero.Position.X, from.Z - hero.Position.Z);
-            length = Math.Sqrt(delta.X * delta.X + delta.Z * delta.Z);
-        }
         return length > 1e-9 ? new Position2(delta.X / length, delta.Z / length) : null;
     }
 

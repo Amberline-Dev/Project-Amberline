@@ -1436,12 +1436,14 @@ public static class ReplicationChecks
         }
     }
 
-    private static byte RoutingOpcode(string kind) => kind switch
+    // Batch 931: a swing reaches a view that sees the attacked unit but not the attacker as BasicAttackPos (0x1D, the attacker's
+    // point appended), so an attack case is read from both opcodes (batch 939).
+    private static byte[] RoutingOpcodes(string kind) => kind switch
     {
-        "damage" => 0x69,
-        "attack" => 0x0D,
-        "cast" => 0xBE,
-        "death" or "zero-killer-death" => 0x62,
+        "damage" => [0x69],
+        "attack" => [CombatPackets.BasicAttackOpcode, CombatPackets.BasicAttackPositionedOpcode],
+        "cast" => [0xBE],
+        "death" or "zero-killer-death" => [0x62],
         _ => throw new InvalidOperationException("Unknown routing fixture kind: " + kind),
     };
 

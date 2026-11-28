@@ -459,6 +459,8 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         // while Taunt.luaobj applies it only when the attacker itself is a champion (CO_IS_TYPE_HERO).
         var buff = Spells.Buffs.Add(target, "Taunt", BuffType.Taunt, duration, attacker.NetId, null, canMitigateDuration: true);
         if (buff is not null && attacker.UnitType == UnitType.Hero) Spells.Combat.RecordSupportAssist(attacker, target, 10.0);
+        // Batch 945: and Taunt.luaobj's OnBuffActivate particles, by the taunter's mark (DrawTauntEffects).
+        if (buff is not null) DrawTauntEffects(attacker, target, buff);
     }
 
     // ------------------------------------------------------------------------------------------------------------

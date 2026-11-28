@@ -94,9 +94,12 @@ namespace RtmpSharp.Net
             this.certificateValidator = certificateValidator;
         }
 
+        // The server's side (RtmpServer), connected already. Batch 942: the server starts the loops (EstablishThreads) once it has attached
+        // its handlers. Started here, a connect already buffered behind C2 (AIR writes both together) was read before hasConnected was set,
+        // so QueueCommand dropped its _result and AIR's login hung, and before the server's connect handler (the session resume) was attached.
         public RtmpClient(Uri uri, SerializationContext serializationContext, Stream connectedStream) : this(uri, serializationContext, ObjectEncoding.Amf3)
         {
-            EstablishThreads(connectedStream);
+            this.connectedStream = connectedStream;
             hasConnected = true;
             throwDisconnect = false;
         }

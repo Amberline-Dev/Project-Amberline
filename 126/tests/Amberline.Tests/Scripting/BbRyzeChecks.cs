@@ -438,15 +438,18 @@ public static class BbRyzeChecks
         var spellBlock = match.Foe.SpellBlock;
         TestAssert.True(match.CanCast(1, match.Foe).Allowed, "an enemy in range is a legal target");
         TestAssert.True(match.CanCast(1, match.Ally).Failure == SpellCastFailure.Target, "an ally is not (AffectEnemies only)");
+        // Batch 939: the root lands at the cast frame and holds to the first step at or past the shipped duration (1.75 s = 52.5 steps: 53),
+        // and the enemy can move again in the step it ends. Batch 906 (a timer set in a step is not counted in that step) made the 1.25, 1.5,
+        // 1.75 and 2 s roots hold one step longer: 38, 45, 53 and 60 steps (before: 37, 44, 52 and 59, each short of the shipped time but 1 s).
+        // The old end sample, a fixed 60 steps after the rank-4 cast, was the step the root used to end in.
+        var castFrame = (int)Math.Ceiling(match.CastFrameOf(1) / Step - 1e-9);
         TestAssert.True(match.Cast(1, match.Foe), "W cast");
-        var windup = match.Now;
-        match.Advance(0.1);
-        TestAssert.True(Buff(match.Foe, "RunePrison") is null, "no root during the windup (the effect lands when it ends)");
-        match.Advance(0.5);
+        var landed = StepsUntil(match, () => Buff(match.Foe, "RunePrison") is not null, 90);
+        TestAssert.Equal(castFrame, landed, "rank 4: the root lands at the cast frame (none during the windup)");
         var buff = Buff(match.Foe, "RunePrison");
         TestAssert.True(buff is { Type: BuffType.Net }, "the Net buff named after the spell is on the enemy: " + Names(match.Foe));
         TestAssert.True(buff!.Payload.MovementDisabled, "SetCanMove(false) holds the enemy in place");
-        TestAssert.Near(windup + 1.75, buff.ExpiresAt, 0.4, "rank 4: 1.75 seconds");
+        TestAssert.Near(duration[3], buff.TimerSpan, 1e-6, "rank 4: the root's timer starts at 1.75 seconds");
         var hits = HitsOn(match, "Foe");
         TestAssert.Equal(1, hits.Count, "one hit");
         var raw = damage[3] + 0.05 * maxMana + 0.6 * ap;
@@ -454,9 +457,35 @@ public static class BbRyzeChecks
         NearF32(Mitigated(raw, spellBlock), hits[0].Dealt, "magic damage");
         TestAssert.True(match.Log.Assists.Any(line => line.Contains("Ryze->Foe", StringComparison.Ordinal)), "assist marker on the enemy");
         TestAssert.True(match.Log.Effects.Any(line => line.Contains("RunePrison_tar.troy", StringComparison.OrdinalIgnoreCase)), "the rune effect");
-        match.Advance(1.4);
-        TestAssert.True(Buff(match.Foe, "RunePrison") is null, "the root ends");
+        TestAssert.True(StepsUntil(match, () => Buff(match.Foe, "RunePrison") is null, 150) > 0, "the root ends");
+        var lands = new List<int>();
+        var holds = new List<int>();
+        var walks = new List<bool>();
+        for (var rank = 1; rank <= 5; rank++)
+        {
+            match.Hero.SpellRanks[1] = rank;
+            match.Refill();
+            TestAssert.True(match.Cast(1, match.Foe), $"rank {rank}: W cast");
+            lands.Add(StepsUntil(match, () => Buff(match.Foe, "RunePrison") is not null, 90));
+            holds.Add(StepsUntil(match, () => Buff(match.Foe, "RunePrison") is null, 150));
+            walks.Add(!match.Foe.AnyBuffOrStatus(held => held.Payload.MovementDisabled));
+        }
+        TestAssert.Equal(string.Join(' ', Enumerable.Repeat(castFrame, 5)), string.Join(' ', lands), "ranks 1-5: the root lands at the cast frame (steps)");
+        TestAssert.Equal(string.Join(' ', duration.Select(seconds => (int)Math.Ceiling(seconds / Step - 1e-9))), string.Join(' ', holds),
+            "ranks 1-5: steps the root holds, to the first step at or past 1, 1.25, 1.5, 1.75 and 2 s");
+        TestAssert.True(walks.All(free => free), "the enemy can move in the step each root ends");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed");
+    }
+
+    /// <summary>Steps one server step at a time until <paramref name="done"/> holds; the number of steps taken, or -1 after <paramref name="limit"/>.</summary>
+    private static int StepsUntil(Match match, Func<bool> done, int limit)
+    {
+        for (var step = 1; step <= limit; step++)
+        {
+            match.Advance(Step);
+            if (done()) return step;
+        }
+        return -1;
     }
 
     // ------------------------------------------------------------------------------------------------------------

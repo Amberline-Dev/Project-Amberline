@@ -87,6 +87,45 @@ internal sealed partial class BbNativeHandlers
         return unit.UnitType == UnitType.Hero ? unit.NetId : 0u;
     }
 
+    /// <summary>
+    /// Batch 945 (players, 28 November 2026: "Effects for taunts aren't played sometimes, both visual and/or audio effects ... Rammus E, Galio R and
+    /// Shen E"): the particles of the shipped <c>Spells/Taunt.luaobj</c>'s <c>OnBuffActivate</c> (the same blocks on 1.0.0.126 and 1.0.0.132), which
+    /// the Taunt buff <see cref="ApplyTaunt"/> adds never ran: the native adds a lifecycle buff, so none of them was ever sent. The script picks
+    /// the particle by the taunter's mark on the taunted unit, in three independent <c>BBIfHasBuff</c> blocks (OwnerVar Owner, AttackerVar
+    /// Attacker): <c>GalioIdolOfDurandMarker</c> draws galio_taunt_unit_indicator.troy, <c>ShenShadowDashCooldown</c> draws
+    /// Global_Taunt_multi_unit.troy and shen_shadowDash_unit_impact.troy (the only one with a sound, <c>ShenShadowDash/taunt</c>), and
+    /// <c>PuncturingTauntArmorDebuff</c> draws global_taunt.troy. Each is bound to the taunted unit with the taunter's team as FOWTeamOverrideVar
+    /// and FOWVisibilityRadius 10; the head particle (bone <c>head</c>, <c>InstanceVars.Part</c>) lives until <c>OnBuffDeactivate</c> removes
+    /// it, so it is the buff's <c>FxNetId</c>, which the lifecycle kills when the taunt leaves (a replacing taunt draws its own). Shen's impact is
+    /// <c>Part2</c>, which the script never removes. Each mark belongs to one champion's spell, so one taunter gives at most one of them. A taunt
+    /// whose taunter left no mark (Ahri's charm, the Yorick ghouls, the turrets, Dominion's guardians) draws nothing, as in the script.
+    /// The rest of the hook (the channel stop, SetTaunted, the assist marker, the removal on the taunter's death) is native already.
+    /// The mark is read off the unit directly, as BBIfHasBuff reads it (name and caster), without the held-adds landing of
+    /// <c>SpellBuffCount</c>, so a caller in a proc frame keeps its order (the three marking spells add their mark outside one).
+    /// </summary>
+    private void DrawTauntEffects(Entity attacker, Entity target, Amberline.Core.Buffs.BuffState taunt)
+    {
+        if (!Spells.Effects.IsReferenceReady(target)) return;
+        bool Marked(string mark) => target.Buffs.Any(buff => string.Equals(buff.Name, mark, StringComparison.OrdinalIgnoreCase) &&
+                                                            buff.CasterNetId == attacker.NetId);
+        uint Draw(string effect, string? bone, bool persistent) => !Spells.Data.HasClientParticle(effect) ? 0u
+            : Spells.Effects.CreateEffect(effect, target.Position, target.Position, targetNetId: target.NetId, bindNetId: target.NetId,
+                ownerPosition: target.Position, boneName: bone, persistent: persistent,
+                unbound: new UnboundEffectFallback(target.Position, target.Position, 0, null), fowTeam: attacker.Team, fowRadius: 10.0);
+        if (Marked("GalioIdolOfDurandMarker")) taunt.Payload.FxNetId = Draw("galio_taunt_unit_indicator.troy", "head", persistent: true);
+        if (Marked("ShenShadowDashCooldown"))
+        {
+            taunt.Payload.FxNetId = Draw("Global_Taunt_multi_unit.troy", "head", persistent: true);
+            const string impactName = "shen_shadowDash_unit_impact.troy";
+            var impact = Draw(impactName, null, persistent: false);
+            // As SpellEffectCreate does for a create the script never removes (batch 763): a system that never ends on the client is killed
+            // once it has shown all it will show.
+            if (impact != 0u && Spells.Data.EndlessParticleSeconds(impactName) is { } shown)
+                Spells.RunAt(Spells.CurrentTime + shown, () => { if (_host.KilledEffects.Add(impact)) Spells.Effects.KillEffect(impact); });
+        }
+        if (Marked("PuncturingTauntArmorDebuff")) taunt.Payload.FxNetId = Draw("global_taunt.troy", "head", persistent: true);
+    }
+
     /// <summary>Whether two effect names are the same particle: the client looks a name up by its stem (no extension) and ignores case.</summary>
     private static bool SameParticle(string a, string b) =>
         string.Equals(Stem(a), Stem(b), StringComparison.OrdinalIgnoreCase);

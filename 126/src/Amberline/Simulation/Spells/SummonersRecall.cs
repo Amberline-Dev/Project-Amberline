@@ -139,8 +139,11 @@ public sealed partial class SpellSystem
     /// Whether the cast announcement names the one unit the request targeted (Ignite, Exhaust, Smite, Teleport, Garrison) rather
     /// than the ground at the cast point with no unit: the self and area summoners announce without a target.
     /// </summary>
-    private static bool AnnouncesUnitTarget(string spellName) =>
-        spellName is "SummonerDot" or "SummonerExhaust" or "SummonerSmite" or "SummonerTeleport" or "SummonerOdinGarrison";
+    /// Garrison is unit-targeted only where its shipped data says so: 1.0.0.126's SummonerOdinGarrison.inibin has TargettingType 1
+    /// (1.0.0.132 ships 4, SelfAOE: untargeted, wiki V1.0.0.128), so the data decides on each line.
+    private bool AnnouncesUnitTarget(string spellName) =>
+        spellName is "SummonerDot" or "SummonerExhaust" or "SummonerSmite" or "SummonerTeleport" ||
+        (spellName == "SummonerOdinGarrison" && _data.Spell(spellName).TargetsUnit);
 
     /// <summary>
     /// The units a summoner cast reaches. Null when the request is refused (no legal unit target). A unit-targeted
@@ -322,7 +325,7 @@ public sealed partial class SpellSystem
     {
         if (!request.IsSummoner) return null;
         var name = SummonerSpellName(hero, request.Slot);
-        if (name is not ("SummonerDot" or "SummonerExhaust" or "SummonerSmite" or "SummonerOdinGarrison")) return null;
+        if (name is null || !AnnouncesUnitTarget(name) || name == "SummonerTeleport") return null;
         if (!SummonerCasterGate(hero, name) || hero.SummonerCooldowns[request.Slot] > 0.0 ||
             hero.Buffs.Any(buff => buff.Name == "ZhonyasRingShield")) return null;
         var target = _world.Get(request.TargetNetId);

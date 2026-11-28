@@ -414,6 +414,39 @@ public static class BbSionChecks
         TestAssert.Equal("", Failures(match), "no script failure");
     }
 
+    /// <summary>
+    /// Batch 948 (community report, 28 November 2026: "While Sion E is toggled on, he heals himself whenever he kills a unit, on top of gaining
+    /// max health"). Each kill re-adds <c>EnrageMaxHP</c> with <c>BUFF_REPLACE_EXISTING</c> (Enrage.luaobj <c>BuffOnKill</c>, 0116-0117), and that
+    /// buff's stat row is the whole <c>CharVars.HPGain</c> so far (EnrageMaxHP.luaobj <c>BuffOnUpdateStats</c>, <c>IncFlatHPPoolMod</c>). The
+    /// healing pool raises current health by its growth, so a kill heals the kill's own gain (3 at rank five) and no more: the replace is one
+    /// event, not a removal that shrinks the pool and an add that grows it back by everything gained before. Before the fix the n-th kill
+    /// healed 3 x n. Sion stands 500 below his maximum, so no clamp hides the heal; the regeneration of the window is taken off.
+    /// </summary>
+    [Check("scripting.bb-sion-enrage-kill-heals-only-the-health-it-adds")]
+    public static void EnrageKillHealsOnlyItsGain()
+    {
+        var match = Arena(rank: 5);
+        var hero = match.Hero;
+        TestAssert.True(match.Cast(2), "E casts");
+        match.Advance(0.5);
+        TestAssert.True(Buff(hero, "Enrage") is not null, "Enrage is on");
+        match.Runtime.HeroStats.Refresh(hero, push: false);
+        for (var kill = 1; kill <= 6; kill++)
+        {
+            var victim = Enemy(match, $"Victim{kill}", new Position2(hero.Position.X + 100.0, hero.Position.Z));
+            hero.Health = hero.MaxHealth - 500.0;
+            var (health, max) = (hero.Health, hero.MaxHealth);
+            match.Runtime.Combat.QueueScriptedHit(hero, victim, 99999.0, DamageType.True, DamageSourceKind.Spell, 0.0);
+            match.Advance(0.5);
+            TestAssert.False(victim.Alive, $"kill {kill} lands");
+            var grown = hero.MaxHealth - max;
+            TestAssert.True(Near(3.0, grown, 0.05), $"kill {kill} adds rank x 0.5 + 0.5 = 3 maximum health (got {grown:F2})");
+            var healed = hero.Health - health - hero.HealthRegen * 0.5;
+            TestAssert.True(Near(grown, healed, 0.5), $"kill {kill} heals its own 3 and no more (healed {healed:F2}, the pool grew {grown:F2})");
+        }
+        TestAssert.Equal("", Failures(match), "no script failure");
+    }
+
     // ------------------------------------------------------------------------------------------------------------
     // Cannibalism (R)
     // ------------------------------------------------------------------------------------------------------------

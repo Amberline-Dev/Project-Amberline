@@ -144,8 +144,11 @@ public sealed partial class SpellSystem
     /// Whether the cast announcement names the one unit the request targeted (Ignite, Exhaust, Smite, Teleport, Garrison) rather
     /// than the ground at the cast point with no unit: the self and area summoners announce without a target.
     /// </summary>
-    private static bool AnnouncesUnitTarget(string spellName) =>
-        spellName is "SummonerDot" or "SummonerExhaust" or "SummonerSmite" or "SummonerTeleport" or "SummonerOdinGarrison";
+    /// Garrison is unit-targeted only where its shipped data says so: 1.0.0.132's SummonerOdinGarrison.inibin has TargettingType 4
+    /// (SelfAOE), wiki V1.0.0.128 "changed to be an untargeted spell"; the script's own CanCast and SelfExecute do the guardian search.
+    private bool AnnouncesUnitTarget(string spellName) =>
+        spellName is "SummonerDot" or "SummonerExhaust" or "SummonerSmite" or "SummonerTeleport" ||
+        (spellName == "SummonerOdinGarrison" && _data.Spell(spellName).TargetsUnit);
 
     /// <summary>
     /// The units a summoner cast reaches. Null when the request is refused (no legal unit target). A unit-targeted
@@ -155,8 +158,8 @@ public sealed partial class SpellSystem
     /// </summary>
     private Entity[]? SummonerScriptTargets(Entity hero, SpellCastRequest request, string spellName)
     {
-        // Batch 502: Garrison (SpellData*TargettingType 1) is unit-targeted too; it was cast as a self cast, so its TargetExecute
-        // read the caster and the OdinGuardianBuff test never met a guardian.
+        // Batch 502: Garrison is unit-targeted on 126 (TargettingType 1); on 132 it is untargeted (see AnnouncesUnitTarget), so it
+        // takes the self-cast path below and its script searches for the guardian.
         if (AnnouncesUnitTarget(spellName))
         {
             var target = _world.Get(request.TargetNetId);
@@ -327,7 +330,7 @@ public sealed partial class SpellSystem
     {
         if (!request.IsSummoner) return null;
         var name = SummonerSpellName(hero, request.Slot);
-        if (name is not ("SummonerDot" or "SummonerExhaust" or "SummonerSmite" or "SummonerOdinGarrison")) return null;
+        if (name is null || !AnnouncesUnitTarget(name) || name == "SummonerTeleport") return null;
         if (!SummonerCasterGate(hero, name) || hero.SummonerCooldowns[request.Slot] > 0.0 ||
             hero.Buffs.Any(buff => buff.Name == "ZhonyasRingShield")) return null;
         var target = _world.Get(request.TargetNetId);

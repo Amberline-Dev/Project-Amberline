@@ -276,7 +276,7 @@ public sealed partial class GameData
     private readonly Dictionary<string, bool> _persistsThroughDeath = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, double> _channelDurations = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string>? _clientParticleNames;
-    private readonly Dictionary<string, double?> _endlessParticles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (double? Seconds, bool Silent)> _endlessParticles = new(StringComparer.OrdinalIgnoreCase);
 
     public static GameData Default => DefaultInstance.Value;
 
@@ -524,7 +524,16 @@ public sealed partial class GameData
     /// <c>p-life</c> (the base value, default 3, and the rows of its random table <c>p-life1..</c>). Null as well when an endless emitter is
     /// not single-particle and has an <c>e-rate</c> (it keeps emitting), or when a part names a section with none of these keys (not modelled).
     /// </summary>
-    public double? EndlessParticleSeconds(string effectName)
+    public double? EndlessParticleSeconds(string effectName) => EndlessParticles(effectName).Seconds;
+
+    /// <summary>
+    /// Batch 947: <see cref="EndlessParticleSeconds"/> of a system whose endless emitters are all single-particle ones (each fires once, so the
+    /// system shows nothing new after these seconds); null for any other, including one with an endless emitter this reader takes for silent
+    /// (no <c>e-rate</c> it reads as positive: XerathIdle's lightning, whose life and rate are 65535, is Xerath's lasting idle effect).
+    /// </summary>
+    public double? SingleParticleSeconds(string effectName) => EndlessParticles(effectName) is { Seconds: { } seconds, Silent: false } ? seconds : null;
+
+    private (double? Seconds, bool Silent) EndlessParticles(string effectName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(effectName);
         var stem = ParticleStem(effectName);
@@ -540,7 +549,7 @@ public sealed partial class GameData
                     if (double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)) most = Math.Max(most ?? parsed, parsed);
             return most;
         }
-        bool endless = false, skip = troy is null;
+        bool endless = false, silent = false, skip = troy is null;
         var shown = 0.0;
         for (var part = 1; !skip && troy!.TryGetValue(InibinReader.KeyHash($"System*GroupPart{part}"), out var group) &&
              group.Kind == InibinValueKind.String && group.AsString().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries) is [var section, ..] &&
@@ -553,11 +562,11 @@ public sealed partial class GameData
             if (life is >= 0.0) shown = Math.Max(shown, start + life.Value + (particle ?? 3.0));
             else if (single) (endless, shown) = (true, Math.Max(shown, start + (particle ?? 3.0)));
             else if (rate is > 0.0) skip = true;
-            else endless = true;
+            else (endless, silent) = (true, true);
         }
-        double? seconds = endless && !skip ? shown : null;
-        _endlessParticles[stem] = seconds;
-        return seconds;
+        (double? Seconds, bool Silent) result = (endless && !skip ? shown : null, silent);
+        _endlessParticles[stem] = result;
+        return result;
     }
 
     public IReadOnlyList<float> CriticalKarmaConstants

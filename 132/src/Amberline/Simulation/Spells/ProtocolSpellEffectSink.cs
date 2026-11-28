@@ -652,7 +652,8 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
                 alliedTeam, enemyEffectName is null ? null : CreatePacket(enemyEffectName,
                     position, target, targetObjectPosition),
                 persistent, ownerHeroNetId, livePacket, BindNetId: bindNetId,
-                UnboundPacket: unboundPacket, UnboundEnemyPacket: unboundEnemyPacket, FowTeam: fowTeam, FowRadius: fowRadius));
+                UnboundPacket: unboundPacket, UnboundEnemyPacket: unboundEnemyPacket, FowTeam: fowTeam, FowRadius: fowRadius,
+                ShownSeconds: persistent ? ShownSeconds(effectName, enemyEffectName) : null));
             return effect;
         }
         Enqueue(packet);
@@ -707,6 +708,12 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
         if (effectNetId != 0 && _queue is IReplicationIntentQueue typed)
             typed.EnqueueEffectDestroy(new EffectDestroyReplicationMessage(FxPackets.Kill(effectNetId), effectNetId, LateCopiesOnly: true));
     }
+
+    // Batch 947: the seconds by which an endless system of single particles has shown everything (both variants'), null when either keeps showing.
+    private double? ShownSeconds(string effectName, string? enemyEffectName) =>
+        _data.SingleParticleSeconds(effectName) is { } own
+            ? enemyEffectName is null ? own : _data.SingleParticleSeconds(enemyEffectName) is { } theirs ? Math.Max(own, theirs) : null
+            : null;
 
     /// <summary>
     /// Whether a buff of this name may appear on a client's wire at all. Unknown names make the stock client dump its

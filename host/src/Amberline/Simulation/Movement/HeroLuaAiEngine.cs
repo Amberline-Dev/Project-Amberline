@@ -446,10 +446,20 @@ public sealed class HeroLuaAiEngine : ILuaAiHeroEngine
     /// the hero, while an uncancellable windup, a forced move or a recall owns it, and for a held
     /// hero (it only fights what it can already reach). An explicit order lifts the gesture hold for
     /// its own scan (playtest B2 AE6 covers automatic acquisition only).
+    /// <para>
+    /// Batch 946 (community report, 28 November 2026: in the Basic Tutorial "ashe doesn't really seem to attack at all"): the
+    /// script's switch (<see cref="Entity.CanAutoAcquireTargets"/>) stops the automatic acquisition only, not the scans of an
+    /// attack-move the player ordered (Hero.txt calls the same FindTargetInAcR natives from OnOrder's ORDER_ATTACKMOVE, proto 0.2
+    /// pc 0055-0066, and TimerDistanceScan's AI_ATTACKMOVESTATE, proto 0.13 pc 0060-0072). Until then an attack-move walked past
+    /// every enemy while the TutorialScript held the switch off (OnTutorialInit to EventEnemyDefenses, the whole minion fight),
+    /// although the lesson before it teaches "You can Attack-Move by using X + Left Click" (game_tutorial_auxiliary_waypointI).
+    /// Reconstruction: the native's reading of the switch is not in the shipped files; the two batches that wired it (580, the level
+    /// scripts' SetCanAutoAcquireTargets; 132 BBSetAutoAcquireTargets, Twisted Fate's locked card) describe it as the idle scan's.
+    /// </para>
     /// </summary>
     private Entity? Acquire(Entity unit)
     {
-        if (!unit.HeroAutoAcquire || !unit.CanAutoAcquireTargets) return null;
+        if (!unit.HeroAutoAcquire || !unit.CanAutoAcquireTargets && unit.AttackMoveGoal is null) return null;
         if (_orders.Blocked(unit)) return null;
         if (_elapsed < unit.AutoAttackResumeAt && !_orders.InsideOrder) return null;
         return _orders.Acquire(unit, unit.HeroHold);

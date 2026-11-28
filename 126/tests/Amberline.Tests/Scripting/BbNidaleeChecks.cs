@@ -601,24 +601,66 @@ public static class BbNidaleeChecks
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, Failures(match));
     }
 
-    [Check("scripting.bb-nidalee-cougar-e-swipe-hits-the-units-in-front-after-turning-to-the-aim")]
-    public static void SwipeKeepsTheUnitsInFrontOfTheAim()
+    // Batch 949 (community report, 28 November 2026: "Nidalee casts her E in cougar form in the opposite direction (behind her)"): the stock client
+    // sends Swipe (TTYPE_SelfAOE) at the press with its own position of her as both points (the client, the clientx857801,
+    // 1.0.0.132). That point trails the server's walking hero, and the server turned her from it, backward. Swipe.luaobj only tests the
+    // units against her facing, which her walk set. Restated from "...-hits-the-units-in-front-after-turning-to-the-aim", which cast at a
+    // point the client never sends.
+    [Check("scripting.bb-nidalee-cougar-e-swipe-hits-the-units-in-front-of-her-facing")]
+    public static void SwipeKeepsTheUnitsInFrontOfHerFacing()
     {
         TestAssert.True(Blocks(Script("Swipe"), "TargetExecute").Any(item => item.Function == "BBIf" && item.Param("CompareOp") is BbValue.Reference { Name: "CO_IS_TARGET_IN_FRONT_OF_ME" }),
             "Swipe.luaobj keeps the units in front of the caster");
+        // Of the shipped scripts that test CO_IS_TARGET_IN_FRONT_OF_ME (both lines), Swipe is the one self-area spell, the one CastSelfArea runs.
+        foreach (var name in new[] { "AhriSeduceMissile", "Backstab", "CassiopeiaPetrifyingGazeSpell", "Crystallize", "GalioRighteousGustMissile",
+                     "JarvanIVCataclysm", "MalphiteCleave", "ShyvanaDoubleAttackDragon", "Swipe", "TwoShivPoison", "VolibearQSpeed" })
+            if (GameData.Default.HasSpell(name))
+                TestAssert.Equal(name == "Swipe", BbChampionModule.Targeting(GameData.Default.Spell(name)) == BbTargetType.TTYPE_SelfAOE, name + " is a self-area spell");
         using var match = new Match("Nidalee");
         LearnWithTheUltimate(match, 3);
         match.GiveAbilityPower();
         Transform(match);
         match.Refill();
-        match.Hero.Facing = new Position2(1.0, 0.0);
-        match.Foe.Position = new Position2(7200, 7000);
-        var west = Enemy(match, "West", new Position2(6800, 7000), UnitType.Minion);
-        TestAssert.True(match.Cast(2, at: new Position2(6000, 7000)), "Swipe aimed west");
+        var wire = Observe(match, Team.Order, match.Hero);
+        var faceOpcode = Amberline.Network.Protocol.SpellPackets.FaceDirection(0, default).Plaintext.Span[0];
+        int Faces() => wire.Packets.Count(item => item.Packet.Plaintext.Span[0] == faceOpcode &&
+            System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(item.Packet.Plaintext.Span[1..]) == match.Hero.NetId);
+        // The stock client's request (the 0xA2/0xA3 payload, floats as on the wire): slot, its own position of her twice, no target.
+        bool Press(Position2 at)
+        {
+            var payload = new byte[34];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(1), match.Hero.NetId);
+            payload[5] = 2 << 1;
+            for (var offset = 6; offset < 30; offset += 12)
+            {
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(payload.AsSpan(offset), (float)at.X);
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(payload.AsSpan(offset + 8), (float)at.Z);
+            }
+            return match.Runtime.Spells.HandleCastRequest(match.Hero, payload, match.Now);
+        }
+        // A short walk west: she is still walking at the press and stands at its end after the cast (the walk may resume after the windup).
+        match.Runtime.Movement.SetMoveOrder(match.Hero.NetId, new Position2(6850, 7000));
+        match.Advance(0.3);
+        TestAssert.True(match.Hero.Facing.X < -0.99, "the walk faces her west");
+        var here = match.Hero.Position;
+        Enemy(match, "West", new Position2(here.X - 200, here.Z), UnitType.Minion);
+        match.Foe.Position = new Position2(here.X + 200, here.Z);
+        var faces = Faces();
+        TestAssert.True(Press(new Position2(here.X + 20, here.Z)), "Swipe pressed while walking: her client shows her 20 behind the server");
         match.Advance(1.0);
-        TestAssert.True(match.Hero.Facing.X < -0.9, "she turned to the aim");
-        NearF32(300.0 + 0.4 * match.Hero.AbilityPower, HitsOn(match, "West").Single().Raw, "rank 3: 300 + 40 percent of ability power on the unit in front");
         TestAssert.Equal(0, HitsOn(match, "Foe").Count, "the unit behind her is not hit");
+        TestAssert.Equal(1, HitsOn(match, "West").Count, "the unit in front is hit");
+        NearF32(300.0 + 0.4 * match.Hero.AbilityPower, HitsOn(match, "West").Single().Raw, "rank 3: 300 + 40 percent of ability power on the unit in front");
+        TestAssert.Equal(faces, Faces(), "no face packet turns her");
+        TestAssert.True(match.Hero.Facing.X < -0.99, $"she keeps facing west: {match.Hero.Facing}");
+        // Standing: the point is her seat as the float wire carries it, which is no direction either.
+        match.Refill();
+        TestAssert.True(Press(match.Hero.Position), "Swipe pressed standing");
+        match.Advance(1.0);
+        TestAssert.True(match.Hero.Facing.X < -0.99, $"a standing cast keeps her facing: {match.Hero.Facing}");
+        TestAssert.Equal(faces, Faces(), "and sends no face packet");
+        TestAssert.Equal(2, HitsOn(match, "West").Count, "the unit in front is hit again");
+        TestAssert.Equal(0, HitsOn(match, "Foe").Count, "the unit behind her still is not");
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, Failures(match));
     }
 

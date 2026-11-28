@@ -259,11 +259,14 @@ namespace RtmpSharp.Net
                 var disconnected = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
                 EventHandler onDisconnected = (sender, args) => disconnected.TrySetResult(null);
                 rtmpClient.Disconnected += onDisconnected;
-                lock (_sync)
-                    _clients.Add(rtmpClient);
 
                 try
                 {
+                    // Batch 942: only now, with every handler attached, may the reader take the connect AIR sent with C2. The client is
+                    // listed after its loops run, as before, so a stop never closes it before EstablishThreads (the cancellation does).
+                    rtmpClient.EstablishThreads(stream);
+                    lock (_sync)
+                        _clients.Add(rtmpClient);
                     await disconnected.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

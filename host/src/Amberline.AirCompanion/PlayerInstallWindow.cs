@@ -931,9 +931,13 @@ internal static partial class PlayerInstallWindow
             allText.AccessibleDescription = allText.Text;
             // NOT RETAIL (classic start): the 2011 launcher's folder is named among the game files when the install has it.
             var clients = withLauncher ? "the AIR client, the game client and the 2011 launcher" : "the AIR client and the game client";
-            alsoGame = Named(new CheckBox { AutoSize = true, UseMnemonic = false, MaximumSize = new Size(width, 0), Enabled = gameBytes > 0, Margin = new Padding(0, 6, 0, 6) },
+            alsoGame = Named(new CheckBox { AutoSize = false, UseMnemonic = false, Enabled = gameBytes > 0, Margin = new Padding(0, 6, 0, 6) },
                 "Also delete the game files", $"Deletes {clients} in the install folder too.");
             alsoGame.Text = $"Also delete the game files ({clients} in {record.Install}, {FolderMove.Gigabytes(gameBytes)} GB)";
+            // The label wraps to the window's width whatever font the system substitutes (Wine uses Arial for Segoe UI): the row is as tall as
+            // the wrapped text, so a second line is never cut off. The same on Windows.
+            var wrapped = TextRenderer.MeasureText(alsoGame.Text, alsoGame.Font, new Size(width - 24, int.MaxValue), TextFormatFlags.WordBreak);
+            alsoGame.Size = new Size(width, wrapped.Height + 12);
             removeAll = Action(RemoveAllText, "Remove Amberline", "Asks first, then removes Amberline from this PC.");
             close = Action("Close", "Close", "Closes this window.");
             rows.Add((allHeading, null));

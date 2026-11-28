@@ -20,6 +20,8 @@ public static class JoinPageChecks
     private const string Downloads = "https://github.com/Amberline-Dev/Project-Amberline/releases/download/";
     private const string Damaged = "This invite link is damaged. Ask the host to copy it again.";
     private const string Newer = "This invite needs a newer Amberline Player. Download it from the invite page.";
+    // Batch 944: the public LINUX.md's address on the public repository's main branch, the one other address the page may name.
+    private const string LinuxDoc = "https://github.com/Amberline-Dev/Project-Amberline/blob/main/LINUX.md";
 
     // The page's script runs without a document (so the page does not wire itself up) and prints each case's result, then the
     // wordmark with no invite (batch 921: the label and the mark of each line are pure functions of the invite).
@@ -32,7 +34,7 @@ public static class JoinPageChecks
           const result = context.decodeInvite(input);
           if (result.error) return { error: result.error };
           return { invite: result.invite, url: context.downloadUrl(result.invite), join: context.joinUrl(result.invite, result.encoded),
-            label: context.downloadLabel(result.invite), mark: context.brandMark(result.invite) };
+            label: context.downloadLabel(result.invite), mark: context.brandMark(result.invite), linux: context.linuxFile(result.invite) };
         });
         process.stdout.write(JSON.stringify({ results: results, unset: context.brandMark(null) }));
         """;
